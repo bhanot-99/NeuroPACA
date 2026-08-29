@@ -81,9 +81,8 @@ def main() -> None:
     next_sample = start
 
     while time.monotonic() < deadline:
-        text, latency = runner.generate(_PROMPT, grammar, max_tokens=96)
-        approx_tokens = max(len(text) // 4, 1)
-        tok_rates.append(approx_tokens / latency)
+        completion = runner.generate(_PROMPT, grammar, max_tokens=96)
+        tok_rates.append(completion.tokens_per_second)
 
         if time.monotonic() >= next_sample:
             sample: dict[str, float | None] = {

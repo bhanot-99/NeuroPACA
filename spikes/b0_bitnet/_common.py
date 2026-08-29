@@ -61,6 +61,19 @@ class Fixture:
         return len(self.nodes)
 
 
+@dataclass(frozen=True)
+class Completion:
+    """One raw model response — text plus the numbers the benchmark needs."""
+
+    text: str
+    latency_s: float
+    completion_tokens: int
+
+    @property
+    def tokens_per_second(self) -> float:
+        return self.completion_tokens / self.latency_s if self.latency_s > 0 else 0.0
+
+
 @dataclass
 class GenerationResult:
     fixture_id: str
@@ -257,9 +270,7 @@ class LlamaRunner:
         )
         print(f"[load] {self.model_path.name} in {time.perf_counter() - t0:.1f}s")
 
-    def generate(
-        self, prompt: str, grammar_gbnf: str, *, max_tokens: int = 96
-    ) -> tuple[str, float]:
+    def generate(self, prompt: str, grammar_gbnf: str, *, max_tokens: int = 96) -> Completion:
         from llama_cpp import LlamaGrammar
 
         if self._llm is None:
@@ -273,4 +284,9 @@ class LlamaRunner:
             grammar=grammar,
         )
         latency = time.perf_counter() - t0
-        return out["choices"][0]["text"], latency
+        usage = out.get("usage") or {}
+        return Completion(
+            text=out["choices"][0]["text"],
+            latency_s=latency,
+            completion_tokens=int(usage.get("completion_tokens", 0)),
+        )

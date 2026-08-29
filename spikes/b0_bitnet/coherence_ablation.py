@@ -51,8 +51,8 @@ KNEE_MIN_DELTA = 0.03  # below this gain, a larger K is not worth the tokens
 def _run_one(runner: LlamaRunner, fx: Fixture) -> GenerationResult:
     prompt = build_prompt(fx)
     grammar = build_grammar([n.alias for n in fx.nodes])  # pure string work, pre-lock
-    raw, latency = runner.generate(prompt, grammar, max_tokens=110)
-    return score_output(fx, raw, latency)
+    completion = runner.generate(prompt, grammar, max_tokens=110)
+    return score_output(fx, completion.text, completion.latency_s)
 
 
 def _rate(flags: Iterable[object]) -> float:

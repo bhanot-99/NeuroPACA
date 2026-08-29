@@ -24,8 +24,8 @@ dev = [
 # benchmark + coherence ablation. Prefer a native llama.cpp build; this wheel is
 # the convenience path.
 spike = [
-    "llama-cpp-python==0.3.9",
-    "psutil==7.1.3",
+    "llama-cpp-python==0.3.35",
+    "psutil==7.2.2",
 ]
 
 [build-system]
