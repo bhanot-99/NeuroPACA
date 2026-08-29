@@ -153,7 +153,9 @@ class XMetricCollector(BaseModule):
 
     async def _poll_once(self, collector: BaseCollector) -> None:
         try:
-            if self._runner is not None:
+            if not collector.is_blocking:
+                snapshot = collector.collect()  # loop-safe read (e.g. FS deque drain)
+            elif self._runner is not None:
                 snapshot = await self._runner(collector.collect)
             else:
                 snapshot = await asyncio.to_thread(collector.collect)

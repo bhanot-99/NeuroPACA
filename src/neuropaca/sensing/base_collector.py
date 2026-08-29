@@ -18,6 +18,11 @@ from neuropaca.sensing.snapshot import MetricSnapshot
 
 
 class BaseCollector(ABC):
+    # True  -> collect() may block; XMetricCollector runs it via asyncio.to_thread.
+    # False -> collect() is a cheap loop-safe read (e.g. draining a deque that the
+    #          watchdog thread fills via loop.call_soon_threadsafe); run inline.
+    is_blocking: bool = True
+
     def __init__(self, name: str, poll_interval_seconds: float) -> None:
         self.name = name
         self.poll_interval_seconds = poll_interval_seconds
