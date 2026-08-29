@@ -14,6 +14,7 @@ a clean reset of whatever *is* built.
 from __future__ import annotations
 
 import importlib
+import logging
 from collections.abc import Iterator
 
 import pytest
@@ -37,12 +38,25 @@ def _reset_all_singletons() -> None:
             reset()
 
 
+def _reset_neuropaca_logger() -> None:
+    """`np_logging.configure()` sets `propagate=False` and attaches a handler; a
+    test that ran it must not suppress the next test's `caplog`."""
+    logger = logging.getLogger("neuropaca")
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    logger.propagate = True
+    logger.setLevel(logging.NOTSET)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_singletons() -> Iterator[None]:
-    """Wipe L1 singleton state around every test (D-5/D-6)."""
+    """Wipe L1 singleton + logging state around every test (D-5/D-6)."""
     _reset_all_singletons()
+    _reset_neuropaca_logger()
     yield
     _reset_all_singletons()
+    _reset_neuropaca_logger()
 
 
 @pytest.fixture

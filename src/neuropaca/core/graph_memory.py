@@ -96,6 +96,11 @@ class GraphMemory:
     def dirty(self) -> bool:
         return self._dirty
 
+    @property
+    def node_ids(self) -> list[str]:
+        """A snapshot of every node id (read-only — for ranking / iteration)."""
+        return list(self._graph.nodes)
+
     # ----------------------------------------------------------------- mutations
     async def add_node(
         self, node_id: str, node_type: NodeType, attributes: dict[str, Any] | None = None

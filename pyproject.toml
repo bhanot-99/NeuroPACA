@@ -52,7 +52,7 @@ default-groups = []
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["src", "tests", "spikes"]
+src = ["src", "tests", "spikes", "scripts"]
 
 [tool.ruff.lint]
 select = [
@@ -70,6 +70,7 @@ known-first-party = ["neuropaca"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
 "spikes/**" = ["T201"]  # print() is fine in a throwaway spike
+"scripts/**" = ["E402"]  # sys.path bootstrap must precede imports in a standalone script
 
 # ------------------------------------------------------------------------------
 # mypy — strict on core/ (rules.md §7). Widened phase by phase.

@@ -15,6 +15,10 @@
 /spikes/b0_bitnet/results/*
 !/spikes/b0_bitnet/results/.gitkeep
 
+# Generated perf/soak fixtures — ~4 MB, regenerate deterministically from
+# tests/fixtures/generate_10k_graph.py
+/tests/fixtures/*.json
+
 # --- Python ---
 __pycache__/
 *.py[cod]

@@ -81,9 +81,21 @@ class NeuroPACAOrchestrator:
         self._bitnet_runtime = BitNetRuntime.get_instance(create_backend(self._config))
         await self._graph_memory.load()
         self._scheduler = Scheduler(self._graph_memory, self._config)
-        self._modules = []  # L2-L9 modules arrive from B2 on
+        for module in self._modules:  # L2-L9 modules arrive from B2 on
+            await module.initialize()
         self._initialized = True
-        _log.info("orchestrator initialised (backend=%s)", self._config.inference_backend)
+        _log.info(
+            "orchestrator initialised (backend=%s, %d module(s))",
+            self._config.inference_backend,
+            len(self._modules),
+        )
+
+    def register_module(self, module: BaseModule) -> None:
+        """Attach a module before `initialize()`. The orchestrator then drives its
+        `initialize()` / `start()` / `stop()` in lifecycle order (Architecture.md §10)."""
+        if self._initialized:
+            raise RuntimeError("register_module() must be called before initialize()")
+        self._modules.append(module)
 
     async def start(self) -> None:
         if self._running:
