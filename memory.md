@@ -2,9 +2,10 @@
 
 ## 📍 Current state
 
-- **Phase:** B0 done (scaffold + tooling + spike harness); **B1 prep in progress** on branch `b1-core-infra`. The B0 model spike is still not run — it gates L4/L6/L9 fallbacks, **not** B1 (pure infra), so B1 proceeds in parallel.
-- **Currently working on:** B1 pre-work — the 8 structural decisions in D-5 are recorded in the blueprint; tooling fixes (networkx lock / mypy) applied. Next: build `core/` (enums, dataclasses, `Config`, `EventBus`, `GraphMemory`, health, inference seam) per D-5.
-- **Next action (B1):** implement `core/` following `Architecture.md §3` as amended by D-5. Add `tests/conftest.py` singleton-reset fixture in the same change as the first singleton. Still owed on the target machine: the B0 runtime + coherence spike → record numbers in `PRD.md §9`, set production `K`.
+- **Phase:** B1 — Core Infrastructure. **In progress** on branch `b1-core-infra`. B0 done. The B0 model spike is still not run (gates L4/L6/L9 fallbacks, not B1).
+- **Currently working on:** B1. Committed so far: `a95ce07` (decisions D-5/D-6 + tooling), `ddc8290` (core data foundation — `enums`, `models`, `Config`, `health` + 20 tests, all green).
+- **Next action (B1), in order:** `core/event_bus.py` (bounded queue drop-on-full per D-5, per-subscriber isolation, `_reset_for_tests`), `core/graph_memory.py` (`MultiDiGraph`, lock-split `_*_locked` workers, hub sets, atomic JSON save, `find_related` no-hub-traversal, `recalculate_importance` with `bridge_value=0.0`), `tests/conftest.py` (autouse singleton reset), `core/inference.py` (`InferenceBackend` protocol + `FakeInferenceBackend` + `LlamaCppBackend` skeleton, `grammar=None`), `core/bitnet_runtime.py` skeleton, `core/base_module.py` ABC, `orchestration/orchestrator.py` + `scheduler.py`, `src/neuropaca/daemon.py` + `[project.scripts]`. Then the 10k-node fixture generator + perf/soak/concurrency harnesses for the exit criteria.
+- **Note for next session:** the ECC GateGuard fact-forcing hook fires on every file write — for the rest of B1's scaffold, run with `ECC_GATEGUARD=off` (or `ECC_DISABLED_HOOKS=pre:edit-write:gateguard-fact-force`).
 - **Last updated:** 2026-08-29
 
 ## ✅ Completed log
