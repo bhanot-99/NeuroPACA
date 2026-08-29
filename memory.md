@@ -3,7 +3,7 @@
 ## 📍 Current state
 
 - **Phase:** B0 — Foundation. **In progress.** Skeleton + tooling + spike harness done; spike not yet run.
-- **Currently working on:** B0. Branch `b0-foundation`.
+- **Currently working on:** B0. Branches `main` and `b0-foundation` both at the B0 scaffold+tests commit. Remote: `github.com/bhanot-99/NeuroPACA` (private), `main` pushed.
 - **Next action:** run the BitNet de-risking spike on the target machine (`spikes/b0_bitnet/README.md`) — the runtime benchmark and the coherence ablation. Record the numbers here and in `PRD.md §9`, set production `K` at the knee. Then B1.
 - **Last updated:** 2026-08-29
 
