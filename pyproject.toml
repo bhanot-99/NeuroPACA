@@ -8,8 +8,11 @@ license = { text = "Proprietary — research prototype" }
 authors = [{ name = "Jatin Bhanot" }]
 
 # Runtime dependencies are added per build phase, on approval (rules.md §9).
-# B0 ships no runtime deps — only the package skeleton, logging, and errors.
-dependencies = []
+# B1 · Core Infrastructure — GraphMemory wraps a networkx.DiGraph
+# (Architecture.md §3.2). Approved 2026-08-29.
+dependencies = [
+    "networkx==3.4.2",
+]
 
 [project.optional-dependencies]
 # Tooling for the B0 foundation: ruff + mypy + pre-commit + pytest + CI (phases.md B0).
@@ -78,6 +81,13 @@ no_implicit_reexport = true
 [[tool.mypy.overrides]]
 module = "neuropaca.core.*"
 strict = true
+
+[[tool.mypy.overrides]]
+# networkx 3.4.2 ships no py.typed marker. Without this, mypy --strict on
+# neuropaca.core.* (GraphMemory wraps a MultiDiGraph) fails with
+# "Cannot find implementation or library stub for module named 'networkx'".
+module = "networkx.*"
+ignore_missing_imports = true
 
 # ------------------------------------------------------------------------------
 # pytest
