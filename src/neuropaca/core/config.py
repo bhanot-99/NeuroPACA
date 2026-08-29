@@ -42,8 +42,25 @@ class Config:
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
-    max_failures: int = 3
+    max_failures: int = 3  # consecutive collect() failures before a collector self-disables (D-7)
     max_file_tokens: int = 4096
+    # B2 · Sensing (L2, D-7). poll_intervals keys are collector names ("system",
+    # "filesystem"). watch_paths empty => FileSystemCollector stays disabled.
+    snapshot_buffer_size: int = 720
+    watch_paths: list[str] = field(default_factory=list)
+    filesystem_ignore_globs: list[str] = field(
+        default_factory=lambda: [
+            "*/.git/*",
+            "*/node_modules/*",
+            "*/__pycache__/*",
+            "*/.venv/*",
+            "*/.mypy_cache/*",
+            "*/target/*",
+            "*/dist/*",
+            "*/build/*",
+            "*.pyc",
+        ]
+    )
 
     def __post_init__(self) -> None:
         errs: list[str] = []
@@ -69,6 +86,7 @@ class Config:
             "n_threads",
             "max_failures",
             "max_file_tokens",
+            "snapshot_buffer_size",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")

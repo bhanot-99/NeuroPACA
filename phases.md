@@ -35,7 +35,10 @@ Repo skeleton per `Architecture.md §15`; `pyproject.toml`, `uv` lockfile, `ruff
 **Exit:** daemon starts, runs an idle event loop, holds a graph, `SIGTERM`s clean with a flat RSS over a 1 h soak. 10 k-node graph loads < 2 s, `find_related(depth=2)` < 50 ms. Concurrent writers serialise correctly.
 
 ### B2 · Sensing (L2)
-`MetricSnapshot`, `BaseCollector`, `XMetricCollector` (poll loop, ring buffer, per-collector failure isolation), `SystemMetricCollector`, `FileSystemCollector` (watchdog), `ActivityCollector` (`get_idle_seconds()` — platform-specific), `anomaly_score` baseline. Idle/activity edge-triggered events.
+`MetricSnapshot`, `BaseCollector`, `XMetricCollector` (one `asyncio.Task` per collector, ring buffer, per-collector failure isolation), `SystemMetricCollector`, `FileSystemCollector` (watchdog). `Clock` protocol + `FakeClock`. `build_modules()` factory + orchestrator wiring. `anomaly_score` is hardcoded `0.0` in L2 — all baselining is L3 (D-7, Architecture.md §4).
+
+> **`ActivityCollector` + `get_idle_seconds()` + `IDLE_DETECTED` / `ACTIVITY_DETECTED` + `FocusSessionPattern` / `DistractionPattern` are DEFERRED** (D-7, `problems.md` 1.7). The target machine is Wayland + COSMIC with no unified idle API — a dedicated spike, not a collector. B2 ships **system + filesystem collectors only**. B6's DMN will trigger on a synthetic **CPU < 5%** event from `SystemMetricCollector` instead of `IDLE_DETECTED`.
+
 **Exit:** 24 h soak < 1 % mean CPU, RSS flat, buffer provably bounded, killing one collector leaves the others running.
 
 ### B3 · Diagnosis (L3)
