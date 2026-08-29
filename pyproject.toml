@@ -20,6 +20,7 @@ dev = [
     "ruff==0.14.4",
     "mypy==1.18.2",
     "pytest==8.4.2",
+    "pytest-asyncio==0.25.3",
     "pre-commit==4.4.0",
 ]
 # The B0 de-risking spike (spikes/b0_bitnet/) — NOT a daemon dependency, never
@@ -96,6 +97,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "integration: touches real psutil / filesystem / a real model — excluded from the default run",
 ]
