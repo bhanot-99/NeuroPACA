@@ -8,11 +8,14 @@ license = { text = "Proprietary — research prototype" }
 authors = [{ name = "Jatin Bhanot" }]
 
 # Runtime dependencies are added per build phase, on approval (rules.md §9).
-# B1 · Core Infrastructure — GraphMemory wraps a networkx.DiGraph
-# (Architecture.md §3.2). Approved 2026-08-29.
+# B1 · Core Infrastructure — GraphMemory wraps a networkx.MultiDiGraph
+# (Architecture.md §3.2, D-5). Approved 2026-08-29.
 dependencies = [
     "networkx==3.4.2",
 ]
+
+[project.scripts]
+neuropaca = "neuropaca.daemon:main"
 
 [project.optional-dependencies]
 # Tooling for the B0 foundation: ruff + mypy + pre-commit + pytest + CI (phases.md B0).
