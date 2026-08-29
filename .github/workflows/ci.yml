@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Privacy invariant (rules.md §6): the test suite must pass with no network.
+  # This does not sandbox the runner, but it catches an accidental live call.
+  NEUROPACA_OFFLINE: "1"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.1"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync (locked)
+        run: uv sync --locked --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check --output-format=github .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy
+
+      - name: Pytest
+        run: uv run pytest -q
+
+  egress-test:
+    # rules.md §6 — "Blocked DNS / blocked outbound must fail no test."
+    # The full CI egress test lands in B9; this is the early canary.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.1"
+      - run: uv python install 3.12
+      - run: uv sync --locked --extra dev
+      - name: Pytest with outbound DNS nulled
+        run: |
+          # Redirect common resolvers to loopback for the test process only.
+          sudo bash -c 'echo "0.0.0.0 pypi.org files.pythonhosted.org huggingface.co github.com" >> /etc/hosts'
+          uv run pytest -q

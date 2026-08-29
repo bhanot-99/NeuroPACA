@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeuroPACA — System Overview</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.41.0/dist/apexcharts.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#eef2fb;
+  --bg2:#f5f8ff;
+  --glass:rgba(255,255,255,0.62);
+  --glass2:rgba(255,255,255,0.85);
+  --border:rgba(120,140,255,0.18);
+  --border2:rgba(120,140,255,0.32);
+  --blue:#4f6ef7;
+  --indigo:#6c63ff;
+  --violet:#8b5cf6;
+  --teal:#14b8a6;
+  --amber:#f59e0b;
+  --red:#ef4444;
+  --green:#10b981;
+  --text:#1a1d2e;
+  --text2:#4b5280;
+  --text3:#8892b0;
+  --shadow:0 4px 32px rgba(79,110,247,0.10);
+  --shadow2:0 8px 48px rgba(79,110,247,0.16);
+}
+body{
+  font-family:'Inter',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  background-image:
+    radial-gradient(ellipse 80% 60% at 20% -10%,rgba(108,99,255,0.13) 0%,transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 110%,rgba(79,110,247,0.10) 0%,transparent 60%),
+    linear-gradient(135deg,#eef2fb 0%,#f0f4ff 50%,#edf0fb 100%);
+  background-attachment:fixed;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(108,99,255,0.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(108,99,255,0.04) 1px,transparent 1px);
+  background-size:48px 48px;
+}
+.wrap{max-width:1200px;margin:0 auto;padding:0 2rem;position:relative;z-index:1;}
+@media(max-width:640px){.wrap{padding:0 1.1rem;}}
+
+/* NAV */
+nav{
+  position:sticky;top:0;z-index:100;
+  background:rgba(238,242,251,0.75);
+  backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+  padding:1rem 0;
+}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;gap:1rem;}
+.nav-logo{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.15rem;color:var(--blue);letter-spacing:-0.02em;flex-shrink:0;}
+.nav-logo span{color:var(--text);}
+.nav-pills{display:flex;gap:0.3rem;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.nav-pills::-webkit-scrollbar{display:none;}
+.nav-pill{font-size:0.72rem;font-weight:500;color:var(--text2);padding:0.38rem 0.9rem;border-radius:100px;border:1px solid transparent;cursor:pointer;text-decoration:none;transition:all 0.2s;white-space:nowrap;flex-shrink:0;}
+.nav-pill:hover,.nav-pill.active{background:rgba(79,110,247,0.10);border-color:var(--border2);color:var(--blue);}
+@media(max-width:640px){
+  nav{padding:0.8rem 0;}
+  .nav-logo{font-size:1rem;}
+  .nav-pill{font-size:0.68rem;padding:0.32rem 0.7rem;}
+}
+
+/* GLASS CARD */
+.card{
+  background:var(--glass);
+  backdrop-filter:blur(18px);
+  -webkit-backdrop-filter:blur(18px);
+  border:1px solid var(--border);
+  border-radius:20px;
+  box-shadow:var(--shadow);
+  padding:2rem;
+  transition:box-shadow 0.3s,transform 0.3s;
+}
+.card:hover{box-shadow:var(--shadow2);transform:translateY(-2px);}
+.card-sm{padding:1.4rem 1.6rem;border-radius:16px;}
+@media(max-width:640px){
+  .card{padding:1.3rem;border-radius:16px;}
+  .card-sm{padding:1.1rem 1.2rem;border-radius:14px;}
+  .card:hover{transform:none;}
+}
+
+/* HERO */
+.hero{padding:5rem 0 3rem;text-align:center;}
+.hero-badge{
+  display:inline-flex;align-items:center;gap:0.5rem;
+  background:rgba(79,110,247,0.08);
+  border:1px solid rgba(79,110,247,0.22);
+  border-radius:100px;padding:0.42rem 1.1rem;
+  font-size:0.72rem;font-weight:600;color:var(--blue);
+  letter-spacing:0.08em;text-transform:uppercase;margin-bottom:1.6rem;
+}
+.badge-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.5;transform:scale(1.4);}}
+.hero-title{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:clamp(2.4rem,5.5vw,4.2rem);
+  font-weight:700;letter-spacing:-0.04em;line-height:1.08;
+  margin-bottom:1.2rem;color:var(--text);
+}
+.hero-title .accent{
+  background:linear-gradient(135deg,var(--blue),var(--violet));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.hero-sub{font-size:1.05rem;color:var(--text2);max-width:600px;margin:0 auto 2.5rem;line-height:1.75;}
+.hero-stats{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;margin-bottom:3.5rem;}
+.stat-pill{
+  background:var(--glass2);border:1px solid var(--border);
+  border-radius:100px;padding:0.6rem 1.4rem;
+  display:flex;align-items:center;gap:0.7rem;
+}
+.stat-num{font-family:'Space Grotesk',sans-serif;font-size:1.3rem;font-weight:700;color:var(--blue);}
+.stat-lbl{font-size:0.72rem;color:var(--text3);font-weight:500;}
+@media(max-width:640px){
+  .hero{padding:2.6rem 0 2rem;}
+  .hero-sub{font-size:0.9rem;margin-bottom:1.8rem;}
+  .hero-stats{gap:0.6rem;margin-bottom:2.4rem;}
+  .stat-pill{padding:0.5rem 1rem;gap:0.5rem;}
+  .stat-num{font-size:1.05rem;}
+  .stat-lbl{font-size:0.64rem;}
+  .hero-badge{font-size:0.64rem;padding:0.36rem 0.9rem;margin-bottom:1.2rem;}
+}
+
+/* SECTIONS */
+section{padding:3rem 0;}
+.section-eyebrow{font-size:0.7rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:0.7rem;}
+.section-title{font-family:'Space Grotesk',sans-serif;font-size:clamp(1.5rem,3vw,2.2rem);font-weight:700;letter-spacing:-0.03em;color:var(--text);margin-bottom:0.7rem;}
+.section-desc{font-size:0.92rem;color:var(--text2);line-height:1.8;max-width:560px;}
+@media(max-width:640px){
+  section{padding:2rem 0;}
+  .section-desc{font-size:0.84rem;}
+}
+
+/* GRID */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1.4rem;}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:1.2rem;}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;}
+.grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:1rem;}
+@media(max-width:900px){.grid-3,.grid-4,.grid-5{grid-template-columns:1fr 1fr;}.grid-2{grid-template-columns:1fr;}}
+@media(max-width:600px){.grid-3,.grid-4,.grid-5,.grid-2{grid-template-columns:1fr;}}
+
+/* FEATURE CARDS */
+.feat-icon{
+  width:44px;height:44px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.3rem;margin-bottom:1rem;
+}
+.feat-title{font-family:'Space Grotesk',sans-serif;font-size:1rem;font-weight:600;margin-bottom:0.4rem;color:var(--text);}
+.feat-desc{font-size:0.83rem;color:var(--text2);line-height:1.7;}
+
+/* FLOWCHART */
+#flow-canvas{width:100%;display:block;}
+.flow-section{padding:3rem 0;}
+.flow-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.flow-scroll svg{width:100%;min-width:640px;display:block;}
+@media(max-width:640px){
+  .flow-scroll svg{min-width:820px;}
+}
+
+/* MODULE PILLS */
+.mod-tag{
+  display:inline-flex;align-items:center;gap:0.4rem;
+  font-size:0.68rem;font-weight:600;
+  padding:0.28rem 0.75rem;border-radius:100px;
+  border:1px solid;letter-spacing:0.04em;
+}
+
+/* CODE BLOCK */
+.code{
+  background:rgba(26,29,46,0.06);
+  border:1px solid rgba(26,29,46,0.10);
+  border-radius:10px;padding:1rem 1.2rem;
+  font-family:'JetBrains Mono',monospace;font-size:0.78rem;
+  line-height:1.9;color:var(--text);
+  overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:pre;
+}
+.code .c{color:var(--text3);}
+.code .k{color:var(--blue);}
+.code .v{color:var(--violet);}
+.code .s{color:var(--green);}
+.code .n{color:var(--amber);}
+@media(max-width:640px){
+  .code{padding:0.85rem 0.9rem;font-size:0.7rem;}
+}
+
+/* TIMELINE */
+.timeline{display:flex;flex-direction:column;gap:0;}
+.tl-item{display:grid;grid-template-columns:140px 1px 1fr;gap:0 1.5rem;padding-bottom:2rem;}
+.tl-item:last-child{padding-bottom:0;}
+.tl-time{font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--text3);padding-top:0.15rem;text-align:right;}
+.tl-line{display:flex;flex-direction:column;align-items:center;gap:0;}
+.tl-dot{width:10px;height:10px;border-radius:50%;border:2px solid var(--blue);background:white;flex-shrink:0;margin-top:0.2rem;}
+.tl-connector{flex:1;width:1px;background:linear-gradient(to bottom,var(--border2),var(--border));margin-top:4px;}
+.tl-content{}
+.tl-title{font-family:'Space Grotesk',sans-serif;font-size:0.95rem;font-weight:600;color:var(--text);margin-bottom:0.3rem;}
+.tl-title-tag{display:none;font-weight:700;}
+.tl-desc{font-size:0.8rem;color:var(--text2);line-height:1.6;}
+@media(max-width:640px){
+  .tl-item{grid-template-columns:20px 1fr;gap:0 0.9rem;padding-bottom:1.4rem;}
+  .tl-time{display:none;}
+  .tl-title-tag{display:inline;}
+  .tl-title{font-size:0.85rem;}
+  .tl-desc{font-size:0.76rem;}
+}
+
+/* APEX / CHART containers */
+.chart-wrap{background:var(--glass);backdrop-filter:blur(18px);border:1px solid var(--border);border-radius:20px;padding:1.5rem;}
+.chart-title{font-family:'Space Grotesk',sans-serif;font-size:0.9rem;font-weight:600;color:var(--text);margin-bottom:1rem;}
+@media(max-width:640px){
+  .chart-wrap{padding:1.1rem 0.9rem;border-radius:16px;}
+  .chart-title{font-size:0.82rem;}
+}
+
+/* LAYER STACK */
+.layer{
+  background:var(--glass2);border:1px solid var(--border);
+  border-radius:12px;padding:0.9rem 1.2rem;
+  display:flex;align-items:center;justify-content:space-between;
+  transition:all 0.2s;gap:0.8rem;
+}
+.layer:hover{border-color:var(--border2);transform:translateX(4px);}
+.layer-name{font-family:'Space Grotesk',sans-serif;font-size:0.88rem;font-weight:600;color:var(--text);}
+.layer-badge{font-size:0.65rem;font-weight:600;padding:0.25rem 0.65rem;border-radius:100px;letter-spacing:0.05em;flex-shrink:0;white-space:nowrap;}
+@media(max-width:640px){
+  .layer{padding:0.75rem 0.9rem;}
+  .layer-name{font-size:0.8rem;}
+  .layer:hover{transform:none;}
+}
+
+/* INVARIANT CARD */
+.invariant{
+  background:rgba(239,68,68,0.05);
+  border:1px solid rgba(239,68,68,0.18);
+  border-radius:12px;padding:1rem 1.4rem;
+  font-size:0.82rem;color:var(--text);line-height:1.7;
+  display:flex;gap:0.8rem;align-items:flex-start;
+}
+.inv-icon{color:var(--red);font-size:1rem;flex-shrink:0;margin-top:0.1rem;}
+@media(max-width:640px){
+  .invariant{padding:0.85rem 1rem;font-size:0.76rem;}
+}
+
+/* FIX CARD */
+.fix-card{
+  background:rgba(16,185,129,0.06);
+  border:1px solid rgba(16,185,129,0.2);
+  border-radius:12px;padding:1.2rem 1.4rem;
+}
+.fix-title{font-size:0.8rem;font-weight:600;color:var(--green);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.5rem;}
+
+/* FOOTER */
+footer{
+  text-align:center;padding:3rem 0 2rem;
+  border-top:1px solid var(--border);margin-top:2rem;
+}
+.footer-title{font-family:'Space Grotesk',sans-serif;font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:0.5rem;}
+.footer-sub{font-size:0.8rem;color:var(--text3);}
+
+/* DIVIDER */
+.divider{height:1px;background:linear-gradient(90deg,transparent,var(--border2),transparent);margin:2rem 0;}
+
+/* SCROLL REVEAL */
+.reveal{opacity:0;transform:translateY(24px);transition:opacity 0.6s,transform 0.6s;}
+.reveal.visible{opacity:1;transform:translateY(0);}
+
+/* CHART CONTAINER HEIGHT RESPONSIVENESS */
+@media(max-width:640px){
+  #radarChart,#heatmapChart{height:230px !important;}
+  #radarChart > div{height:230px !important;}
+  .chart-canvas-wrap{height:230px !important;}
+  #memChart{height:170px !important;}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="wrap nav-inner">
+    <div class="nav-logo">Neuro<span>PACA</span></div>
+    <div class="nav-pills">
+      <a class="nav-pill" href="#overview">Overview</a>
+      <a class="nav-pill" href="#features">Features</a>
+      <a class="nav-pill" href="#flow">Flowchart</a>
+      <a class="nav-pill" href="#memory">Memory</a>
+      <a class="nav-pill" href="#modules">Modules</a>
+      <a class="nav-pill" href="#fix">Tech Fix</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="wrap" id="overview">
+<div class="hero reveal">
+  <div class="hero-badge"><div class="badge-dot"></div>Research Prototype · 2026</div>
+  <h1 class="hero-title">
+    Neuromorphic<br><span class="accent">Personal Autonomous</span><br>Computing Agent
+  </h1>
+  <p class="hero-sub">NeuroPACA watches how you work, builds a behavioral graph of your habits, and adapts a local BitNet LLM specifically to your domain — all without sending a single byte to the cloud.</p>
+  <div class="hero-stats">
+    <div class="stat-pill"><span class="stat-num">10</span><span class="stat-lbl">Layers</span></div>
+    <div class="stat-pill"><span class="stat-num">~1.1 GB</span><span class="stat-lbl">Model RAM</span></div>
+    <div class="stat-pill"><span class="stat-num">8</span><span class="stat-lbl">Modules</span></div>
+    <div class="stat-pill"><span class="stat-num">0</span><span class="stat-lbl">Cloud calls</span></div>
+    <div class="stat-pill"><span class="stat-num">60s</span><span class="stat-lbl">Sensing interval</span></div>
+  </div>
+</div>
+</div>
+
+<!-- WHAT IS IT -->
+<div class="wrap">
+<div class="divider"></div>
+<div class="grid-2 reveal" style="gap:2rem;align-items:center;">
+  <div>
+    <p class="section-eyebrow">What is NeuroPACA?</p>
+    <h2 class="section-title">An AI that watches your computer and learns your brain</h2>
+    <p class="section-desc" style="margin-bottom:1.2rem;">Most AI agents wait for you to ask something. NeuroPACA is different — it passively monitors OS-level signals (CPU, RAM, processes, keystrokes) every 60 seconds, detects behavioral patterns like "high focus mode" or "cognitive overload", and stores them in a personal knowledge graph. Over time, it prunes a local language model to match exactly how YOU work — making it faster and more accurate for your specific workflows.</p>
+    <div class="code">
+<span class="c"># What NeuroPACA sees every 60s</span>
+<span class="k">cpu_load</span> = <span class="n">82%</span>   <span class="c"># high</span>
+<span class="k">active_app</span> = <span class="s">"vscode"</span>
+<span class="k">process</span> = <span class="s">"python train.py"</span>
+<span class="k">switches</span> = <span class="n">3</span>       <span class="c"># low distraction</span>
+<span class="c">→ FocusSessionPattern triggered</span>
+<span class="c">→ graph.Engineering.score += 0.4</span>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:1rem;">
+    <div class="card card-sm">
+      <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.5rem;">
+        <div class="feat-icon" style="background:rgba(79,110,247,0.10);width:36px;height:36px;margin:0;">🧠</div>
+        <div class="feat-title" style="margin:0;">Behavioral graph memory</div>
+      </div>
+      <div class="feat-desc">Nodes = your habits, tools, domains. Edges = how they connect. Every node has a relevance_score that decays when unused, spikes when active.</div>
+    </div>
+    <div class="card card-sm">
+      <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.5rem;">
+        <div class="feat-icon" style="background:rgba(108,99,255,0.10);width:36px;height:36px;margin:0;">⚡</div>
+        <div class="feat-title" style="margin:0;">Event-driven, not clock-driven</div>
+      </div>
+      <div class="feat-desc">Agents only fire when a threshold is crossed — zero CPU cost when nothing meaningful is happening.</div>
+    </div>
+    <div class="card card-sm">
+      <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.5rem;">
+        <div class="feat-icon" style="background:rgba(20,184,166,0.10);width:36px;height:36px;margin:0;">🔒</div>
+        <div class="feat-title" style="margin:0;">100% local inference</div>
+      </div>
+      <div class="feat-desc">BitNet b1.58 model served locally via llama.cpp. Your behavioral data never leaves your machine.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- FEATURES -->
+<div class="wrap" id="features" style="padding-top:3rem;">
+<div class="divider"></div>
+<p class="section-eyebrow reveal">Key Features</p>
+<h2 class="section-title reveal">What makes NeuroPACA different</h2>
+<div class="grid-3" style="margin-top:2rem;">
+  <div class="card card-sm reveal">
+    <div class="feat-icon" style="background:rgba(79,110,247,0.10);">📡</div>
+    <div class="feat-title">Passive OS Sensing</div>
+    <div class="feat-desc">Monitors CPU, RAM, disk, temperature, active processes, and app-switching patterns every 60 seconds. No user input needed — it just watches.</div>
+  </div>
+  <div class="card card-sm reveal">
+    <div class="feat-icon" style="background:rgba(245,158,11,0.10);">🔗</div>
+    <div class="feat-title">Graph Memory</div>
+    <div class="feat-desc">10 master domain nodes (Engineering, Research, Comms...) plus concept nodes. Relationships between them strengthen over time via Hebbian-style weight updates.</div>
+  </div>
+  <div class="card card-sm reveal">
+    <div class="feat-icon" style="background:rgba(16,185,129,0.10);">✂️</div>
+    <div class="feat-title">Personal Model Pruning</div>
+    <div class="feat-desc">Graph scores map to attention heads. Heads for domains you rarely use get zeroed out. Your model becomes a sparse subnetwork tuned to YOUR work.</div>
+  </div>
+  <div class="card card-sm reveal">
+    <div class="feat-icon" style="background:rgba(139,92,246,0.10);">💤</div>
+    <div class="feat-title">Idle-Time Learning</div>
+    <div class="feat-desc">Heavy computation (graph replay, model fine-tuning) only runs during idle or sleep. Sensing stays always-on at near-zero cost.</div>
+  </div>
+  <div class="card card-sm reveal">
+    <div class="feat-icon" style="background:rgba(239,68,68,0.10);">⌨️</div>
+    <div class="feat-title">Terminal Interface</div>
+    <div class="feat-desc">$ = natural language, $? = question with project context, $! = emergency autonomous action, $$ = safe mode (backup before action).</div>
+  </div>
+  <div class="card card-sm reveal">
+    <div class="feat-icon" style="background:rgba(20,184,166,0.10);">🏆</div>
+    <div class="feat-title">Lottery Ticket Hypothesis</div>
+    <div class="feat-desc">Every large network contains a sparse "winning ticket" subnetwork. NeuroPACA uses your graph scores to find the ticket that wins specifically for your workflows.</div>
+  </div>
+</div>
+</div>
+
+<!-- FLOWCHART (D3) -->
+<div class="wrap flow-section" id="flow">
+<div class="divider"></div>
+<p class="section-eyebrow reveal">System Flowchart</p>
+<h2 class="section-title reveal">End-to-end: from raw signal to action</h2>
+<p class="section-desc reveal" style="margin-bottom:2rem;">Follow the path of a single data observation — from your CPU reading to a behavioral insight that reshapes your model.</p>
+<div class="card reveal" style="padding:1.5rem 1rem;">
+  <div class="flow-scroll">
+    <svg id="flow-svg" viewBox="0 0 1100 820" style="display:block;"></svg>
+  </div>
+</div>
+</div>
+
+<!-- MEMORY ARCHITECTURE (ApexCharts radar + Chart.js bar) -->
+<div class="wrap" id="memory" style="padding-top:2rem;">
+<div class="divider"></div>
+<p class="section-eyebrow reveal">Memory Architecture</p>
+<h2 class="section-title reveal">Two systems. One score. They drift together.</h2>
+<p class="section-desc reveal" style="margin-bottom:2rem;">Graph memory stores relationships. Model weights store patterns. A single relevance_score on each node governs both — driving memory replay and deciding which attention heads to prune.</p>
+
+<div class="grid-2 reveal" style="gap:1.4rem;margin-bottom:1.4rem;">
+  <div class="chart-wrap">
+    <div class="chart-title">Domain relevance scores (your graph today)</div>
+    <div id="radarChart" style="height:280px;"></div>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-title">Score → pruning decision mapping</div>
+    <div class="chart-canvas-wrap" style="position:relative;width:100%;height:280px;">
+      <canvas id="pruneChart"></canvas>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2 reveal" style="gap:1.4rem;">
+  <div>
+    <p style="font-size:0.8rem;font-weight:600;color:var(--text2);margin-bottom:0.8rem;letter-spacing:0.06em;text-transform:uppercase;">Graph Memory Layer</p>
+    <div style="display:flex;flex-direction:column;gap:0.6rem;">
+      <div class="layer"><div><div class="layer-name">YOU — Central Routing Node</div><div style="font-size:0.72rem;color:var(--text3);">All data classified here first</div></div><span class="layer-badge" style="background:rgba(16,185,129,0.12);color:var(--green);border:1px solid rgba(16,185,129,0.25);">HUB</span></div>
+      <div class="layer"><div><div class="layer-name">10 Master Domain Nodes</div><div style="font-size:0.72rem;color:var(--text3);">Engineering, Research, Comms, System...</div></div><span class="layer-badge" style="background:rgba(79,110,247,0.10);color:var(--blue);border:1px solid rgba(79,110,247,0.22);">CLASSIFIER</span></div>
+      <div class="layer"><div><div class="layer-name">Concept Nodes + relevance_score</div><div style="font-size:0.72rem;color:var(--text3);">Decays when unused, spikes on heavy use</div></div><span class="layer-badge" style="background:rgba(245,158,11,0.10);color:var(--amber);border:1px solid rgba(245,158,11,0.25);">KNOWLEDGE</span></div>
+      <div class="layer"><div><div class="layer-name">Relationship Edges</div><div style="font-size:0.72rem;color:var(--text3);">Hebbian: co-occurrence strengthens weight</div></div><span class="layer-badge" style="background:rgba(139,92,246,0.10);color:var(--violet);border:1px solid rgba(139,92,246,0.22);">CONNECT</span></div>
+    </div>
+  </div>
+  <div>
+    <p style="font-size:0.8rem;font-weight:600;color:var(--text2);margin-bottom:0.8rem;letter-spacing:0.06em;text-transform:uppercase;">Model Weight Layer</p>
+    <div style="display:flex;flex-direction:column;gap:0.6rem;">
+      <div class="layer"><div><div class="layer-name">BitNet b1.58 base</div><div style="font-size:0.72rem;color:var(--text3);">Weights ∈ {-1, 0, +1} — 7B model ≈ 1.4 GB</div></div><span class="layer-badge" style="background:rgba(245,158,11,0.10);color:var(--amber);border:1px solid rgba(245,158,11,0.25);">1.58-BIT</span></div>
+      <div class="layer"><div><div class="layer-name">Graph score → pruning mask</div><div style="font-size:0.72rem;color:var(--text3);">score≥7 protect, score≤3 zero-out heads</div></div><span class="layer-badge" style="background:rgba(79,110,247,0.10);color:var(--blue);border:1px solid rgba(79,110,247,0.22);">PERSONAL</span></div>
+      <div class="layer"><div><div class="layer-name">domain_to_heads lookup</div><div style="font-size:0.72rem;color:var(--text3);">Static table: domain → head_ids, built at setup</div></div><span class="layer-badge" style="background:rgba(20,184,166,0.10);color:var(--teal);border:1px solid rgba(20,184,166,0.25);">BRIDGE</span></div>
+      <div class="layer"><div><div class="layer-name">Sparse winning ticket subnetwork</div><div style="font-size:0.72rem;color:var(--text3);">~1.1 GB — tuned to your actual work</div></div><span class="layer-badge" style="background:rgba(16,185,129,0.10);color:var(--green);border:1px solid rgba(16,185,129,0.25);">YOUR MODEL</span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- MODULES (ApexCharts heatmap) -->
+<div class="wrap" id="modules" style="padding-top:2rem;">
+<div class="divider"></div>
+<p class="section-eyebrow reveal">10-Layer Architecture</p>
+<h2 class="section-title reveal">Every layer, explained plainly</h2>
+<p class="section-desc reveal" style="margin-bottom:2rem;">NeuroPACA is organized into 10 layers. Each layer handles one job. They communicate only through the EventBus — nothing calls anything else directly.</p>
+
+<div class="grid-2 reveal" style="gap:1.4rem;margin-bottom:2rem;">
+<div class="chart-wrap">
+  <div class="chart-title">Module dependency heatmap — who talks to whom via EventBus</div>
+  <div id="heatmapChart" style="height:340px;"></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:0.8rem;">
+  <div class="timeline">
+    <div class="tl-item"><div class="tl-time">L2 Sensing</div><div class="tl-line"><div class="tl-dot" style="border-color:#4f6ef7;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#4f6ef7;">L2 · </span>Reads OS signals every 60s</div><div class="tl-desc">CPU, RAM, disk, temp, processes, keystrokes. Publishes raw MetricSnapshot to EventBus.</div></div></div>
+    <div class="tl-item"><div class="tl-time">L3 Diagnosis</div><div class="tl-line"><div class="tl-dot" style="border-color:#f59e0b;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#f59e0b;">L3 · </span>Finds patterns in the signals</div><div class="tl-desc">SignalCorrelator detects FocusSession, HighLoad, Distraction patterns by comparing against thresholds.</div></div></div>
+    <div class="tl-item"><div class="tl-time">L4 Learning</div><div class="tl-line"><div class="tl-dot" style="border-color:#8b5cf6;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#8b5cf6;">L4 · </span>Updates the knowledge graph</div><div class="tl-desc">Each signal updates relevance_scores. BeliefPlasticity module adjusts edge weights using co-occurrence.</div></div></div>
+    <div class="tl-item"><div class="tl-time">L5 Drive</div><div class="tl-line"><div class="tl-dot" style="border-color:#ef4444;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#ef4444;">L5 · </span>Decides if action is needed</div><div class="tl-desc">PressureAccumulator builds up score. When threshold hit, it publishes PRESSURE_THRESHOLD_REACHED.</div></div></div>
+    <div class="tl-item"><div class="tl-time">L6 Idle Cog</div><div class="tl-line"><div class="tl-dot" style="border-color:#14b8a6;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#14b8a6;">L6 · </span>Thinks during idle/sleep</div><div class="tl-desc">DefaultModelNetwork generates insights. Reminiscence replays old nodes. Pruning mask updated.</div></div></div>
+    <div class="tl-item"><div class="tl-time">L9 Interface</div><div class="tl-line"><div class="tl-dot" style="border-color:#10b981;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#10b981;">L9 · </span>Talks to you</div><div class="tl-desc">InterfaceLayer surfaces insights to terminal or UI. Handles $, $?, $!, $$ prefix commands.</div></div></div>
+    <div class="tl-item"><div class="tl-time">L10 Orchestrate</div><div class="tl-line"><div class="tl-dot" style="border-color:#6c63ff;"></div><div class="tl-connector"></div></div><div class="tl-content"><div class="tl-title"><span class="tl-title-tag" style="color:#6c63ff;">L10 · </span>Starts and coordinates everything</div><div class="tl-desc">NeuroPACAOrchestrator boots all 8 modules, holds singleton references to EventBus, GraphMemory, BitNetRuntime.</div></div></div>
+  </div>
+</div>
+</div>
+
+<!-- CRITICAL INVARIANTS -->
+<div style="display:flex;flex-direction:column;gap:0.8rem;margin-top:1rem;" class="reveal">
+  <p style="font-size:0.8rem;font-weight:700;color:var(--red);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.4rem;">⚠ Critical invariants — must not violate</p>
+  <div class="invariant"><div class="inv-icon">1</div><div>EventBus, GraphMemory, BitNetRuntime are <strong>singletons</strong> — modules hold <em>references</em> to them, they do NOT inherit from them.</div></div>
+  <div class="invariant"><div class="inv-icon">2</div><div>GraphMemory uses <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:4px;">asyncio.Lock</code>, NOT <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:4px;">threading.Lock</code> — mixing these will silently deadlock.</div></div>
+  <div class="invariant"><div class="inv-icon">3</div><div><code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:4px;">BitNetRuntime.infer()</code> is <strong>blocking</strong> — always wrap in <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:4px;">loop.run_in_executor()</code> to avoid freezing the event loop.</div></div>
+  <div class="invariant"><div class="inv-icon">4</div><div>SignalCorrelator produces SIGNAL_CORRELATED; PressureAccumulator consumes it. Never let them call each other directly — always route through EventBus.</div></div>
+</div>
+</div>
+
+<!-- TECH FIX + MODEL STACK -->
+<div class="wrap" id="fix" style="padding-top:2rem;">
+<div class="divider"></div>
+<p class="section-eyebrow reveal">Technical Fix</p>
+<h2 class="section-title reveal">The one broken claim — and how to fix it</h2>
+<p class="section-desc reveal" style="margin-bottom:2rem;">The original design claimed graph scores drive pruning at inference time via Ollama. That's architecturally impossible. Here's what the problem is and what to do instead.</p>
+
+<div class="grid-2 reveal" style="gap:1.4rem;margin-bottom:1.4rem;">
+  <div class="card card-sm" style="border-color:rgba(239,68,68,0.25);background:rgba(239,68,68,0.04);">
+    <div style="font-size:0.7rem;font-weight:700;color:var(--red);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.8rem;">❌ The broken claim</div>
+    <div class="code" style="background:rgba(239,68,68,0.06);border-color:rgba(239,68,68,0.15);font-size:0.75rem;">
+<span class="c"># What was claimed:</span>
+graph_score → pruning_mask
+pruning_mask → Ollama HTTP call
+<span class="c"># Ollama serves frozen binary.</span>
+<span class="c"># You CANNOT reach inside</span>
+<span class="c"># and skip attention heads.</span>
+<span class="c"># That API does not exist.</span>
+    </div>
+    <div style="margin-top:1rem;font-size:0.82rem;color:var(--text2);line-height:1.7;">Ollama loads the model as a frozen binary. You send a prompt, you get a response. There is no "skip head 5" parameter in the API. What you described would require loading weights, modifying them in memory, re-serializing, then reloading — that takes seconds, not milliseconds.</div>
+  </div>
+  <div class="card card-sm" style="border-color:rgba(16,185,129,0.25);background:rgba(16,185,129,0.04);">
+    <div style="font-size:0.7rem;font-weight:700;color:var(--green);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.8rem;">✓ The fix — use llama.cpp directly</div>
+    <div class="code" style="background:rgba(16,185,129,0.06);border-color:rgba(16,185,129,0.15);font-size:0.75rem;">
+<span class="c"># Correct implementation:</span>
+scores = graph_db.query_scores()
+mask = build_head_mask(scores,
+         domain_to_heads_table)
+<span class="c"># Apply ONCE at model load</span>
+model = load_gguf_with_mask(
+    <span class="s">"bitnet-7b.gguf"</span>, mask)
+<span class="c"># Now inference uses your</span>
+<span class="c"># pruned subnetwork natively.</span>
+    </div>
+    <div style="margin-top:1rem;font-size:0.82rem;color:var(--text2);line-height:1.7;">llama.cpp exposes model internals. Apply the binary head mask once at load time. The sparse subnetwork runs natively at inference — no reload, no latency penalty. Mask only updates when scores change significantly (idle time).</div>
+  </div>
+</div>
+
+<div class="chart-wrap reveal">
+  <div class="chart-title">Memory footprint comparison: conventional 7B vs BitNet vs NeuroPACA personal ticket</div>
+  <div id="memChart" style="height:200px;"></div>
+</div>
+
+</div>
+
+<!-- VS COMPETITION -->
+<div class="wrap" style="padding-top:2rem;">
+<div class="divider"></div>
+<p class="section-eyebrow reveal">Competitive Position</p>
+<h2 class="section-title reveal">NeuroPACA vs the field</h2>
+<div class="chart-wrap reveal" style="margin-bottom:1.4rem;">
+  <div class="chart-title">Feature matrix — NeuroPACA vs Hermes Agent vs OpenClaw</div>
+  <div class="chart-canvas-wrap" style="position:relative;width:100%;height:320px;">
+    <canvas id="radarCompare"></canvas>
+  </div>
+</div>
+<div class="grid-3 reveal" style="gap:1.2rem;">
+  <div class="card card-sm" style="border-left:3px solid var(--blue);">
+    <div style="font-size:0.7rem;font-weight:700;color:var(--blue);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.6rem;">NeuroPACA's moat</div>
+    <div class="feat-desc">Passive OS-level behavioral sensing + personal graph pruning. Nobody else starts from OS signals. Hardware target: laptop CPU, ~1.1GB RAM. Complete privacy — zero cloud.</div>
+  </div>
+  <div class="card card-sm" style="border-left:3px solid var(--violet);">
+    <div style="font-size:0.7rem;font-weight:700;color:var(--violet);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.6rem;">Hermes Agent's moat</div>
+    <div class="feat-desc">32k stars, v0.18 already, task-execution skill creation loop. Actively shipping. 16+ messaging platforms. Needs 24GB+ VRAM for production use.</div>
+  </div>
+  <div class="card card-sm" style="border-left:3px solid var(--teal);">
+    <div style="font-size:0.7rem;font-weight:700;color:var(--teal);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.6rem;">The right framing</div>
+    <div class="feat-desc">NeuroPACA isn't a competing agent runtime — it's a behavioral data layer that agents like Hermes could plug into. Build the sensing + graph API as a module, not a product.</div>
+  </div>
+</div>
+</div>
+
+<!-- FOOTER -->
+<div class="wrap">
+<footer class="reveal">
+  <div class="footer-title">NeuroPACA v4</div>
+  <p class="footer-sub">BitNet b1.58 · llama.cpp · Graph Memory · Lottery Ticket Hypothesis · Hebbian Learning</p>
+  <p class="footer-sub" style="margin-top:0.4rem;">Research concept by Jatin Bhanot · Chitkara University · 2026</p>
+</footer>
+</div>
+
+<script>
+// ── SCROLL REVEAL ──
+const ro = new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');}});},{threshold:0.08});
+document.querySelectorAll('.reveal').forEach(el=>ro.observe(el));
+
+// ── D3 FLOWCHART ──
+(function(){
+const svg = d3.select('#flow-svg');
+const W = 1100, H = 820;
+
+const nodes = [
+  {id:'boot',   x:520, y:40,  w:140, h:46, label:'System Boot', sub:'NeuroPACAOrchestrator starts', color:'#4f6ef7', light:'rgba(79,110,247,0.12)'},
+  {id:'init',   x:520, y:120, w:180, h:46, label:'Init Services', sub:'Load BitNet · register 8 modules · start EventBus', color:'#4f6ef7', light:'rgba(79,110,247,0.10)'},
+  {id:'sense',  x:220, y:230, w:180, h:52, label:'L2 · Passive Sensing', sub:'CPU / RAM / Disk / Temp / Processes every 60s', color:'#14b8a6', light:'rgba(20,184,166,0.12)'},
+  {id:'bus',    x:460, y:230, w:160, h:52, label:'EventBus', sub:'Async pub/sub hub — all modules subscribe here', color:'#6c63ff', light:'rgba(108,99,255,0.10)'},
+  {id:'diag',   x:720, y:230, w:180, h:52, label:'L3 · Diagnosis', sub:'SignalCorrelator detects patterns', color:'#f59e0b', light:'rgba(245,158,11,0.10)'},
+  {id:'pat',    x:720, y:330, w:180, h:52, label:'Pattern Match?', sub:'FocusSession / HighLoad / Distraction', color:'#f59e0b', light:'rgba(245,158,11,0.10)', diamond:true},
+  {id:'noact',  x:920, y:330, w:130, h:46, label:'No action', sub:'Wait for next 60s cycle', color:'#8892b0', light:'rgba(136,146,176,0.10)'},
+  {id:'learn',  x:460, y:380, w:180, h:52, label:'L4 · Learning', sub:'BeliefPlasticity updates graph scores', color:'#8b5cf6', light:'rgba(139,92,246,0.12)'},
+  {id:'graph',  x:460, y:480, w:180, h:52, label:'GraphMemory update', sub:'relevance_score ↑ or ↓ per domain node', color:'#8b5cf6', light:'rgba(139,92,246,0.10)'},
+  {id:'drive',  x:220, y:480, w:180, h:52, label:'L5 · Drive', sub:'PressureAccumulator builds urgency score', color:'#ef4444', light:'rgba(239,68,68,0.10)'},
+  {id:'thresh', x:220, y:580, w:180, h:52, label:'Pressure threshold?', sub:'≥ configured limit → act', color:'#ef4444', light:'rgba(239,68,68,0.10)', diamond:true},
+  {id:'nothresh',x:60, y:580, w:120, h:46, label:'Keep watching', sub:'Continue loop', color:'#8892b0', light:'rgba(136,146,176,0.10)'},
+  {id:'idle',   x:700, y:480, w:200, h:52, label:'L6 · Idle Cognition', sub:'During idle/sleep — Reminiscence + Pruning', color:'#14b8a6', light:'rgba(20,184,166,0.12)'},
+  {id:'prune',  x:700, y:580, w:200, h:52, label:'Update pruning mask', sub:'graph score → head mask → reload subnetwork', color:'#14b8a6', light:'rgba(20,184,166,0.10)'},
+  {id:'iface',  x:460, y:680, w:180, h:52, label:'L9 · Interface', sub:'Surface insight to terminal / $, $?, $!, $$', color:'#10b981', light:'rgba(16,185,129,0.12)'},
+  {id:'user',   x:460, y:770, w:180, h:40, label:'User sees insight / acts', sub:'', color:'#4f6ef7', light:'rgba(79,110,247,0.14)'},
+];
+
+const links = [
+  {s:'boot',   t:'init',   label:''},
+  {s:'init',   t:'sense',  label:'spawn'},
+  {s:'init',   t:'bus',    label:'start'},
+  {s:'init',   t:'diag',   label:'spawn'},
+  {s:'sense',  t:'bus',    label:'MetricSnapshot'},
+  {s:'bus',    t:'diag',   label:'subscribe'},
+  {s:'bus',    t:'learn',  label:'subscribe'},
+  {s:'bus',    t:'drive',  label:'subscribe'},
+  {s:'diag',   t:'pat',    label:''},
+  {s:'pat',    t:'noact',  label:'no', labelColor:'#8892b0'},
+  {s:'pat',    t:'bus',    label:'SIGNAL_CORRELATED', labelColor:'#f59e0b'},
+  {s:'learn',  t:'graph',  label:'writes'},
+  {s:'graph',  t:'idle',   label:'scores'},
+  {s:'drive',  t:'thresh', label:''},
+  {s:'thresh', t:'nothresh',label:'no', labelColor:'#8892b0'},
+  {s:'thresh', t:'iface',  label:'PRESSURE_THRESHOLD_REACHED', labelColor:'#ef4444'},
+  {s:'idle',   t:'prune',  label:'at idle'},
+  {s:'iface',  t:'user',   label:'displays'},
+];
+
+function cx(n){return n.x + n.w/2;}
+function cy(n){return n.y + n.h/2;}
+function nodeById(id){return nodes.find(n=>n.id===id);}
+
+// draw arrows
+const defs = svg.append('defs');
+['#4f6ef7','#f59e0b','#ef4444','#14b8a6','#8892b0','#8b5cf6','#10b981','#6c63ff'].forEach(c=>{
+  defs.append('marker').attr('id','arr'+c.replace('#',''))
+    .attr('viewBox','0 0 10 10').attr('refX',8).attr('refY',5)
+    .attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto-start-reverse')
+    .append('path').attr('d','M2 1L8 5L2 9').attr('fill','none')
+    .attr('stroke',c).attr('stroke-width',1.5)
+    .attr('stroke-linecap','round').attr('stroke-linejoin','round');
+});
+
+links.forEach(lk=>{
+  const s = nodeById(lk.s), t = nodeById(lk.t);
+  if(!s||!t) return;
+  const sc = lk.labelColor || s.color;
+  const x1=cx(s), y1=s.y+s.h, x2=cx(t), y2=t.y;
+  let d;
+  // simple elbow paths
+  if(Math.abs(x1-x2)<10){ d=`M${x1},${y1} L${x2},${y2}`; }
+  else {
+    const my = (y1+y2)/2;
+    d=`M${x1},${y1} L${x1},${my} L${x2},${my} L${x2},${y2}`;
+  }
+  svg.append('path').attr('d',d).attr('fill','none')
+    .attr('stroke',sc).attr('stroke-width',1.5).attr('stroke-dasharray','5 3').attr('opacity',0.65)
+    .attr('marker-end',`url(#arr${sc.replace('#','')})` );
+  if(lk.label){
+    const mx2=(x1+x2)/2, my2=(y1+y2)/2;
+    svg.append('text').attr('x',mx2).attr('y',my2-4)
+      .attr('text-anchor','middle').attr('font-size',9)
+      .attr('font-family','JetBrains Mono,monospace')
+      .attr('fill',sc).attr('opacity',0.85).text(lk.label);
+  }
+});
+
+// draw nodes
+nodes.forEach(n=>{
+  const g = svg.append('g').attr('cursor','default');
+  if(n.diamond){
+    const dx=n.w/2, dy=n.h/2, cx2=n.x+dx, cy2=n.y+dy;
+    g.append('polygon')
+      .attr('points',`${cx2},${n.y} ${n.x+n.w},${cy2} ${cx2},${n.y+n.h} ${n.x},${cy2}`)
+      .attr('fill',n.light).attr('stroke',n.color).attr('stroke-width',1.5).attr('rx',4);
+  } else {
+    g.append('rect').attr('x',n.x).attr('y',n.y).attr('width',n.w).attr('height',n.h)
+      .attr('rx',10).attr('fill',n.light).attr('stroke',n.color).attr('stroke-width',1.5);
+  }
+  g.append('text').attr('x',cx(n)).attr('y',n.y + (n.sub?n.h*0.36:n.h*0.5))
+    .attr('text-anchor','middle').attr('dominant-baseline','middle')
+    .attr('font-size',12).attr('font-weight',600).attr('font-family','Space Grotesk,sans-serif')
+    .attr('fill',n.color).text(n.label);
+  if(n.sub){
+    g.append('text').attr('x',cx(n)).attr('y',n.y+n.h*0.67)
+      .attr('text-anchor','middle').attr('dominant-baseline','middle')
+      .attr('font-size',9).attr('font-family','Inter,sans-serif')
+      .attr('fill','#4b5280').attr('opacity',0.85).text(n.sub);
+  }
+});
+})();
+
+// ── SHARED domain/score source of truth ──
+// Categories and scores are defined once and reused in both charts
+// to guarantee they always match each other.
+const DOMAINS   = ['Engineering','Research','Dev Tools','Learning','System','Mental Models','Design','Writing','Meetings','Comms/Email'];
+const SCORES    = [9.2, 8.1, 7.6, 6.5, 5.4, 4.8, 3.2, 2.1, 1.8, 1.1];
+
+// ── APEX RADAR (domain scores) ──
+const radarChart = new ApexCharts(document.querySelector('#radarChart'),{
+  series:[{name:'relevance_score', data: SCORES}],
+  chart:{type:'radar',height:280,toolbar:{show:false},background:'transparent'},
+  xaxis:{categories: DOMAINS},
+  fill:{opacity:0.18,colors:['#4f6ef7']},
+  stroke:{width:2,colors:['#4f6ef7']},
+  markers:{size:4,colors:['#4f6ef7']},
+  plotOptions:{radar:{polygons:{strokeColors:'rgba(79,110,247,0.12)',fill:{colors:['rgba(255,255,255,0.4)','rgba(255,255,255,0.2)']}}}},
+  theme:{mode:'light'},
+  grid:{padding:{top:0,bottom:0}},
+});
+radarChart.render();
+
+// ── CHART.JS BAR — prune decision ──
+(function(){
+const domains = DOMAINS;
+const scores  = SCORES;
+const barColors  = scores.map(s => s>=7 ? 'rgba(16,185,129,0.75)' : s>=4 ? 'rgba(245,158,11,0.65)' : 'rgba(239,68,68,0.65)');
+const barBorders = scores.map(s => s>=7 ? '#10b981' : s>=4 ? '#f59e0b' : '#ef4444');
+const pruneChartInstance = new Chart(document.getElementById('pruneChart'),{
+  type:'bar',
+  data:{
+    labels:domains,
+    datasets:[{label:'relevance_score',data:scores,backgroundColor:barColors,borderColor:barBorders,borderWidth:1.5,borderRadius:6}]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    indexAxis:'y',
+    plugins:{
+      legend:{display:false},
+      tooltip:{callbacks:{label:ctx=>{const v=ctx.raw;return `score: ${v} → ${v>=7?'PROTECT heads':v>=4?'keep':' PRUNE heads ✂'}`;}}}
+    },
+    scales:{
+      x:{min:0,max:10,grid:{color:'rgba(79,110,247,0.07)'},ticks:{font:{size:10},color:'#8892b0'},border:{color:'rgba(79,110,247,0.15)'}},
+      y:{grid:{display:false},ticks:{font:{size:10,family:'JetBrains Mono'},color:'#4b5280'},border:{display:false}}
+    }
+  }
+});
+})();
+
+// ── APEX HEATMAP (module interactions) ──
+(function(){
+const mods = ['L2 Sensing','L3 Diag','L4 Learn','L5 Drive','L6 Idle','L9 Interface','L1 Core','L10 Orch'];
+const matrix = [
+  [0,9,2,3,0,0,8,5],
+  [0,0,8,7,1,0,6,3],
+  [0,0,0,2,6,0,9,4],
+  [0,0,0,0,0,7,5,6],
+  [0,0,7,0,0,3,8,4],
+  [0,0,0,0,0,0,4,5],
+  [9,8,9,8,9,8,0,9],
+  [8,7,7,7,7,7,9,0],
+];
+const series = mods.map((name,i)=>({name,data:mods.map((m2,j)=>({x:m2,y:matrix[i][j]}))}));
+new ApexCharts(document.getElementById('heatmapChart'),{
+  series,
+  chart:{type:'heatmap',height:340,toolbar:{show:false},background:'transparent'},
+  dataLabels:{enabled:false},
+  colors:['#4f6ef7'],
+  plotOptions:{heatmap:{shadeIntensity:0.65,colorScale:{ranges:[
+    {from:0,to:0,color:'rgba(238,242,251,0.5)',name:'none'},
+    {from:1,to:4,color:'rgba(79,110,247,0.22)',name:'low'},
+    {from:5,to:7,color:'rgba(79,110,247,0.55)',name:'med'},
+    {from:8,to:9,color:'rgba(79,110,247,0.88)',name:'high'},
+  ]}}},
+  xaxis:{labels:{style:{fontSize:'9px',fontFamily:'JetBrains Mono',colors:Array(8).fill('#4b5280')},rotate:-30}},
+  yaxis:{labels:{style:{fontSize:'9px',fontFamily:'JetBrains Mono',colors:Array(8).fill('#4b5280')}}},
+  grid:{padding:{top:0,right:0,bottom:0,left:0}},
+  stroke:{width:2,colors:['rgba(238,242,251,0.8)']},
+  theme:{mode:'light'},
+  tooltip:{y:{formatter:v=>v===0?'no link':`coupling: ${v}/9`}},
+}).render();
+})();
+
+// ── APEX BAR — memory footprint ──
+(function(){
+new ApexCharts(document.getElementById('memChart'),{
+  series:[{name:'RAM (GB)',data:[28,1.4,1.1]}],
+  chart:{type:'bar',height:200,toolbar:{show:false},background:'transparent'},
+  plotOptions:{bar:{horizontal:true,borderRadius:8,dataLabels:{position:'top'}}},
+  dataLabels:{enabled:true,formatter:v=>`${v} GB`,offsetX:6,style:{fontSize:'12px',fontWeight:600,colors:['#4b5280']}},
+  xaxis:{categories:['Conventional 7B (float32)','BitNet 7B b1.58','NeuroPACA personal ticket'],labels:{formatter:v=>`${v} GB`,style:{fontSize:'10px',colors:Array(3).fill('#8892b0')}}},
+  colors:['#ef4444','#f59e0b','#10b981'],
+  grid:{borderColor:'rgba(79,110,247,0.07)',xaxis:{lines:{show:true}}},
+  theme:{mode:'light'},
+  tooltip:{y:{formatter:v=>`${v} GB RAM`}},
+  legend:{show:false},
+}).render();
+})();
+
+// ── CHART.JS RADAR — competitive compare ──
+(function(){
+const labels = ['Passive OS sensing','Privacy / local-only','Low hardware req','Task execution','Skill learning','Community / shipping','Graph memory'];
+const compareChart = new Chart(document.getElementById('radarCompare'),{
+  type:'radar',
+  data:{
+    labels,
+    datasets:[
+      {
+        label:'NeuroPACA',
+        data:[10,10,10,4,3,1,10],
+        backgroundColor:'rgba(79,110,247,0.12)',
+        borderColor:'#4f6ef7',borderWidth:2.5,
+        pointBackgroundColor:'#4f6ef7',pointRadius:5,pointStyle:'circle'
+      },
+      {
+        label:'Hermes Agent',
+        data:[2,8,3,9,10,10,5],
+        backgroundColor:'rgba(108,99,255,0.08)',
+        borderColor:'#6c63ff',borderWidth:2,
+        borderDash:[6,3],
+        pointBackgroundColor:'#6c63ff',pointRadius:5,pointStyle:'triangle'
+      },
+      {
+        label:'OpenClaw',
+        data:[1,7,4,8,3,7,2],
+        backgroundColor:'rgba(20,184,166,0.08)',
+        borderColor:'#14b8a6',borderWidth:2,
+        borderDash:[2,4],
+        pointBackgroundColor:'#14b8a6',pointRadius:5,pointStyle:'rect'
+      },
+    ]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    scales:{r:{
+      min:0,max:10,
+      angleLines:{color:'rgba(79,110,247,0.12)'},
+      grid:{color:'rgba(79,110,247,0.10)'},
+      pointLabels:{font:{size:11,family:'Inter'},color:'#4b5280'},
+      ticks:{stepSize:2,backdropColor:'transparent',color:'#8892b0',font:{size:9}}
+    }},
+    plugins:{legend:{labels:{font:{size:11,family:'Inter'},color:'#4b5280',padding:18,usePointStyle:true,pointStyleWidth:12}}}
+  }
+});
+})();
+</script>
+</body>
+</html>

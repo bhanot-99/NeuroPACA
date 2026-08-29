@@ -1,0 +1,2104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeuroPACA — Personal Autonomous Computing Agent</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0f1117;--bg2:#161b27;--bg3:#1e2535;--bg4:#252d3d;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.13);
+  --text:#e8eaf0;--muted:#7a8099;
+  --accent:#6c8fff;--accent2:#a78bfa;--accent3:#34d399;--accent4:#fb923c;--accent5:#f472b6;
+  --glow:rgba(108,143,255,0.15);
+  --green:#00ff88;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--text);overflow-x:hidden;cursor:none;}
+
+#cursor{position:fixed;width:12px;height:12px;background:var(--accent);border-radius:50%;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);transition:transform 0.1s,background 0.2s;mix-blend-mode:screen;}
+#cursor-ring{position:fixed;width:36px;height:36px;border:1px solid rgba(108,143,255,0.4);border-radius:50%;pointer-events:none;z-index:9998;transform:translate(-50%,-50%);transition:all 0.15s ease;mix-blend-mode:screen;}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");opacity:0.4;pointer-events:none;z-index:1;}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:500;display:flex;align-items:center;justify-content:space-between;padding:1.2rem 3rem;background:rgba(15,17,23,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}
+.nav-logo{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;letter-spacing:-0.02em;color:var(--text);cursor:pointer;}
+.nav-logo span{color:var(--accent);}
+.nav-links{display:flex;gap:0.3rem;align-items:center;}
+.nav-btn{font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:var(--muted);text-decoration:none;letter-spacing:0.08em;text-transform:uppercase;padding:0.45rem 0.9rem;border-radius:6px;border:1px solid transparent;cursor:pointer;background:none;transition:all 0.2s;}
+.nav-btn:hover{color:var(--accent);border-color:rgba(108,143,255,0.2);background:rgba(108,143,255,0.05);}
+.nav-btn.active{color:var(--accent);border-color:rgba(108,143,255,0.35);background:rgba(108,143,255,0.08);}
+
+.tooltip{position:fixed;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:0.5rem 0.8rem;font-size:0.72rem;pointer-events:none;z-index:600;display:none;max-width:220px;line-height:1.5;}
+
+.page{display:none;min-height:100vh;padding-top:70px;}
+.page.active{display:block;}
+
+.reveal{opacity:0;transform:translateY(30px);transition:opacity 0.7s,transform 0.7s;}
+.reveal.visible{opacity:1;transform:translateY(0);}
+
+/* HERO */
+.hero{min-height:calc(100vh - 70px);display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;padding:0 2rem;text-align:center;z-index:2;}
+.hero-badge{display:inline-flex;align-items:center;gap:0.5rem;font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);border:1px solid rgba(108,143,255,0.3);padding:0.4rem 1rem;border-radius:100px;margin-bottom:2rem;background:rgba(108,143,255,0.06);}
+.hero-badge::before{content:'';width:6px;height:6px;background:var(--accent3);border-radius:50%;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.5;transform:scale(1.3);}}
+.hero-title{font-family:'Syne',sans-serif;font-size:clamp(3rem,7vw,6.5rem);font-weight:800;line-height:0.95;letter-spacing:-0.04em;margin-bottom:1.5rem;}
+.hero-title .line1{display:block;color:var(--text);}
+.hero-title .line2{display:block;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero-sub{font-family:'Instrument Serif',serif;font-style:italic;font-size:clamp(1rem,2vw,1.4rem);color:var(--muted);max-width:600px;line-height:1.6;margin-bottom:2.5rem;}
+.hero-stats{display:flex;gap:3rem;justify-content:center;flex-wrap:wrap;margin-bottom:3rem;}
+.stat{text-align:center;}
+.stat-num{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;color:var(--accent);display:block;}
+.stat-label{font-size:0.65rem;color:var(--muted);letter-spacing:0.12em;text-transform:uppercase;}
+.hero::after{content:'';position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:60px 60px;mask-image:radial-gradient(ellipse 80% 60% at 50% 50%,black,transparent);pointer-events:none;}
+
+.page-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;max-width:900px;margin:0 auto;}
+.page-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.4rem;cursor:pointer;transition:all 0.25s;text-align:left;}
+.page-card:hover{border-color:var(--border2);transform:translateY(-4px);background:var(--bg3);}
+.pc-icon{font-size:1.5rem;margin-bottom:0.8rem;}
+.pc-title{font-family:'Syne',sans-serif;font-size:0.85rem;font-weight:700;margin-bottom:0.3rem;}
+.pc-desc{font-size:0.68rem;color:var(--muted);line-height:1.5;}
+.pc-arrow{font-size:0.75rem;color:var(--accent);margin-top:0.8rem;display:block;}
+
+section{position:relative;z-index:2;padding:5rem 3rem;}
+.section-label{font-size:0.72rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--accent);margin-bottom:1rem;}
+.section-title{font-family:'Syne',sans-serif;font-size:clamp(2rem,4vw,3.2rem);font-weight:800;letter-spacing:-0.03em;line-height:1.1;margin-bottom:1rem;}
+.section-desc{color:var(--muted);font-size:0.92rem;line-height:1.9;max-width:620px;}
+
+#what{background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.what-grid{display:grid;grid-template-columns:1fr 1fr;gap:3rem;margin-top:3rem;align-items:center;}
+.what-features{display:grid;gap:1rem;}
+.feat-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.5rem;display:flex;gap:1rem;align-items:flex-start;transition:all 0.3s;cursor:pointer;}
+.feat-card:hover{border-color:var(--accent);transform:translateX(6px);}
+.feat-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;}
+.feat-title{font-family:'Syne',sans-serif;font-size:1rem;font-weight:600;margin-bottom:0.3rem;}
+.feat-desc{font-size:0.83rem;color:var(--muted);line-height:1.7;}
+.terminal-mock{background:#0a0d14;border:1px solid var(--border2);border-radius:12px;overflow:hidden;font-size:0.78rem;}
+.terminal-bar{display:flex;align-items:center;gap:0.5rem;padding:0.8rem 1rem;background:var(--bg3);border-bottom:1px solid var(--border);}
+.t-dot{width:10px;height:10px;border-radius:50%;}
+.terminal-body{padding:1.2rem;line-height:2;}
+.t-line{display:flex;gap:0.5rem;opacity:0;animation:typein 0.3s forwards;}
+.t-prompt{color:var(--accent3);}
+.t-cmd{color:var(--text);}
+.t-out{color:var(--muted);}
+.t-ai{color:var(--accent2);}
+.t-ok{color:var(--accent3);}
+@keyframes typein{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+
+#arch{background:var(--bg);}
+.arch-svg-wrap{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:2rem;overflow:hidden;}
+#arch-svg{width:100%;height:auto;display:block;}
+.modules-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:1.2rem;margin-top:2rem;}
+.module-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;transition:all 0.3s;cursor:pointer;position:relative;overflow:hidden;}
+.module-card::before{content:'';position:absolute;inset:0;opacity:0;transition:opacity 0.3s;}
+.module-card:hover::before{opacity:1;}
+.module-card.diag::before{background:radial-gradient(circle at 50% 0%,rgba(251,146,60,0.1),transparent 70%);}
+.module-card.learn::before{background:radial-gradient(circle at 50% 0%,rgba(167,139,250,0.1),transparent 70%);}
+.module-card.action::before{background:radial-gradient(circle at 50% 0%,rgba(52,211,153,0.1),transparent 70%);}
+.module-card.bus::before{background:radial-gradient(circle at 50% 0%,rgba(108,143,255,0.1),transparent 70%);}
+.module-card:hover{border-color:var(--border2);transform:translateY(-4px);}
+.mod-header{display:flex;align-items:center;gap:0.8rem;margin-bottom:1rem;}
+.mod-dot{width:10px;height:10px;border-radius:50%;}
+.mod-name{font-family:'Syne',sans-serif;font-size:1.05rem;font-weight:700;}
+.mod-agents{display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.8rem;}
+.agent-tag{font-size:0.7rem;padding:0.28rem 0.65rem;border-radius:100px;border:1px solid;letter-spacing:0.05em;}
+
+#flow{background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.flow-steps{display:grid;grid-template-columns:repeat(5,1fr);gap:0;margin-top:3rem;position:relative;}
+.flow-steps::before{content:'';position:absolute;top:2rem;left:10%;right:10%;height:1px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),var(--accent3),transparent);}
+.flow-step{text-align:center;padding:0 1rem;}
+.flow-num{width:4rem;height:4rem;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.2rem;font-family:'Syne',sans-serif;font-weight:800;font-size:1.1rem;position:relative;z-index:1;}
+.flow-step-title{font-family:'Syne',sans-serif;font-size:0.8rem;font-weight:700;margin-bottom:0.4rem;}
+.flow-step-desc{font-size:0.68rem;color:var(--muted);line-height:1.6;}
+
+#learning{background:var(--bg);}
+.learning-layout{display:grid;grid-template-columns:1fr 1.2fr;gap:3rem;margin-top:3rem;align-items:start;}
+.process-feed{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.pf-header{padding:1rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.pf-title{font-size:0.75rem;font-weight:500;}
+.pf-live{font-size:0.65rem;color:var(--accent3);display:flex;align-items:center;gap:0.4rem;}
+.pf-live::before{content:'';width:6px;height:6px;background:var(--accent3);border-radius:50%;animation:pulse 1.5s infinite;}
+.process-row{display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 1fr;gap:0.5rem;padding:0.6rem 1.2rem;border-bottom:1px solid var(--border);font-size:0.7rem;align-items:center;transition:background 0.2s;}
+.process-row:hover{background:var(--bg3);}
+.process-row.header{color:var(--muted);font-size:0.62rem;letter-spacing:0.08em;text-transform:uppercase;}
+.proc-name{color:var(--text);}
+.bar-mini{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;}
+.bar-mini-fill{height:100%;border-radius:2px;transition:width 1s;}
+.proc-tag{font-size:0.6rem;padding:0.15rem 0.5rem;border-radius:100px;}
+.insights-col{display:flex;flex-direction:column;gap:1rem;}
+.insight-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.5rem;position:relative;overflow:hidden;}
+.insight-label{font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:0.5rem;}
+.insight-value{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;margin-bottom:0.3rem;}
+.insight-sub{font-size:0.7rem;color:var(--muted);}
+
+#terminal-feat{background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.terminal-layout{display:grid;grid-template-columns:1fr 1fr;gap:3rem;margin-top:3rem;align-items:center;}
+.prefix-demo{display:flex;flex-direction:column;gap:1rem;}
+.prefix-item{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:1rem 1.2rem;display:flex;align-items:center;gap:1rem;transition:all 0.3s;cursor:pointer;}
+.prefix-item:hover{border-color:var(--accent);background:var(--bg4);}
+.prefix-sym{font-family:'JetBrains Mono',monospace;font-size:1.2rem;font-weight:500;width:2rem;text-align:center;}
+.prefix-cmd{font-size:0.8rem;color:var(--text);margin-bottom:0.2rem;}
+.prefix-meaning{font-size:0.68rem;color:var(--muted);}
+.interactive-terminal{background:#0a0d14;border:1px solid var(--border2);border-radius:12px;overflow:hidden;}
+.it-bar{display:flex;align-items:center;gap:0.5rem;padding:0.8rem 1rem;background:var(--bg3);border-bottom:1px solid var(--border);}
+.it-body{padding:1rem;min-height:260px;display:flex;flex-direction:column;}
+.it-output{flex:1;overflow-y:auto;margin-bottom:1rem;}
+.it-line{font-size:0.75rem;line-height:1.8;padding:0.1rem 0;}
+.it-input-row{display:flex;align-items:center;gap:0.5rem;border-top:1px solid var(--border);padding-top:0.8rem;}
+.it-prompt-label{color:var(--accent3);font-size:0.75rem;}
+.it-input{background:transparent;border:none;outline:none;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:0.75rem;flex:1;}
+
+#neuro{background:var(--bg);}
+.neuro-layout{display:grid;grid-template-columns:1fr 1fr;gap:3rem;margin-top:3rem;align-items:start;}
+.neuro-canvas-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.neuro-canvas-header{padding:1rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+#neuroCanvas{width:100%;display:block;}
+.neuro-concepts{display:flex;flex-direction:column;gap:1.2rem;}
+.concept{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.5rem;border-left:3px solid;}
+.concept-title{font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.4rem;}
+.concept-desc{font-size:0.83rem;color:var(--muted);line-height:1.75;}
+.concept-formula{font-size:0.78rem;margin-top:0.6rem;padding:0.4rem 0.8rem;background:var(--bg3);border-radius:6px;color:var(--accent2);}
+
+/* HYBRID ARCHITECTURE PAGE */
+.hybrid-hero{padding:4rem 3rem 2rem;background:var(--bg);}
+.hybrid-grid{display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin-top:3rem;}
+.hybrid-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:2rem;transition:all 0.3s;}
+.hybrid-card:hover{transform:translateY(-4px);border-color:var(--border2);}
+.hybrid-card-title{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;margin-bottom:0.5rem;}
+.hybrid-card-sub{font-size:0.72rem;color:var(--muted);line-height:1.7;margin-bottom:1.2rem;}
+.arch-stack{display:flex;flex-direction:column;gap:0.5rem;}
+.arch-layer{padding:0.8rem 1rem;border-radius:8px;border:1px solid;font-size:0.75rem;display:flex;align-items:center;justify-content:space-between;}
+.arch-layer-name{font-weight:600;}
+.arch-layer-badge{font-size:0.62rem;opacity:0.7;letter-spacing:0.05em;}
+
+.graph-section{padding:4rem 3rem;background:var(--bg2);border-top:1px solid var(--border);}
+#graphCanvas{width:100%;height:340px;display:block;border-radius:8px;}
+.graph-legend{display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:1.5rem;}
+.gl-item{display:flex;align-items:center;gap:0.5rem;font-size:0.72rem;color:var(--muted);}
+.gl-dot{width:10px;height:10px;border-radius:50%;}
+
+.reminiscence-section{padding:4rem 3rem;background:var(--bg);}
+.remini-grid{display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin-top:2rem;}
+.remini-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.8rem;}
+.remini-title{font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.5rem;}
+.remini-desc{font-size:0.75rem;color:var(--muted);line-height:1.7;}
+.remini-flow{display:flex;flex-direction:column;gap:0.6rem;margin-top:1.2rem;}
+.rf-step{display:flex;align-items:flex-start;gap:0.8rem;font-size:0.72rem;}
+.rf-num{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;flex-shrink:0;margin-top:1px;}
+.rf-text{color:var(--muted);line-height:1.6;}
+
+.load-section{padding:4rem 3rem;background:var(--bg2);border-top:1px solid var(--border);}
+.load-tiers{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:2rem;}
+.load-tier{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:1.5rem;text-align:center;}
+.load-tier-label{font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:0.8rem;}
+.load-tier-name{font-family:'Syne',sans-serif;font-size:0.9rem;font-weight:700;margin-bottom:0.5rem;}
+.load-tier-cost{font-size:0.7rem;color:var(--muted);margin-bottom:0.5rem;}
+.load-tier-bar{height:6px;border-radius:3px;margin-top:0.8rem;}
+
+/* MEMORY PAGE */
+.sl-page{background:var(--bg);padding:4rem 3rem;}
+.old-section{margin-bottom:3rem;}
+.old-flow{display:flex;align-items:stretch;gap:0;border:1px solid rgba(255,68,68,0.15);border-radius:12px;overflow:hidden;background:#0a0d10;}
+.old-node{flex:1;padding:20px 16px;border-right:1px solid rgba(255,68,68,0.12);transition:background 0.2s;}
+.old-node:last-child{border-right:none;}
+.old-node:hover{background:#1a0a0a;}
+.old-node .label{font-size:10px;color:#ff4444;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
+.old-node .title{font-size:13px;font-weight:600;color:#fff;margin-bottom:6px;}
+.old-node .desc{font-size:11px;color:var(--muted);line-height:1.6;}
+.problems{display:flex;gap:10px;margin-top:1rem;flex-wrap:wrap;}
+.problem-tag{background:#1a0808;border:1px solid rgba(255,68,68,0.2);border-radius:6px;padding:6px 12px;font-size:11px;color:#ff6666;display:flex;align-items:center;gap:8px;}
+.problem-tag::before{content:'✗';color:#ff4444;font-weight:700;}
+.vs-divider{text-align:center;margin:2rem 0;position:relative;}
+.vs-divider::before{content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent);}
+.vs-badge{display:inline-block;position:relative;background:var(--bg);padding:0 20px;font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:var(--green);letter-spacing:4px;}
+.why-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:1.5rem;}
+.why-card{background:#0a1a12;border:1px solid rgba(0,255,136,0.1);border-radius:10px;padding:18px 20px;transition:all 0.2s;}
+.why-card:hover{border-color:rgba(0,255,136,0.3);transform:translateY(-2px);}
+.why-card .icon{font-size:20px;margin-bottom:10px;}
+.why-card .wc-title{font-size:12px;font-weight:700;color:var(--green);margin-bottom:6px;letter-spacing:1px;}
+.why-card .wc-desc{font-size:11px;color:var(--muted);line-height:1.7;}
+.chain-section{margin-top:3rem;}
+.final-box{margin-top:2rem;background:#0a1a0a;border:1px solid rgba(0,255,136,0.2);border-radius:12px;padding:24px 28px;}
+.final-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.final-lbl{font-size:11px;color:var(--green);margin-bottom:8px;letter-spacing:1px;}
+.final-desc{font-size:12px;color:var(--muted);line-height:1.7;}
+.final-result{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.8;}
+.final-result span{color:var(--green);}
+
+/* WORKFLOW PAGE */
+.workflow-page{background:#0d1117;}
+.wf-header{padding:1.5rem 3rem;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;}
+.wf-title{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;color:#e6edf3;}
+.wf-sub{font-size:11px;color:#7d8590;margin-top:3px;}
+.wf-legend{display:flex;gap:14px;flex-wrap:wrap;}
+.wl-item{display:flex;align-items:center;gap:5px;font-size:10px;color:#7d8590;font-family:'JetBrains Mono',monospace;}
+.wl-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0;}
+.wf-controls{display:flex;gap:8px;padding:0.8rem 3rem;background:#161b22;border-bottom:1px solid #30363d;flex-wrap:wrap;}
+.wf-btn{padding:4px 12px;font-size:10px;font-family:'JetBrains Mono',monospace;background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;cursor:pointer;transition:background 0.15s;}
+.wf-btn:hover{background:#30363d;}
+.wf-btn.active{background:#1f6feb;border-color:#1f6feb;color:#fff;}
+.swf-step-card{border-radius:8px;border:1.5px solid;padding:12px 14px;margin-bottom:8px;cursor:pointer;position:relative;transition:box-shadow 0.2s;}
+.swf-step-card:hover{box-shadow:0 0 0 1px rgba(255,255,255,0.08);}
+.swf-num{position:absolute;top:-1px;left:-1px;width:22px;height:22px;border-radius:6px 0 6px 0;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:bold;}
+.swf-title{font-size:12px;font-weight:bold;color:#e6edf3;margin-left:18px;margin-bottom:4px;font-family:'JetBrains Mono',monospace;}
+.swf-sub{font-size:10px;color:#7d8590;margin-left:18px;line-height:1.6;font-family:'JetBrains Mono',monospace;}
+.swf-status{position:absolute;top:10px;right:10px;font-size:9px;padding:2px 7px;border-radius:10px;font-weight:bold;letter-spacing:.5px;font-family:'JetBrains Mono',monospace;}
+.s-done{background:#0d2318;border-color:#2ea043;}.s-done .swf-num{background:#2ea043;color:#fff;}.s-done .swf-status{background:#0d2318;color:#2ea043;border:1px solid #2ea043;}
+.s-active{background:#0d1f35;border-color:#388bfd;}.s-active .swf-num{background:#388bfd;color:#fff;}.s-active .swf-status{background:#0d1f35;color:#388bfd;border:1px solid #388bfd;}
+.s-todo{background:#161b22;border-color:#30363d;}.s-todo .swf-num{background:#30363d;color:#7d8590;}.s-todo .swf-status{background:#161b22;color:#7d8590;border:1px solid #30363d;}
+.swf-connector{display:flex;flex-direction:column;align-items:center;margin:2px 0;}
+.swf-conn-line{width:2px;height:12px;}
+.swf-conn-arrow{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;}
+.phase-div{display:flex;align-items:center;gap:8px;margin:12px 0 8px;}
+.phase-div-line{flex:1;height:1px;background:#21262d;}
+.phase-div-label{font-size:9px;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;padding:2px 8px;border-radius:3px;font-weight:bold;font-family:'JetBrains Mono',monospace;}
+.special-paths{margin:12px 0;background:#161b22;border:1px solid #21262d;border-radius:8px;overflow:hidden;}
+.sp-header{padding:7px 12px;font-size:10px;color:#7d8590;border-bottom:1px solid #21262d;letter-spacing:1px;text-transform:uppercase;font-family:'JetBrains Mono',monospace;}
+.sp-row{display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:1px solid #0d1117;font-family:'JetBrains Mono',monospace;}
+.sp-row:last-child{border-bottom:none;}
+.sp-arrow{font-size:11px;font-weight:bold;width:28px;text-align:center;}
+.sp-title{font-size:10px;font-weight:bold;color:#e6edf3;margin-bottom:2px;}
+.sp-desc{font-size:9px;color:#7d8590;line-height:1.5;}
+.sp-badge{font-size:8px;padding:1px 6px;border-radius:10px;margin-left:auto;white-space:nowrap;border:1px solid;font-weight:bold;}
+
+/* SPARSE MODEL PAGE */
+.sparse-hero{padding:4rem 3rem 2rem;background:var(--bg);}
+.code-block{background:#080c12;border:1px solid var(--border2);border-radius:10px;padding:1.4rem 1.8rem;font-size:0.8rem;line-height:1.9;overflow-x:auto;}
+.code-block .kw{color:#6c8fff;}
+.code-block .str{color:#34d399;}
+.code-block .cmt{color:var(--muted);}
+.code-block .num{color:#fb923c;}
+.code-block .key{color:#a78bfa;}
+.score-tier{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.2rem;margin-top:1.5rem;}
+.tier-card{border-radius:12px;padding:1.4rem;border:1px solid;text-align:center;}
+.tier-range{font-family:'Syne',sans-serif;font-size:1.6rem;font-weight:800;margin-bottom:0.4rem;}
+.tier-label{font-size:0.72rem;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.6rem;}
+.tier-desc{font-size:0.72rem;color:var(--muted);line-height:1.6;}
+.lookup-table{width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:1.2rem;}
+.lookup-table th{padding:0.6rem 1rem;text-align:left;font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border2);}
+.lookup-table td{padding:0.7rem 1rem;border-bottom:1px solid var(--border);font-size:0.78rem;}
+.lookup-table tr:hover td{background:var(--bg3);}
+.lth-card{background:var(--bg2);border:1px solid rgba(167,139,250,0.3);border-radius:14px;padding:2rem;margin-top:1.5rem;border-left:4px solid #a78bfa;}
+.bitnet-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-top:1.5rem;}
+.bitnet-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
+.unified-flow{display:flex;flex-direction:column;gap:0;}
+
+footer{background:var(--bg2);border-top:1px solid var(--border);padding:2.5rem 3rem;text-align:center;z-index:2;position:relative;}
+
+/* ── NEW ARCHITECTURE CONCEPTS ── */
+.new-arch-section{padding:4rem 3rem;background:var(--bg);border-top:1px solid var(--border);}
+.new-arch-grid{display:grid;grid-template-columns:1fr;gap:2rem;margin-top:2.5rem;}
+.nac{border-radius:14px;border:1px solid;padding:2rem;position:relative;overflow:hidden;}
+.nac::before{content:'';position:absolute;inset:0;opacity:0.04;pointer-events:none;}
+.nac-badge{font-size:0.62rem;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:0.8rem;}
+.nac-title{font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:800;margin-bottom:0.5rem;}
+.nac-sub{font-size:0.82rem;color:var(--muted);line-height:1.8;margin-bottom:1.4rem;}
+.nac-example{background:#080c12;border-radius:10px;padding:1.1rem 1.4rem;font-size:0.75rem;line-height:1.9;border:1px solid rgba(255,255,255,0.05);}
+.nac-example .eg-label{font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;opacity:0.45;margin-bottom:0.5rem;}
+.nac-example .eg-line{color:var(--muted);}
+.nac-example .eg-hi{color:var(--accent3);}
+.nac-example .eg-warn{color:#f87171;}
+.nac-row{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-top:1rem;}
+.nac-pill{font-size:0.7rem;padding:0.3rem 0.8rem;border-radius:100px;border:1px solid;display:inline-block;margin:0.2rem 0.2rem 0 0;}
+
+/* ── BUILD-ORDER CLASS DIAGRAM ── */
+.class-diag-section{padding:4rem 3rem;background:var(--bg2);border-top:1px solid var(--border);}
+.class-diag-wrap{width:100%;overflow-x:auto;margin-top:2rem;}
+#classDiagSvg{display:block;margin:0 auto;}
+.build-legend{display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:1.5rem;}
+.bl-item{display:flex;align-items:center;gap:0.5rem;font-size:0.72rem;color:var(--muted);}
+.bl-dot{width:12px;height:12px;border-radius:3px;}
+
+.footer-title{font-family:'Syne',sans-serif;font-size:1.5rem;font-weight:800;margin-bottom:0.5rem;}
+.footer-sub{font-size:0.75rem;color:var(--muted);}
+
+/* ── CLASS DIAGRAM INTERACTIVE ── */
+.cd-filter-bar{display:flex;gap:0.5rem;flex-wrap:wrap;margin:1.5rem 0;}
+.cd-filter{font-family:'JetBrains Mono',monospace;font-size:0.68rem;padding:0.3rem 0.9rem;border-radius:100px;border:1px solid var(--border2);background:var(--bg3);color:var(--muted);cursor:pointer;transition:all 0.2s;letter-spacing:0.05em;}
+.cd-filter:hover{color:var(--text);border-color:var(--accent);}
+.cd-filter.active{color:var(--bg);background:var(--accent);border-color:var(--accent);}
+
+.cd-grid{columns:3;column-gap:1rem;margin-top:0.5rem;}
+.cd-module{break-inside:avoid;margin-bottom:1rem;display:inline-block;width:100%;}
+
+.cd-module{border-radius:10px;border:1px solid;overflow:hidden;transition:all 0.25s;}
+.cd-module.abstract{border-style:dashed;}
+.cd-module-header{padding:0.75rem 1rem;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;}
+.cd-module-header:hover{filter:brightness(1.15);}
+.cd-mod-left{display:flex;align-items:center;gap:0.6rem;}
+.cd-mod-badge{font-size:0.6rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.2rem 0.55rem;border-radius:100px;border:1px solid;opacity:0.8;}
+.cd-mod-name{font-family:'Syne',sans-serif;font-size:0.9rem;font-weight:700;}
+.cd-mod-toggle{font-size:0.75rem;opacity:0.5;transition:transform 0.2s;}
+.cd-module.open .cd-mod-toggle{transform:rotate(90deg);}
+
+.cd-body{display:none;border-top:1px solid rgba(255,255,255,0.06);}
+.cd-module.open .cd-body{display:block;}
+
+.cd-class{padding:0.8rem 1rem;border-bottom:1px solid rgba(255,255,255,0.04);}
+.cd-class:last-child{border-bottom:none;}
+
+.cd-class-name{font-family:'Syne',sans-serif;font-size:0.95rem;font-weight:700;margin-bottom:0.3rem;display:flex;align-items:center;gap:0.5rem;}
+.cd-class-tag{font-size:0.68rem;padding:0.15rem 0.55rem;border-radius:4px;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;border:1px solid;}
+.cd-class-parent{font-size:0.75rem;margin-bottom:0.7rem;opacity:0.55;font-family:'JetBrains Mono',monospace;}
+.cd-fields,.cd-methods{margin-bottom:0.5rem;}
+.cd-section-lbl{font-size:0.68rem;letter-spacing:0.12em;text-transform:uppercase;opacity:0.4;margin-bottom:0.3rem;}
+.cd-row{font-family:'JetBrains Mono',monospace;font-size:0.85rem;line-height:1.7;color:var(--muted);padding-left:0.6rem;}
+.cd-row.pub{color:rgba(255,255,255,0.75);}
+.cd-row.warn{color:#f87171;font-size:0.65rem;}
+.cd-row .vis{opacity:0.5;margin-right:0.3rem;}
+.cd-inv{margin:0.6rem 1rem;padding:0.8rem 1rem;border-radius:8px;background:rgba(248,113,113,0.07);border:1px solid rgba(248,113,113,0.2);font-size:0.8rem;color:#f87171;font-family:'JetBrains Mono',monospace;line-height:1.8;}
+.cd-inv-title{font-weight:700;margin-bottom:0.4rem;font-size:0.78rem;letter-spacing:0.08em;}
+
+@media(max-width:900px){
+  .what-grid,.learning-layout,.terminal-layout,.neuro-layout,.hybrid-grid,.remini-grid,.why-grid,.final-grid,.score-tier,.bitnet-grid{grid-template-columns:1fr!important;}
+  .load-tiers,.page-cards,.modules-grid{grid-template-columns:1fr 1fr;}
+  section,.sl-page,.hybrid-hero,.graph-section,.reminiscence-section,.load-section,.sparse-hero{padding:3rem 1.5rem;}
+  nav{padding:1rem 1.5rem;}
+  .cd-grid{columns:2;}
+}
+@media(max-width:600px){
+  .load-tiers,.page-cards,.modules-grid{grid-template-columns:1fr;}
+  .old-flow{flex-direction:column;}
+  .cd-grid{columns:1;}
+}
+</style>
+</head>
+<body>
+<div id="cursor"></div>
+<div id="cursor-ring"></div>
+<div class="tooltip" id="tooltip"></div>
+
+<nav>
+  <div class="nav-logo" onclick="showPage('home')">Neuro<span>PACA</span></div>
+  <div class="nav-links">
+    <button class="nav-btn active" onclick="showPage('home')" id="nav-home">Overview</button>
+    <button class="nav-btn" onclick="showPage('architecture')" id="nav-architecture">Architecture</button>
+    <button class="nav-btn" onclick="showPage('memory')" id="nav-memory">Storing & Learning</button>
+    <button class="nav-btn" onclick="showPage('workflow')" id="nav-workflow">Workflow</button>
+    <button class="nav-btn" onclick="showPage('sparse')" id="nav-sparse">Sparse Model</button>
+  </div>
+</nav>
+
+<!-- ═══════════════ PAGE: HOME ═══════════════ -->
+<div class="page active" id="page-home">
+  <div class="hero">
+    <div class="hero-badge">Prototype Concept · Local AI Co-pilot</div>
+    <h1 class="hero-title">
+      <span class="line1">Personal Autonomous</span>
+      <span class="line2">Computing Agent</span>
+    </h1>
+    <p class="hero-sub">A local AI that learns your machine, understands your patterns, and grows a sparse model around who you actually are.</p>
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">$</span><span class="stat-label">Terminal UX</span></div>
+      <div class="stat"><span class="stat-num">1</span><span class="stat-label">Unified Database</span></div>
+      <div class="stat"><span class="stat-num">0</span><span class="stat-label">Cloud Dependency</span></div>
+      <div class="stat"><span class="stat-num">∞</span><span class="stat-label">Compounds Over Time</span></div>
+    </div>
+    <div class="page-cards">
+      <div class="page-card" onclick="showPage('architecture')">
+        <div class="pc-icon">🧠</div>
+        <div class="pc-title">Architecture</div>
+        <div class="pc-desc">Graph memory, routing layer, reminiscence agent, BitNet + Ollama stack</div>
+        <span class="pc-arrow">→ Explore</span>
+      </div>
+      <div class="page-card" onclick="showPage('memory')">
+        <div class="pc-icon">💾</div>
+        <div class="pc-title">Storing & Learning</div>
+        <div class="pc-desc">Why graph beats flat storage. Chain of necessity from first principles</div>
+        <span class="pc-arrow">→ Explore</span>
+      </div>
+      <div class="page-card" onclick="showPage('workflow')">
+        <div class="pc-icon">⚡</div>
+        <div class="pc-title">Full Workflow</div>
+        <div class="pc-desc">End-to-end lifecycle: Init → Sensing → Diagnosis → Learning → Action</div>
+        <span class="pc-arrow">→ Explore</span>
+      </div>
+      <div class="page-card" onclick="showPage('sparse')">
+        <div class="pc-icon">✂️</div>
+        <div class="pc-title">Sparse Model</div>
+        <div class="pc-desc">Unified DB governs both graph memory and model pruning. One score, two jobs.</div>
+        <span class="pc-arrow">→ Explore</span>
+      </div>
+    </div>
+  </div>
+
+  <section id="what">
+    <p class="section-label reveal">What is NeuroPACA</p>
+    <h2 class="section-title reveal">Your Machine, Finally<br>Working <em style="font-family:'Instrument Serif',serif;color:var(--accent2);">For</em> You</h2>
+    <p class="section-desc reveal">Most people adapt to their machine. NeuroPACA flips it — your machine adapts to you, learns your patterns, and becomes genuinely personal over time.</p>
+    <div class="what-grid">
+      <div class="what-features reveal">
+        <div class="feat-card" data-tip="Watches process data every 60s. No screen recording, no keylogging. Just system signals.">
+          <div class="feat-icon" style="background:rgba(108,143,255,0.1);">👁</div>
+          <div><div class="feat-title">Passive Sensing</div><div class="feat-desc">Monitors CPU, RAM, disk, processes and system logs. Builds your behavioral fingerprint silently.</div></div>
+        </div>
+        <div class="feat-card" data-tip="Graph memory with 10 master nodes. Knowledge compounds — gets smarter every week.">
+          <div class="feat-icon" style="background:rgba(167,139,250,0.1);">🕸</div>
+          <div><div class="feat-title">Unified Graph Memory</div><div class="feat-desc">One database governs both what the graph knows and which model weights to keep. One score, two jobs.</div></div>
+        </div>
+        <div class="feat-card" data-tip="$ prefix turns any terminal into a natural language interface. No new app to open.">
+          <div class="feat-icon" style="background:rgba(52,211,153,0.1);">$</div>
+          <div><div class="feat-title">Terminal-Native UX</div><div class="feat-desc">$ ask · $? diagnose · $! emergency · $$ safe action. Every terminal becomes your co-pilot interface.</div></div>
+        </div>
+        <div class="feat-card" data-tip="BitNet b1.58 runs natively on CPU. Ollama serves it. Personal graph prunes it further.">
+          <div class="feat-icon" style="background:rgba(251,146,60,0.1);">⚡</div>
+          <div><div class="feat-title">BitNet + Pruning Stack</div><div class="feat-desc">BitNet b1.58 slashes model size at the architecture level. Personal graph score pruning cuts further to your actual needs.</div></div>
+        </div>
+      </div>
+      <div class="reveal">
+        <div class="terminal-mock">
+          <div class="terminal-bar">
+            <div class="t-dot" style="background:#ff5f57"></div>
+            <div class="t-dot" style="background:#ffbd2e"></div>
+            <div class="t-dot" style="background:#28ca41"></div>
+            <span style="font-size:0.72rem;color:var(--muted);margin-left:0.5rem;">NeuroPACA Terminal</span>
+          </div>
+          <div class="terminal-body">
+            <div class="t-line" style="animation-delay:0.3s"><span class="t-prompt">jatin@laptop:~$</span><span class="t-cmd">$ hello</span></div>
+            <div class="t-line" style="animation-delay:0.8s"><span class="t-ai">◆ Hey! Deep coding mode detected.</span></div>
+            <div class="t-line" style="animation-delay:1.0s"><span class="t-ai">&nbsp;&nbsp;Stack: Python · FastAPI · Postgres</span></div>
+            <div class="t-line" style="animation-delay:1.2s"><span class="t-ai">&nbsp;&nbsp;Predicted: test run in ~18min</span></div>
+            <div class="t-line" style="animation-delay:1.4s"><span class="t-ok">&nbsp;&nbsp;Pre-cached pytest docs ✓</span></div>
+            <div class="t-line" style="animation-delay:2.0s"><span class="t-prompt">jatin@laptop:~$</span><span class="t-cmd">$! out of disk</span></div>
+            <div class="t-line" style="animation-delay:2.5s"><span style="color:#f87171">◆ EMERGENCY: scanning safe targets...</span></div>
+            <div class="t-line" style="animation-delay:2.8s"><span class="t-ok">&nbsp;&nbsp;Freed 10.1GB · disk now at 18% ✓</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="arch">
+    <p class="section-label reveal">System Architecture</p>
+    <h2 class="section-title reveal">5 Manager Layers</h2>
+    <p class="section-desc reveal">Each manager is a specialized domain. They communicate through an event bus — no single brain, emergent intelligence.</p>
+    <div class="arch-svg-wrap reveal">
+      <svg id="arch-svg" viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr-o" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(255,255,255,0.3)"/></marker>
+          <marker id="arr-p" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#a78bfa"/></marker>
+          <marker id="arr-g" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#34d399"/></marker>
+          <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <ellipse cx="500" cy="160" rx="100" ry="42" fill="rgba(108,143,255,0.08)" stroke="rgba(108,143,255,0.4)" stroke-width="1.5"/>
+        <text x="500" y="154" fill="#6c8fff" font-family="Syne,sans-serif" font-size="14" text-anchor="middle" font-weight="800">EVENT BUS</text>
+        <text x="500" y="170" fill="rgba(108,143,255,0.5)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Central Nervous System</text>
+        <circle r="4" fill="#6c8fff" opacity="0.7"><animate attributeName="cx" from="410" to="590" dur="2.5s" repeatCount="indefinite"/><animate attributeName="cy" values="160;160" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.8;0" dur="2.5s" repeatCount="indefinite"/></circle>
+        <circle r="3" fill="#34d399" opacity="0.7"><animate attributeName="cx" from="590" to="410" dur="2.5s" begin="1.2s" repeatCount="indefinite"/><animate attributeName="cy" values="160;160" dur="2.5s" begin="1.2s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.7;0" dur="2.5s" begin="1.2s" repeatCount="indefinite"/></circle>
+        <rect x="30" y="40" width="160" height="240" rx="10" fill="rgba(108,143,255,0.04)" stroke="rgba(108,143,255,0.25)" stroke-width="1"/>
+        <text x="110" y="64" fill="#6c8fff" font-family="Syne,sans-serif" font-size="12" text-anchor="middle" font-weight="700">X · SENSING</text>
+        <rect x="50" y="78" width="120" height="24" rx="4" fill="rgba(108,143,255,0.07)" stroke="rgba(108,143,255,0.2)" stroke-width="1"/><text x="110" y="94" fill="#6c8fff" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">X1 CPU/RAM/DISK</text>
+        <rect x="50" y="110" width="120" height="24" rx="4" fill="rgba(108,143,255,0.07)" stroke="rgba(108,143,255,0.2)" stroke-width="1"/><text x="110" y="126" fill="#6c8fff" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">X2 TEMPERATURE</text>
+        <rect x="50" y="142" width="120" height="24" rx="4" fill="rgba(108,143,255,0.07)" stroke="rgba(108,143,255,0.2)" stroke-width="1"/><text x="110" y="158" fill="#6c8fff" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">X3 PROCESSES</text>
+        <rect x="50" y="174" width="120" height="24" rx="4" fill="rgba(108,143,255,0.07)" stroke="rgba(108,143,255,0.2)" stroke-width="1"/><text x="110" y="190" fill="#6c8fff" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">X4 NETWORK</text>
+        <rect x="50" y="206" width="120" height="24" rx="4" fill="rgba(108,143,255,0.12)" stroke="rgba(108,143,255,0.4)" stroke-width="1"/><text x="110" y="222" fill="#6c8fff" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">X5 SYSTEM LOGS ★</text>
+        <path d="M190 160 Q310 160 400 160" stroke="rgba(108,143,255,0.35)" stroke-width="1.5" fill="none" marker-end="url(#arr-o)" stroke-dasharray="5,3"/>
+        <text x="290" y="150" fill="rgba(108,143,255,0.5)" font-family="JetBrains Mono,monospace" font-size="8" text-anchor="middle">raw signals</text>
+        <rect x="220" y="260" width="160" height="200" rx="10" fill="rgba(251,146,60,0.04)" stroke="rgba(251,146,60,0.25)" stroke-width="1"/>
+        <text x="300" y="282" fill="#fb923c" font-family="Syne,sans-serif" font-size="12" text-anchor="middle" font-weight="700">Y · DIAGNOSIS</text>
+        <rect x="236" y="294" width="128" height="22" rx="4" fill="rgba(251,146,60,0.07)" stroke="rgba(251,146,60,0.2)" stroke-width="1"/><text x="300" y="309" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Y1 CORRELATOR</text>
+        <rect x="236" y="322" width="128" height="22" rx="4" fill="rgba(251,146,60,0.07)" stroke="rgba(251,146,60,0.2)" stroke-width="1"/><text x="300" y="337" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Y2 NOISE FILTER</text>
+        <rect x="236" y="350" width="128" height="22" rx="4" fill="rgba(251,146,60,0.07)" stroke="rgba(251,146,60,0.2)" stroke-width="1"/><text x="300" y="365" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Y3 FAILURE PREDICT</text>
+        <rect x="236" y="378" width="128" height="22" rx="4" fill="rgba(251,146,60,0.12)" stroke="rgba(251,146,60,0.4)" stroke-width="1"/><text x="300" y="393" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Y4 CRASH PREDICTOR ★</text>
+        <path d="M300 260 L300 202" stroke="rgba(251,146,60,0.4)" stroke-width="1.2" fill="none" marker-end="url(#arr-o)" stroke-dasharray="4,3"/>
+        <rect x="420" y="260" width="160" height="220" rx="10" fill="rgba(167,139,250,0.04)" stroke="rgba(167,139,250,0.25)" stroke-width="1"/>
+        <text x="500" y="282" fill="#a78bfa" font-family="Syne,sans-serif" font-size="12" text-anchor="middle" font-weight="700">Z · LEARNING</text>
+        <rect x="436" y="294" width="128" height="22" rx="4" fill="rgba(167,139,250,0.07)" stroke="rgba(167,139,250,0.2)" stroke-width="1"/><text x="500" y="309" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Z1 TASK WATCHER</text>
+        <rect x="436" y="322" width="128" height="22" rx="4" fill="rgba(167,139,250,0.07)" stroke="rgba(167,139,250,0.2)" stroke-width="1"/><text x="500" y="337" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Z2 SCHEDULE LEARN</text>
+        <rect x="436" y="350" width="128" height="22" rx="4" fill="rgba(167,139,250,0.07)" stroke="rgba(167,139,250,0.2)" stroke-width="1"/><text x="500" y="365" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Z3 STACK IDENTIFIER</text>
+        <rect x="436" y="378" width="128" height="22" rx="4" fill="rgba(167,139,250,0.07)" stroke="rgba(167,139,250,0.2)" stroke-width="1"/><text x="500" y="393" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Z4 WORKFLOW MAPPER</text>
+        <rect x="436" y="406" width="128" height="26" rx="4" fill="rgba(167,139,250,0.12)" stroke="rgba(167,139,250,0.4)" stroke-width="1"/><text x="500" y="423" fill="#c4b5fd" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">Z5 USER MODEL ★</text>
+        <path d="M500 260 L500 202" stroke="rgba(167,139,250,0.4)" stroke-width="1.2" fill="none" marker-end="url(#arr-o)" stroke-dasharray="4,3"/>
+        <rect x="620" y="260" width="160" height="200" rx="10" fill="rgba(52,211,153,0.04)" stroke="rgba(52,211,153,0.25)" stroke-width="1"/>
+        <text x="700" y="282" fill="#34d399" font-family="Syne,sans-serif" font-size="12" text-anchor="middle" font-weight="700">W · ACTION</text>
+        <rect x="636" y="294" width="128" height="22" rx="4" fill="rgba(52,211,153,0.07)" stroke="rgba(52,211,153,0.2)" stroke-width="1"/><text x="700" y="309" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">W1 UPDATER</text>
+        <rect x="636" y="322" width="128" height="22" rx="4" fill="rgba(52,211,153,0.07)" stroke="rgba(52,211,153,0.2)" stroke-width="1"/><text x="700" y="337" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">W2 REPAIR</text>
+        <rect x="636" y="350" width="128" height="22" rx="4" fill="rgba(52,211,153,0.07)" stroke="rgba(52,211,153,0.2)" stroke-width="1"/><text x="700" y="365" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">W3 TESTER</text>
+        <rect x="636" y="378" width="128" height="22" rx="4" fill="rgba(52,211,153,0.12)" stroke="rgba(52,211,153,0.4)" stroke-width="1"/><text x="700" y="393" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">W4 SELF UPDATE ★</text>
+        <path d="M700 260 L700 202" stroke="rgba(52,211,153,0.4)" stroke-width="1.2" fill="none" marker-end="url(#arr-o)" stroke-dasharray="4,3"/>
+        <rect x="820" y="40" width="160" height="200" rx="10" fill="rgba(244,114,182,0.04)" stroke="rgba(244,114,182,0.25)" stroke-width="1"/>
+        <text x="900" y="64" fill="#f472b6" font-family="Syne,sans-serif" font-size="12" text-anchor="middle" font-weight="700">V · COMMS</text>
+        <rect x="836" y="78" width="128" height="22" rx="4" fill="rgba(244,114,182,0.07)" stroke="rgba(244,114,182,0.2)" stroke-width="1"/><text x="900" y="93" fill="#f472b6" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">V1 NOTIFY</text>
+        <rect x="836" y="106" width="128" height="22" rx="4" fill="rgba(244,114,182,0.07)" stroke="rgba(244,114,182,0.2)" stroke-width="1"/><text x="900" y="121" fill="#f472b6" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">V2 FILTER</text>
+        <rect x="836" y="134" width="128" height="22" rx="4" fill="rgba(244,114,182,0.07)" stroke="rgba(244,114,182,0.2)" stroke-width="1"/><text x="900" y="149" fill="#f472b6" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">V3 REPORT</text>
+        <rect x="836" y="162" width="128" height="22" rx="4" fill="rgba(244,114,182,0.12)" stroke="rgba(244,114,182,0.4)" stroke-width="1"/><text x="900" y="177" fill="#f472b6" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">V5 TERM RESPONSE ★</text>
+        <path d="M820 160 Q720 160 600 160" stroke="rgba(244,114,182,0.35)" stroke-width="1.5" fill="none" marker-end="url(#arr-o)" stroke-dasharray="5,3"/>
+        <!-- BitNet/Ollama LLM block -->
+        <rect x="340" y="490" width="320" height="50" rx="8" fill="rgba(108,143,255,0.05)" stroke="rgba(108,143,255,0.25)" stroke-width="1"/>
+        <text x="500" y="510" fill="rgba(108,143,255,0.85)" font-family="JetBrains Mono,monospace" font-size="10" text-anchor="middle">BitNet b1.58 · served via Ollama</text>
+        <text x="500" y="526" fill="rgba(108,143,255,0.4)" font-family="JetBrains Mono,monospace" font-size="8" text-anchor="middle">1-bit weights · CPU-native · graph-pruned subnetwork</text>
+        <line x1="500" y1="480" x2="500" y2="490" stroke="rgba(108,143,255,0.2)" stroke-width="1" stroke-dasharray="3,3"/>
+        <rect x="30" y="540" width="940" height="14" rx="3" fill="rgba(255,255,255,0.01)" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <text x="500" y="551" fill="rgba(255,255,255,0.18)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">INPUTS → psutil · /proc · Task Manager · Shell Hooks (Bash/Zsh) · VSCode Extension API · System Event Logs</text>
+      </svg>
+    </div>
+    <div class="modules-grid" style="margin-top:1.5rem;">
+      <div class="module-card bus reveal" data-tip="X collects raw numbers only — no intelligence, no decisions.">
+        <div class="mod-header"><div class="mod-dot" style="background:#6c8fff;"></div><div class="mod-name" style="color:#6c8fff;">X · Sensing</div></div>
+        <div style="font-size:0.72rem;color:var(--muted);line-height:1.7;margin-bottom:0.8rem;">Collects raw system data every 60s. No intelligence — just reads and publishes to the Event Bus.</div>
+        <div class="mod-agents">
+          <span class="agent-tag" style="border-color:rgba(108,143,255,0.3);color:#6c8fff;background:rgba(108,143,255,0.08);">X1 CPU</span>
+          <span class="agent-tag" style="border-color:rgba(108,143,255,0.3);color:#6c8fff;background:rgba(108,143,255,0.08);">X2 RAM</span>
+          <span class="agent-tag" style="border-color:rgba(108,143,255,0.5);color:#6c8fff;background:rgba(108,143,255,0.15);">X5 Logs ★</span>
+        </div>
+      </div>
+      <div class="module-card diag reveal">
+        <div class="mod-header"><div class="mod-dot" style="background:#fb923c;"></div><div class="mod-name" style="color:#fb923c;">Y · Diagnosis</div></div>
+        <div style="font-size:0.72rem;color:var(--muted);line-height:1.7;margin-bottom:0.8rem;">Interprets X sensor data. Correlates signals, filters noise, predicts failures before they happen.</div>
+        <div class="mod-agents">
+          <span class="agent-tag" style="border-color:rgba(251,146,60,0.3);color:#fb923c;background:rgba(251,146,60,0.08);">Y1 Correlate</span>
+          <span class="agent-tag" style="border-color:rgba(251,146,60,0.5);color:#fb923c;background:rgba(251,146,60,0.15);">Y5 Crash ★</span>
+        </div>
+      </div>
+      <div class="module-card learn reveal">
+        <div class="mod-header"><div class="mod-dot" style="background:#a78bfa;"></div><div class="mod-name" style="color:#a78bfa;">Z · Learning</div></div>
+        <div style="font-size:0.72rem;color:var(--muted);line-height:1.7;margin-bottom:0.8rem;">Builds your behavioral fingerprint. Updates relevance_scores in graph.db every cycle.</div>
+        <div class="mod-agents">
+          <span class="agent-tag" style="border-color:rgba(167,139,250,0.3);color:#a78bfa;background:rgba(167,139,250,0.08);">Z1 TaskWatch</span>
+          <span class="agent-tag" style="border-color:rgba(167,139,250,0.5);color:#a78bfa;background:rgba(167,139,250,0.15);">Z5 User Model ★</span>
+        </div>
+      </div>
+      <div class="module-card action reveal">
+        <div class="mod-header"><div class="mod-dot" style="background:#34d399;"></div><div class="mod-name" style="color:#34d399;">W · Action</div></div>
+        <div style="font-size:0.72rem;color:var(--muted);line-height:1.7;margin-bottom:0.8rem;">Executes system actions triggered by Y/Z or terminal $ commands. Safety-sandboxed.</div>
+        <div class="mod-agents">
+          <span class="agent-tag" style="border-color:rgba(52,211,153,0.3);color:#34d399;background:rgba(52,211,153,0.08);">W1 Updater</span>
+          <span class="agent-tag" style="border-color:rgba(52,211,153,0.5);color:#34d399;background:rgba(52,211,153,0.15);">W5 Self Update ★</span>
+        </div>
+      </div>
+      <div class="module-card bus reveal">
+        <div class="mod-header"><div class="mod-dot" style="background:#f472b6;"></div><div class="mod-name" style="color:#f472b6;">V · Comms</div></div>
+        <div style="font-size:0.72rem;color:var(--muted);line-height:1.7;margin-bottom:0.8rem;">The only manager that talks to you. Filters noise, delivers smart notifications.</div>
+        <div class="mod-agents">
+          <span class="agent-tag" style="border-color:rgba(244,114,182,0.3);color:#f472b6;background:rgba(244,114,182,0.08);">V1 Notify</span>
+          <span class="agent-tag" style="border-color:rgba(244,114,182,0.5);color:#f472b6;background:rgba(244,114,182,0.15);">V5 Term ★</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="neuro">
+    <p class="section-label reveal">Neuromorphic Design</p>
+    <h2 class="section-title reveal">Inspired by How<br>Brains Actually Work</h2>
+    <p class="section-desc reveal">Not just a metaphor — the architecture follows real neuroscience principles for memory and learning.</p>
+    <div class="neuro-layout">
+      <div class="neuro-canvas-wrap reveal">
+        <div class="neuro-canvas-header">
+          <span style="font-size:0.75rem;">Neuromorphic Signal Propagation</span>
+          <span style="font-size:0.65rem;color:var(--accent3);">Live · hover to fire</span>
+        </div>
+        <canvas id="neuroCanvas" width="420" height="340"></canvas>
+      </div>
+      <div class="neuro-concepts reveal">
+        <div class="concept" style="border-color:#6c8fff;">
+          <div class="concept-title" style="color:#6c8fff;">Event-Driven Spikes</div>
+          <div class="concept-desc">Agents only fire when a meaningful threshold is crossed — not on a clock. Zero CPU when nothing is happening.</div>
+          <div class="concept-formula">if metric > threshold: fire_event()</div>
+        </div>
+        <div class="concept" style="border-color:#a78bfa;">
+          <div class="concept-title" style="color:#a78bfa;">Hebbian Weight Learning</div>
+          <div class="concept-desc">When two events consistently happen together (python.exe → test run), their connection weight strengthens. The system rewires itself around your workflow.</div>
+          <div class="concept-formula">weight += 0.01 if co_occurred_recently()</div>
+        </div>
+        <div class="concept" style="border-color:#34d399;">
+          <div class="concept-title" style="color:#34d399;">Lottery Ticket Hypothesis</div>
+          <div class="concept-desc">Every large network contains a sparse subnetwork — a "winning ticket" — that can match its performance. NeuroPACA uses your personal graph scores to identify which ticket wins for YOU specifically.</div>
+          <div class="concept-formula">winning_ticket = heads where score &gt; 7</div>
+        </div>
+        <div class="concept" style="border-color:#fb923c;">
+          <div class="concept-title" style="color:#fb923c;">Emergent Intelligence</div>
+          <div class="concept-desc">No single "brain" makes decisions. Intelligence emerges from which agents fire together. After 4 weeks, the network has a pattern nobody else's system has.</div>
+          <div class="concept-formula">decision = argmax(weighted_activations)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="terminal-feat">
+    <p class="section-label reveal">Input Layer</p>
+    <h2 class="section-title reveal">Universal Terminal Interface</h2>
+    <p class="section-desc reveal">Every terminal becomes a natural language input. One prefix changes everything.</p>
+    <div class="terminal-layout">
+      <div class="prefix-demo reveal">
+        <div class="prefix-item" onclick="runTermCmd('$ diagnose my system')">
+          <span class="prefix-sym" style="color:var(--accent);">$</span>
+          <div><div class="prefix-cmd">$ diagnose my system</div><div class="prefix-meaning">Talk to AI — natural language command</div></div>
+        </div>
+        <div class="prefix-item" onclick="runTermCmd('$? why is node crashing')">
+          <span class="prefix-sym" style="color:var(--accent2);">$?</span>
+          <div><div class="prefix-cmd">$? why is node crashing</div><div class="prefix-meaning">Question — uses current project context</div></div>
+        </div>
+        <div class="prefix-item" onclick="runTermCmd('$! out of disk')">
+          <span class="prefix-sym" style="color:#f87171;">$!</span>
+          <div><div class="prefix-cmd">$! out of disk</div><div class="prefix-meaning">Emergency — immediate autonomous action</div></div>
+        </div>
+        <div class="prefix-item" onclick="runTermCmd('$$ update everything safely')">
+          <span class="prefix-sym" style="color:var(--accent3);">$$</span>
+          <div><div class="prefix-cmd">$$ update everything safely</div><div class="prefix-meaning">Safe — backs up before any action</div></div>
+        </div>
+      </div>
+      <div class="reveal">
+        <div class="interactive-terminal">
+          <div class="it-bar">
+            <div class="t-dot" style="background:#ff5f57"></div>
+            <div class="t-dot" style="background:#ffbd2e"></div>
+            <div class="t-dot" style="background:#28ca41"></div>
+            <span style="font-size:0.7rem;color:var(--muted);margin-left:0.5rem;">Interactive Terminal · try it</span>
+          </div>
+          <div class="it-body">
+            <div class="it-output" id="it-output"></div>
+            <div class="it-input-row">
+              <span class="it-prompt-label">jatin@laptop:~$</span>
+              <input class="it-input" id="it-input" placeholder="type $ command..." onkeydown="handleTermInput(event)">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="footer-title">NeuroPACA</div>
+    <p class="footer-sub">Neuromorphic Personal Autonomous Computing Agent</p>
+    <p class="footer-sub" style="margin-top:0.8rem;font-size:0.65rem;">BitNet b1.58 · Ollama · Personal Graph Pruning · Lottery Ticket Hypothesis</p>
+    <p class="footer-sub" style="margin-top:0.4rem;font-size:0.65rem;color:rgba(122,128,153,0.4);">Research concept · 2026</p>
+  </footer>
+</div>
+
+<!-- ═══════════════ PAGE: ARCHITECTURE ═══════════════ -->
+<div class="page" id="page-architecture">
+  <div class="hybrid-hero">
+    <p class="section-label">Hybrid Memory Architecture</p>
+    <h2 class="section-title">How NeuroPACA<br>Remembers <em style="font-family:'Instrument Serif',serif;color:var(--accent2);">You</em></h2>
+    <p class="section-desc">Two complementary systems — graph structure for relationships, model weights for patterns. Neither alone is enough.</p>
+    <div class="hybrid-grid" style="margin-top:2.5rem;">
+      <div class="hybrid-card">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);margin-bottom:0.8rem;">Graph Memory Layer</div>
+        <div class="hybrid-card-title">Structural Memory</div>
+        <div class="hybrid-card-sub">Nodes = concepts, tools, habits. Edges = relationships. relevance_score = how much this concept matters to you right now. Score decays if unused, spikes on heavy use.</div>
+        <div class="arch-stack">
+          <div class="arch-layer" style="border-color:rgba(0,255,136,0.2);background:rgba(0,255,136,0.04);color:var(--green);">
+            <span class="arch-layer-name">Central Routing Node</span><span class="arch-layer-badge">YOU</span>
+          </div>
+          <div class="arch-layer" style="border-color:rgba(108,143,255,0.2);background:rgba(108,143,255,0.04);color:#6c8fff;">
+            <span class="arch-layer-name">10 Master Domain Nodes</span><span class="arch-layer-badge">CLASSIFIER</span>
+          </div>
+          <div class="arch-layer" style="border-color:var(--border);background:var(--bg3);">
+            <span class="arch-layer-name">Concept Nodes + relevance_score</span><span class="arch-layer-badge">KNOWLEDGE</span>
+          </div>
+          <div class="arch-layer" style="border-color:rgba(167,139,250,0.2);background:rgba(167,139,250,0.04);color:#a78bfa;">
+            <span class="arch-layer-name">Relationship Edges</span><span class="arch-layer-badge">CONNECTIONS</span>
+          </div>
+        </div>
+      </div>
+      <div class="hybrid-card">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent2);margin-bottom:0.8rem;">Model Weight Layer</div>
+        <div class="hybrid-card-title">Pattern Memory — BitNet + Ollama</div>
+        <div class="hybrid-card-sub">BitNet b1.58 compresses weights to ±1 at architecture level. Personal graph scores then guide structured pruning, cutting attention heads in domains you rarely use. The result is a subnetwork shaped around you.</div>
+        <div class="arch-stack">
+          <div class="arch-layer" style="border-color:rgba(251,146,60,0.2);background:rgba(251,146,60,0.04);color:#fb923c;">
+            <span class="arch-layer-name">BitNet b1.58 Base</span><span class="arch-layer-badge">1-BIT WEIGHTS</span>
+          </div>
+          <div class="arch-layer" style="border-color:rgba(167,139,250,0.2);background:rgba(167,139,250,0.04);color:#a78bfa;">
+            <span class="arch-layer-name">Graph Score → Pruning Mask</span><span class="arch-layer-badge">PERSONAL</span>
+          </div>
+          <div class="arch-layer" style="border-color:var(--border);background:var(--bg3);">
+            <span class="arch-layer-name">domain_to_heads lookup</span><span class="arch-layer-badge">BRIDGE</span>
+          </div>
+          <div class="arch-layer" style="border-color:rgba(52,211,153,0.2);background:rgba(52,211,153,0.04);color:#34d399;">
+            <span class="arch-layer-name">Sparse Winning Ticket</span><span class="arch-layer-badge">YOUR MODEL</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BitNet + Ollama section -->
+  <div style="padding:4rem 3rem;background:var(--bg2);border-top:1px solid var(--border);">
+    <p class="section-label">Model Stack</p>
+    <h2 class="section-title" style="font-size:1.8rem;">BitNet + Ollama</h2>
+    <p class="section-desc" style="margin-bottom:2rem;">Two layers of compression — architectural (BitNet) and behavioral (graph pruning). Each does something the other cannot.</p>
+    <div class="bitnet-grid">
+      <div class="bitnet-card">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:#fb923c;margin-bottom:0.8rem;">Layer 1 — Architecture</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;margin-bottom:0.8rem;">BitNet b1.58</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;margin-bottom:1rem;">Every weight in the model is constrained to one of three values: {-1, 0, +1}. At 1.58 bits per parameter this is a fundamental architectural change — matrix multiplications become additions and subtractions. No floating point at inference.</div>
+        <div style="background:#0a0d14;border-radius:8px;padding:1rem;font-size:0.75rem;line-height:1.9;">
+          <div style="color:#fb923c;">// conventional model</div>
+          <div style="color:var(--muted);">weights: float32 (32 bits/param)</div>
+          <div style="color:var(--muted);">7B model ≈ 28 GB RAM</div>
+          <br>
+          <div style="color:#34d399;">// BitNet b1.58</div>
+          <div style="color:var(--text);">weights: {-1, 0, +1} (1.58 bits/param)</div>
+          <div style="color:var(--text);">7B model ≈ 1.4 GB RAM</div>
+          <div style="color:var(--accent3);">runs on CPU · no GPU needed ✓</div>
+        </div>
+      </div>
+      <div class="bitnet-card">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);margin-bottom:0.8rem;">Layer 2 — Serving</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;margin-bottom:0.8rem;">Ollama</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;margin-bottom:1rem;">Ollama provides the local serving layer — model loading, request routing, context management. It handles the infrastructure so NeuroPACA only talks to a simple HTTP endpoint. The BitNet model runs inside Ollama; the personal graph prunes which heads it actually uses at inference time.</div>
+        <div style="background:#0a0d14;border-radius:8px;padding:1rem;font-size:0.75rem;line-height:1.9;">
+          <div style="color:var(--accent);">// how they connect</div>
+          <div style="color:var(--muted);">graph.db → score lookup</div>
+          <div style="color:var(--muted);">    → pruning mask built</div>
+          <div style="color:var(--muted);">    → Ollama loads masked model</div>
+          <div style="color:var(--text);">    → inference on your subnetwork</div>
+          <div style="color:var(--accent3);">one HTTP call · zero cloud ✓</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:1.5rem;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:1.5rem 2rem;">
+      <div style="font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);margin-bottom:0.8rem;">Why BitNet matters for NeuroPACA specifically</div>
+      <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">BitNet solves the hardware constraint — a 7B model that fits in 1.4GB runs on a laptop CPU without thermal throttling. Graph pruning then reduces this further by removing attention heads that are irrelevant to your actual task distribution. These are additive wins: BitNet gives you a small model; your personal graph makes it specifically small for <em style="color:var(--text);">you</em>.</div>
+    </div>
+  </div>
+
+  <!-- Graph Visual -->
+  <div class="graph-section">
+    <p class="section-label">Graph Memory Visualization</p>
+    <h2 class="section-title" style="font-size:2rem;">10 Master Nodes + Routing Layer</h2>
+    <p class="section-desc" style="margin-bottom:2rem;">New data gets classified into a domain first, then placed within the right cluster. relevance_scores float on every node — the graph and the model weights drift together.</p>
+    <div style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:16px;padding:2rem 1.5rem;margin-bottom:1.5rem;overflow:hidden;">
+      <svg viewBox="0 0 1100 520" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;">
+        <defs>
+          <filter id="ng"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="ng2"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <circle cx="550" cy="260" r="46" fill="rgba(0,255,136,0.08)" stroke="#00ff88" stroke-width="2" filter="url(#ng)"/>
+        <circle cx="550" cy="260" r="34" fill="rgba(0,255,136,0.12)" stroke="#00ff88" stroke-width="1.5"/>
+        <text x="550" y="255" fill="#00ff88" font-family="Syne,sans-serif" font-size="16" text-anchor="middle" font-weight="800">YOU</text>
+        <text x="550" y="272" fill="rgba(0,255,136,0.6)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">central hub</text>
+        <!-- Research -->
+        <line x1="550" y1="226" x2="550" y2="148" stroke="rgba(108,143,255,0.25)" stroke-width="1.5"/>
+        <circle cx="550" cy="128" r="30" fill="rgba(108,143,255,0.1)" stroke="#6c8fff" stroke-width="1.5"/>
+        <text x="550" y="123" fill="#6c8fff" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">Research</text>
+        <text x="550" y="137" fill="rgba(108,143,255,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 8.1</text>
+        <circle cx="492" cy="90" r="7" fill="rgba(108,143,255,0.15)" stroke="#6c8fff" stroke-width="0.8"/><text x="492" y="93" fill="#6c8fff" font-size="6" font-family="JetBrains Mono" text-anchor="middle">arxiv</text>
+        <circle cx="550" cy="76" r="7" fill="rgba(108,143,255,0.15)" stroke="#6c8fff" stroke-width="0.8"/><text x="550" y="79" fill="#6c8fff" font-size="6" font-family="JetBrains Mono" text-anchor="middle">notes</text>
+        <circle cx="608" cy="90" r="7" fill="rgba(108,143,255,0.15)" stroke="#6c8fff" stroke-width="0.8"/><text x="608" y="93" fill="#6c8fff" font-size="6" font-family="JetBrains Mono" text-anchor="middle">refs</text>
+        <line x1="520" y1="103" x2="492" y2="97" stroke="rgba(108,143,255,0.2)" stroke-width="0.8"/>
+        <line x1="550" y1="98" x2="550" y2="83" stroke="rgba(108,143,255,0.2)" stroke-width="0.8"/>
+        <line x1="580" y1="103" x2="608" y2="97" stroke="rgba(108,143,255,0.2)" stroke-width="0.8"/>
+        <!-- Engineering -->
+        <line x1="572" y1="232" x2="720" y2="155" stroke="rgba(52,211,153,0.25)" stroke-width="1.5"/>
+        <circle cx="740" cy="140" r="30" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="740" y="135" fill="#34d399" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">Engineering</text>
+        <text x="740" y="149" fill="rgba(52,211,153,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 9.2 🔒</text>
+        <circle cx="790" cy="100" r="7" fill="rgba(52,211,153,0.15)" stroke="#34d399" stroke-width="0.8"/><text x="790" y="103" fill="#34d399" font-size="6" font-family="JetBrains Mono" text-anchor="middle">python</text>
+        <circle cx="820" cy="140" r="7" fill="rgba(52,211,153,0.15)" stroke="#34d399" stroke-width="0.8"/><text x="820" y="143" fill="#34d399" font-size="6" font-family="JetBrains Mono" text-anchor="middle">pytest</text>
+        <line x1="770" y1="115" x2="790" y2="107" stroke="rgba(52,211,153,0.2)" stroke-width="0.8"/>
+        <line x1="770" y1="140" x2="813" y2="140" stroke="rgba(52,211,153,0.2)" stroke-width="0.8"/>
+        <!-- Tools -->
+        <line x1="596" y1="260" x2="870" y2="220" stroke="rgba(251,146,60,0.25)" stroke-width="1.5"/>
+        <circle cx="896" cy="210" r="30" fill="rgba(251,146,60,0.1)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="896" y="205" fill="#fb923c" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">Tools</text>
+        <text x="896" y="219" fill="rgba(251,146,60,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 7.5 🔒</text>
+        <!-- System -->
+        <line x1="582" y1="282" x2="840" y2="340" stroke="rgba(244,114,182,0.25)" stroke-width="1.5"/>
+        <circle cx="862" cy="354" r="30" fill="rgba(244,114,182,0.1)" stroke="#f472b6" stroke-width="1.5"/>
+        <text x="862" y="349" fill="#f472b6" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">System</text>
+        <text x="862" y="363" fill="rgba(244,114,182,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 6.8</text>
+        <!-- Habits -->
+        <line x1="550" y1="306" x2="550" y2="378" stroke="rgba(251,191,36,0.25)" stroke-width="1.5"/>
+        <circle cx="550" cy="400" r="30" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="550" y="395" fill="#fbbf24" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">Habits</text>
+        <text x="550" y="409" fill="rgba(251,191,36,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 7.1</text>
+        <!-- Comms -->
+        <line x1="516" y1="290" x2="354" y2="380" stroke="rgba(139,92,246,0.25)" stroke-width="1.5"/>
+        <circle cx="334" cy="396" r="30" fill="rgba(139,92,246,0.08)" stroke="#8b5cf6" stroke-width="1.5"/>
+        <text x="334" y="388" fill="#8b5cf6" font-family="Syne,sans-serif" font-size="10" text-anchor="middle" font-weight="700">Comms</text>
+        <text x="334" y="401" fill="#8b5cf6" font-family="Syne,sans-serif" font-size="10" text-anchor="middle" font-weight="700">Email</text>
+        <text x="334" y="414" fill="rgba(139,92,246,0.5)" font-family="JetBrains Mono,monospace" font-size="7" text-anchor="middle">score: 1.8 ✂️</text>
+        <!-- Projects -->
+        <line x1="520" y1="285" x2="260" y2="340" stroke="rgba(6,182,212,0.25)" stroke-width="1.5"/>
+        <circle cx="240" cy="354" r="30" fill="rgba(6,182,212,0.08)" stroke="#06b6d4" stroke-width="1.5"/>
+        <text x="240" y="349" fill="#06b6d4" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">Projects</text>
+        <text x="240" y="363" fill="rgba(6,182,212,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 8.4 🔒</text>
+        <!-- Meetings — low score -->
+        <line x1="504" y1="261" x2="234" y2="220" stroke="rgba(132,204,22,0.15)" stroke-width="1"/>
+        <circle cx="210" cy="210" r="30" fill="rgba(132,204,22,0.04)" stroke="#84cc16" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="210" y="205" fill="#84cc16" font-family="Syne,sans-serif" font-size="11" text-anchor="middle" font-weight="700">Meetings</text>
+        <text x="210" y="219" fill="rgba(132,204,22,0.55)" font-family="JetBrains Mono,monospace" font-size="7.5" text-anchor="middle">score: 0.9 ✂️</text>
+        <!-- Mental Models -->
+        <line x1="528" y1="234" x2="375" y2="150" stroke="rgba(236,72,153,0.25)" stroke-width="1.5"/>
+        <circle cx="356" cy="136" r="30" fill="rgba(236,72,153,0.08)" stroke="#ec4899" stroke-width="1.5"/>
+        <text x="356" y="128" fill="#ec4899" font-family="Syne,sans-serif" font-size="10" text-anchor="middle" font-weight="700">Mental</text>
+        <text x="356" y="141" fill="#ec4899" font-family="Syne,sans-serif" font-size="10" text-anchor="middle" font-weight="700">Models</text>
+        <text x="356" y="154" fill="rgba(236,72,153,0.5)" font-family="JetBrains Mono,monospace" font-size="7" text-anchor="middle">score: 5.3</text>
+        <!-- Legend -->
+        <text x="40" y="490" fill="rgba(255,255,255,0.5)" font-family="JetBrains Mono,monospace" font-size="9">🔒 Protected (score ≥ 7)</text>
+        <text x="230" y="490" fill="rgba(255,255,255,0.35)" font-family="JetBrains Mono,monospace" font-size="9">↔ Compressible (4–7)</text>
+        <text x="400" y="490" fill="rgba(255,255,255,0.25)" font-family="JetBrains Mono,monospace" font-size="9">✂️ Prune candidate (0–3)</text>
+        <!-- Animated pulse -->
+        <circle r="5" fill="#00ff88" opacity="0.9" filter="url(#ng2)">
+          <animate attributeName="cx" values="550;740;550;896;550;862;550;240;550;334;550" dur="9s" repeatCount="indefinite"/>
+          <animate attributeName="cy" values="260;140;260;210;260;354;260;354;260;396;260" dur="9s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0.4;1;0.4;1;0.4;1;0.4;1;0" dur="9s" repeatCount="indefinite"/>
+        </circle>
+      </svg>
+    </div>
+    <div class="graph-legend">
+      <div class="gl-item"><div class="gl-dot" style="background:#34d399;"></div>Engineering (9.2 — protected)</div>
+      <div class="gl-item"><div class="gl-dot" style="background:#6c8fff;"></div>Research (8.1 — protected)</div>
+      <div class="gl-item"><div class="gl-dot" style="background:#06b6d4;"></div>Projects (8.4 — protected)</div>
+      <div class="gl-item"><div class="gl-dot" style="background:#fbbf24;"></div>Habits (7.1 — protected)</div>
+      <div class="gl-item"><div class="gl-dot" style="background:#8b5cf6;"></div>Comms/Email (1.8 — prune ✂️)</div>
+      <div class="gl-item"><div class="gl-dot" style="background:#84cc16;"></div>Meetings (0.9 — prune ✂️)</div>
+      <div class="gl-item"><div class="gl-dot" style="background:#00ff88;"></div>YOU (routing hub)</div>
+    </div>
+  </div>
+
+  <!-- Reminiscence -->
+  <div class="reminiscence-section">
+    <p class="section-label">Memory Agent</p>
+    <h2 class="section-title" style="font-size:1.8rem;">The Reminiscence Agent</h2>
+    <p class="section-desc">Fires during idle/sleep to strengthen old connections, update scores, and detect nodes that deserve protection or pruning.</p>
+    <div class="remini-grid" style="margin-top:2rem;">
+      <div class="remini-card">
+        <div class="remini-title" style="color:var(--accent2);">🧠 What it does</div>
+        <div class="remini-desc">Randomly replays old graph nodes against recent activity. Adjusts relevance_scores based on whether the node co-activates with current work. High-priority nodes replay often; low-score nodes replay occasionally to check if they've become relevant again.</div>
+        <div class="remini-flow">
+          <div class="rf-step"><div class="rf-num" style="background:rgba(0,184,255,0.15);color:var(--accent2);">1</div><div class="rf-text">Machine goes idle or enters sleep schedule</div></div>
+          <div class="rf-step"><div class="rf-num" style="background:rgba(0,184,255,0.15);color:var(--accent2);">2</div><div class="rf-text">Agent selects nodes weighted by score (high score → replay more often)</div></div>
+          <div class="rf-step"><div class="rf-num" style="background:rgba(0,184,255,0.15);color:var(--accent2);">3</div><div class="rf-text">Replays against recent activity — scores updated</div></div>
+          <div class="rf-step"><div class="rf-num" style="background:rgba(0,184,255,0.15);color:var(--accent2);">4</div><div class="rf-text">Score drops to 0 → candidate for both graph cleanup AND pruning</div></div>
+          <div class="rf-step"><div class="rf-num" style="background:rgba(52,211,153,0.15);color:#34d399;">5</div><div class="rf-text" style="color:#34d399;">Next pruning cycle reads updated scores → mask regenerated</div></div>
+        </div>
+      </div>
+      <div class="remini-card">
+        <div class="remini-title" style="color:#ffaa00;">⚡ Score governs two things</div>
+        <div class="remini-desc">The same relevance_score in graph.db controls both memory replay priority and model pruning decisions. This is the unified architecture.</div>
+        <div style="margin-top:1.2rem;background:var(--bg3);border-radius:8px;padding:1rem;">
+          <div style="font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:0.8rem;">Score drift over time</div>
+          <div style="font-size:0.75rem;color:var(--muted);line-height:1.9;">
+            <span style="color:#a78bfa;">Month 1:</span> pytest score = 9.2 → heads protected<br>
+            <span style="color:#34d399;">Month 4:</span> research papers score climbs<br>
+            <span style="color:#fb923c;">Month 6:</span> meetings drops to 0.9<br>
+            <span style="color:var(--green);">Next prune cycle:</span> model reflects the new you
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hardware Load Tiers -->
+  <div class="load-section">
+    <p class="section-label">Hardware Design</p>
+    <h2 class="section-title" style="font-size:1.8rem;">Load Tier Architecture</h2>
+    <p class="section-desc">Heavy thinking happens when you don't care. BitNet makes inference cheap enough that even $ commands don't feel heavy.</p>
+    <div class="load-tiers">
+      <div class="load-tier">
+        <div class="load-tier-label">Always On</div>
+        <div class="load-tier-name">Sensing Layer</div>
+        <div class="load-tier-cost">≈ 0% CPU overhead</div>
+        <div style="font-size:0.7rem;color:var(--muted);line-height:1.6;">Just logging to buffer. No inference, no training. Pure signal collection.</div>
+        <div class="load-tier-bar" style="background:linear-gradient(90deg,var(--accent3),var(--accent3) 5%,var(--bg4) 5%);"></div>
+      </div>
+      <div class="load-tier">
+        <div class="load-tier-label">On $ Command</div>
+        <div class="load-tier-name">Inference</div>
+        <div class="load-tier-cost">Small spike · BitNet = fast</div>
+        <div style="font-size:0.7rem;color:var(--muted);line-height:1.6;">Local BitNet model responds to $ query via Ollama. Fast, brief, stops immediately.</div>
+        <div class="load-tier-bar" style="background:linear-gradient(90deg,var(--accent) 30%,var(--bg4) 30%);"></div>
+      </div>
+      <div class="load-tier">
+        <div class="load-tier-label">Idle / Night</div>
+        <div class="load-tier-name">Score Update + Prune</div>
+        <div class="load-tier-cost">Heavy, you don't care</div>
+        <div style="font-size:0.7rem;color:var(--muted);line-height:1.6;">Reminiscence agent updates scores. New pruning mask generated. Sparse model rebuilt.</div>
+        <div class="load-tier-bar" style="background:linear-gradient(90deg,var(--accent4) 85%,var(--bg4) 85%);"></div>
+      </div>
+      <div class="load-tier">
+        <div class="load-tier-label">Weekly</div>
+        <div class="load-tier-name">Graph Training</div>
+        <div class="load-tier-cost">Scheduled, controlled</div>
+        <div style="font-size:0.7rem;color:var(--muted);line-height:1.6;">Low LR · 1–2 epochs on buffered data. Raw data purged. Graph anchors the weights.</div>
+        <div class="load-tier-bar" style="background:linear-gradient(90deg,var(--accent2) 50%,var(--bg4) 50%);"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── THREE NEW ARCHITECTURE UPGRADES ── -->
+  <div class="new-arch-section">
+    <p class="section-label">v2 Architecture — Three Upgrades</p>
+    <h2 class="section-title" style="font-size:clamp(1.6rem,3vw,2.6rem);">Giving the System Space<br>to <em style="font-family:'Instrument Serif',serif;color:var(--accent2);">Think</em> and Act Dynamically</h2>
+    <p class="section-desc" style="margin-bottom:0;">The original 5-manager design was static. These three upgrades make the architecture breathe, dream, and decide on its own.</p>
+    <div class="new-arch-grid">
+
+      <!-- 1. STRUCTURAL PLASTICITY -->
+      <div class="nac" style="border-color:rgba(108,143,255,0.35);background:rgba(108,143,255,0.03);">
+        <div class="nac-badge" style="color:#6c8fff;">Upgrade 01 · Inspired by Neurogenesis &amp; Apoptosis</div>
+        <div class="nac-title" style="color:#6c8fff;">Structural Plasticity — The Architecture That Breathes</div>
+        <div class="nac-sub">Right now all five managers are hard-coded and permanent. This upgrade kills that lock-in. You write a base <code style="color:var(--accent3);">Node</code> class and let the Event Bus <strong style="color:var(--text);">spawn</strong> or <strong style="color:var(--text);">kill</strong> nodes dynamically based on what's actually happening on your machine.</div>
+        <div class="nac-row">
+          <div>
+            <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:0.7rem;">How it works</div>
+            <div style="font-size:0.8rem;color:var(--muted);line-height:1.85;">You start compiling a massive codebase. The system sees CPU at 95% and RAM spiking. It <span style="color:#6c8fff;">spawns a temporary cluster</span> of Sub-Sensing nodes that only watch thermal limits. When that project ends and those nodes haven't fired for two weeks, the system <span style="color:#f87171;">kills them</span> (apoptosis) — they stop wasting resources. The graph shapes itself around your active projects, not a fixed blueprint.</div>
+            <div style="margin-top:1rem;display:flex;flex-wrap:wrap;">
+              <span class="nac-pill" style="border-color:rgba(52,211,153,0.3);color:#34d399;">spawn_node()</span>
+              <span class="nac-pill" style="border-color:rgba(248,113,113,0.3);color:#f87171;">kill_node()</span>
+              <span class="nac-pill" style="border-color:rgba(108,143,255,0.3);color:#6c8fff;">EventBus</span>
+              <span class="nac-pill" style="border-color:rgba(251,146,60,0.3);color:#fb923c;">idle_ttl = 14d</span>
+            </div>
+          </div>
+          <div class="nac-example">
+            <div class="eg-label">Example lifecycle</div>
+            <div class="eg-line">// Day 1: heavy Blender render job starts</div>
+            <div class="eg-hi">bus.emit("cpu_spike", 97%) →</div>
+            <div class="eg-hi">&nbsp;&nbsp;spawn SubSensor("thermal_watch")</div>
+            <div class="eg-hi">&nbsp;&nbsp;spawn SubSensor("fan_rpm_watch")</div>
+            <br>
+            <div class="eg-line">// Day 15: render project done,</div>
+            <div class="eg-line">// nodes haven't fired in 14 days</div>
+            <div class="eg-warn">apoptosis_check() →</div>
+            <div class="eg-warn">&nbsp;&nbsp;kill SubSensor("thermal_watch")</div>
+            <div class="eg-warn">&nbsp;&nbsp;kill SubSensor("fan_rpm_watch")</div>
+            <div class="eg-hi">// Architecture is leaner again ✓</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. DEFAULT MODE NETWORK -->
+      <div class="nac" style="border-color:rgba(167,139,250,0.35);background:rgba(167,139,250,0.03);">
+        <div class="nac-badge" style="color:#a78bfa;">Upgrade 02 · Inspired by the Brain's Default Mode Network</div>
+        <div class="nac-title" style="color:#a78bfa;">Default Mode Network — The System Dreams When You're Away</div>
+        <div class="nac-sub">The original Reminiscence Agent just did database housekeeping during idle time. This upgrade gives the system an imagination. When your CPU drops below 5%, instead of sleeping, it <strong style="color:var(--text);">actively thinks</strong> — running what-if simulations and generating ideas in the background.</div>
+        <div class="nac-row">
+          <div>
+            <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:0.7rem;">How it works</div>
+            <div style="font-size:0.8rem;color:var(--muted);line-height:1.85;">CPU drops below 5%. The system pulls your highest-score graph nodes — say, a buggy Python script you were stuck on. It uses the lightweight <span style="color:#a78bfa;">BitNet b1.58 model</span> to autonomously generate potential fixes, alternative approaches, or follow-up queries. These get cached as "idle thoughts." When you return to the terminal, the system doesn't just remember what you did — it has <span style="color:#a78bfa;">new ideas waiting</span> for you.</div>
+            <div style="margin-top:1rem;display:flex;flex-wrap:wrap;">
+              <span class="nac-pill" style="border-color:rgba(167,139,250,0.3);color:#a78bfa;">cpu &lt; 5% trigger</span>
+              <span class="nac-pill" style="border-color:rgba(167,139,250,0.3);color:#a78bfa;">top-K graph nodes</span>
+              <span class="nac-pill" style="border-color:rgba(251,146,60,0.3);color:#fb923c;">BitNet inference</span>
+              <span class="nac-pill" style="border-color:rgba(52,211,153,0.3);color:#34d399;">idle_cache.db</span>
+            </div>
+          </div>
+          <div class="nac-example">
+            <div class="eg-label">Example idle session</div>
+            <div class="eg-line">// You step away. CPU = 2%.</div>
+            <div class="eg-hi">dmn.trigger() →</div>
+            <div class="eg-hi">&nbsp;&nbsp;nodes = graph.top_k(5)</div>
+            <div class="eg-line">&nbsp;&nbsp;// ["buggy_parser.py", "fastapi route", ...]</div>
+            <br>
+            <div class="eg-hi">&nbsp;&nbsp;for node in nodes:</div>
+            <div class="eg-hi">&nbsp;&nbsp;&nbsp;&nbsp;thought = bitnet.generate(</div>
+            <div class="eg-hi">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"what-if: " + node.context)</div>
+            <div class="eg-hi">&nbsp;&nbsp;&nbsp;&nbsp;idle_cache.save(thought)</div>
+            <br>
+            <div class="eg-line">// You return to terminal:</div>
+            <div class="eg-hi">◆ While you were away, I thought of</div>
+            <div class="eg-hi">&nbsp;&nbsp;3 approaches for buggy_parser.py ✓</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. ACTION GRADIENTS -->
+      <div class="nac" style="border-color:rgba(52,211,153,0.35);background:rgba(52,211,153,0.03);">
+        <div class="nac-badge" style="color:#34d399;">Upgrade 03 · Inspired by Biological Motor Thresholds</div>
+        <div class="nac-title" style="color:#34d399;">Action Gradients — Mathematical Permission, Not Manual Approval</div>
+        <div class="nac-sub">The original W · Action layer was binary: everything required you to approve it. That's not autonomy. This upgrade replaces the gatekeeper with <strong style="color:var(--text);">activation thresholds</strong> — actions fire when enough pressure accumulates, not when you say so.</div>
+        <div class="nac-row">
+          <div>
+            <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:0.7rem;">How it works — two thresholds</div>
+            <div style="font-size:0.8rem;color:var(--muted);line-height:1.85;">
+              <span style="color:#34d399;">Low threshold (safe actions):</span> Clearing a stale temp cache has a low threshold — a single spike from the Diagnosis node fires it instantly and silently. You never see it happen.<br><br>
+              <span style="color:#f87171;">High threshold (dangerous actions):</span> Killing a frozen database process requires synchronized spikes from <em>Sensing + Diagnosis + Learning simultaneously</em>. If that triple pressure isn't met, the system prompts you in the terminal instead of acting.
+            </div>
+            <div style="margin-top:1rem;display:flex;flex-wrap:wrap;">
+              <span class="nac-pill" style="border-color:rgba(52,211,153,0.3);color:#34d399;">low_threshold = 1 spike</span>
+              <span class="nac-pill" style="border-color:rgba(248,113,113,0.3);color:#f87171;">high_threshold = 3 synced spikes</span>
+              <span class="nac-pill" style="border-color:rgba(251,146,60,0.3);color:#fb923c;">pressure accumulator</span>
+            </div>
+          </div>
+          <div class="nac-example">
+            <div class="eg-label">Threshold examples</div>
+            <div class="eg-line">// LOW THRESHOLD — fires silently</div>
+            <div class="eg-hi">diagnosis.spike("stale_cache") →</div>
+            <div class="eg-hi">&nbsp;&nbsp;pressure = 1 ≥ threshold(1)</div>
+            <div class="eg-hi">&nbsp;&nbsp;action.execute("clear_tmp") ✓</div>
+            <br>
+            <div class="eg-line">// HIGH THRESHOLD — needs 3-way sync</div>
+            <div class="eg-warn">sensing.spike("db_frozen")</div>
+            <div class="eg-warn">diagnosis.spike("db_frozen")</div>
+            <div class="eg-line">learning.spike("db_frozen") // missing!</div>
+            <div class="eg-line">// pressure = 2 &lt; threshold(3)</div>
+            <div class="eg-hi">→ terminal prompt instead:</div>
+            <div class="eg-hi">&nbsp;&nbsp;"Kill postgres? [y/n]"</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── PLAIN ENGLISH EXPLANATION ── -->
+  <div style="padding:4rem 3rem;background:var(--bg2);border-top:1px solid var(--border);">
+    <p class="section-label">Plain English</p>
+    <h2 class="section-title" style="font-size:clamp(1.6rem,3vw,2.4rem);">How the Whole Thing<br>Actually Works</h2>
+    <p class="section-desc" style="margin-bottom:2.5rem;">No jargon. Start here if the diagrams feel overwhelming.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1.6rem;border-left:3px solid #6c8fff;">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:#6c8fff;margin-bottom:0.6rem;">Step 1 — Watching</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.5rem;">Your machine is always being quietly observed</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;">Every minute, NeuroPACA logs what's running — which apps, how much CPU they use, what files changed. It doesn't record your screen or keystrokes. Just cold system numbers. This is the X · Sensing layer.</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1.6rem;border-left:3px solid #fb923c;">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:#fb923c;margin-bottom:0.6rem;">Step 2 — Understanding</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.5rem;">Numbers get turned into meaning</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;">Raw CPU spikes don't mean anything alone. The Y · Diagnosis layer correlates them — it learns that "python.exe high CPU at 11pm always means you're running tests before a commit." It starts predicting failures before they happen.</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1.6rem;border-left:3px solid #a78bfa;">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:#a78bfa;margin-bottom:0.6rem;">Step 3 — Remembering</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.5rem;">A graph grows around your habits</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;">The Z · Learning layer builds a graph database where nodes are your tools, projects, and habits — and edges are the relationships between them. Every node has a <code style="color:#a78bfa;">relevance_score</code>. Heavy use → score climbs. Neglect → score decays. The graph is literally a map of who you are as a developer.</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1.6rem;border-left:3px solid #34d399;">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:#34d399;margin-bottom:0.6rem;">Step 4 — Acting</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.5rem;">It does things — but carefully</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;">Small safe actions fire automatically when pressure builds (clearing caches, pre-fetching docs). Risky actions require more evidence before they execute. If the system isn't confident enough, it asks you in the terminal instead of acting alone.</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1.6rem;border-left:3px solid #f472b6;grid-column:span 2;">
+        <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:#f472b6;margin-bottom:0.6rem;">Step 5 — Dreaming (new)</div>
+        <div style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:0.5rem;">When you step away, it keeps thinking</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;">When CPU drops below 5% (you walked away, went to lunch), the Default Mode Network fires. It takes your highest-priority graph nodes and uses the local BitNet model to generate ideas — fixes for bugs you were stuck on, alternative approaches, follow-up searches. When you come back, it shows you what it thought about. The architecture that physically changes its shape (Structural Plasticity) means these systems grow and shrink with your workload — nodes spawn when you need them, die when you don't.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SYSTEM CLASS DIAGRAM ── -->
+  <div class="class-diag-section">
+    <p class="section-label">System Architecture</p>
+    <h2 class="section-title" style="font-size:clamp(1.6rem,3vw,2.4rem);">NeuroPACA v4 —<br><em style="font-family:'Instrument Serif',serif;color:var(--accent2);">Full Class Diagram</em></h2>
+    <p class="section-desc">Every module, class, and dependency. Click a module header to expand/collapse. Colour = layer. Dashed border = abstract/interface.</p>
+
+    <div class="cd-filter-bar">
+      <button class="cd-filter active" data-layer="all">All</button>
+      <button class="cd-filter" data-layer="L1">L1 Core</button>
+      <button class="cd-filter" data-layer="L2">L2 Sensing</button>
+      <button class="cd-filter" data-layer="L3">L3 Diagnosis</button>
+      <button class="cd-filter" data-layer="L4">L4 Learning</button>
+      <button class="cd-filter" data-layer="L5">L5 Drive</button>
+      <button class="cd-filter" data-layer="L6">L6 Cognition</button>
+      <button class="cd-filter" data-layer="L9">L9 Interface</button>
+      <button class="cd-filter" data-layer="L10">L10 Orchestration</button>
+    </div>
+
+    <div class="cd-grid" id="cdGrid"></div>
+
+    <div class="build-legend" style="margin-top:2rem;">
+      <div class="bl-item"><div class="bl-dot" style="background:#34d399;"></div>L1 Core Infrastructure</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#6c8fff;"></div>L2 Sensing</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#fb923c;"></div>L3 Diagnosis</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#a78bfa;"></div>L4 Learning</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#f472b6;"></div>L5 Drive</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#38bdf8;"></div>L6 Idle Cognition</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#fbbf24;"></div>L9 Interface</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#e879f9;"></div>L10 Orchestration</div>
+      <div class="bl-item"><div class="bl-dot" style="background:#f87171;border-radius:0;"></div>Abstract / Interface</div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="footer-title">NeuroPACA</div>
+    <p class="footer-sub">Hybrid Memory Architecture · Two systems, one compounding brain</p>
+  </footer>
+</div>
+
+<!-- ═══════════════ PAGE: STORING & LEARNING ═══════════════ -->
+<div class="page" id="page-memory">
+  <div class="sl-page">
+    <p class="section-label" style="font-size:0.78rem;">Memory Design</p>
+    <h2 class="section-title" style="font-size:clamp(2rem,4vw,3rem);">From Flat Storage<br>to <span style="color:var(--green);">Living Memory</span></h2>
+    <p class="section-desc" style="font-size:0.95rem;max-width:680px;margin-bottom:2.5rem;">A chain of necessity — every problem birthed its own solution. Every design decision here was earned, not invented.</p>
+
+    <div class="old-section">
+      <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">01 — The Old Way: Flat Data Storage</div>
+      <div class="old-flow">
+        <div class="old-node"><div class="label">Collect</div><div class="title">Raw Logs</div><div class="desc">Everything stored as-is. Grows forever.</div></div>
+        <div class="old-node"><div class="label">Store</div><div class="title">Flat DB</div><div class="desc">Rows in a database. No relationships.</div></div>
+        <div class="old-node"><div class="label">Query</div><div class="title">Scan & Filter</div><div class="desc">Gets slower as data grows.</div></div>
+        <div class="old-node"><div class="label">Output</div><div class="title">Generic Answer</div><div class="desc">Same answer for everyone.</div></div>
+      </div>
+      <div class="problems">
+        <div class="problem-tag">Storage bloats infinitely</div>
+        <div class="problem-tag">No relationships between data</div>
+        <div class="problem-tag">Privacy risk — raw data sits forever</div>
+        <div class="problem-tag">Gets slower over time</div>
+        <div class="problem-tag">Generic, not personal</div>
+        <div class="problem-tag">Old knowledge silently forgotten</div>
+      </div>
+    </div>
+
+    <div class="vs-divider"><span class="vs-badge">→ GRAPH IS BETTER BECAUSE →</span></div>
+
+    <div style="margin-bottom:3rem;">
+      <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">02 — Why Graph Memory Wins</div>
+      <div class="why-grid">
+        <div class="why-card"><div class="icon">🔗</div><div class="wc-title">Relationships are first-class</div><div class="wc-desc">"pytest runs late night before commits" is an edge, not a buried log line.</div></div>
+        <div class="why-card"><div class="icon">📦</div><div class="wc-title">Storage stays bounded</div><div class="wc-desc">Raw data trains then gets purged. Only extracted knowledge persists.</div></div>
+        <div class="why-card"><div class="icon">✂️</div><div class="wc-title">Score drives pruning too</div><div class="wc-desc">relevance_score on each node governs both graph memory replay AND which attention heads survive pruning. One number, two jobs.</div></div>
+        <div class="why-card"><div class="icon">⚡</div><div class="wc-title">Queries find meaning, not rows</div><div class="wc-desc">Traverse the graph, not scan logs. Connected knowledge surfaces fast and contextually.</div></div>
+      </div>
+    </div>
+
+    <div class="chain-section">
+      <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:28px;">03 — The Chain of Necessity</div>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:0;margin-bottom:0;border:1px solid rgba(108,143,255,0.25);border-radius:14px;overflow:hidden;">
+        <div style="background:rgba(108,143,255,0.08);padding:2rem;display:flex;flex-direction:column;justify-content:center;border-right:1px solid rgba(108,143,255,0.2);">
+          <div style="font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:rgba(108,143,255,0.6);margin-bottom:0.5rem;">Step 01</div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:#6c8fff;line-height:1.1;">Graph<br>Memory</div>
+          <div style="margin-top:1rem;width:40px;height:3px;background:#6c8fff;border-radius:2px;opacity:0.5;"></div>
+        </div>
+        <div style="padding:2rem;">
+          <div style="font-size:0.88rem;color:var(--text);line-height:1.75;margin-bottom:1rem;">Nodes = concepts/habits/tools. Edges = relationships. Weights = connection strength over time.</div>
+          <div style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.8rem;">
+            <div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:#fb923c;margin-bottom:0.4rem;">⚠ Problem this creates</div>
+            <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">Who decides what connects to what? Comparing new data against every node is O(n) and creates noise. No structure means the graph degrades into chaos as it grows.</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;margin:0;"><div style="width:2px;height:28px;background:linear-gradient(to bottom,rgba(108,143,255,0.4),rgba(167,139,250,0.4));"></div></div>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:0;margin-bottom:0;border:1px solid rgba(167,139,250,0.25);border-radius:14px;overflow:hidden;">
+        <div style="background:rgba(167,139,250,0.08);padding:2rem;display:flex;flex-direction:column;justify-content:center;border-right:1px solid rgba(167,139,250,0.2);">
+          <div style="font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:rgba(167,139,250,0.6);margin-bottom:0.5rem;">Step 02</div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:#a78bfa;line-height:1.1;">Routing<br>Layer</div>
+          <div style="margin-top:1rem;width:40px;height:3px;background:#a78bfa;border-radius:2px;opacity:0.5;"></div>
+        </div>
+        <div style="padding:2rem;">
+          <div style="font-size:0.88rem;color:var(--text);line-height:1.75;margin-bottom:1rem;">10 master nodes + central hub. New data classified first, then placed within the right cluster. Search space shrinks dramatically.</div>
+          <div style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);border-radius:8px;padding:0.9rem 1.1rem;">
+            <div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:#fb923c;margin-bottom:0.4rem;">⚠ Problem this creates</div>
+            <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">Old nodes slowly lose connections. They become orphans. Months-old patterns stop activating and silently disappear. The model drifts toward recency.</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;margin:0;"><div style="width:2px;height:28px;background:linear-gradient(to bottom,rgba(167,139,250,0.4),rgba(52,211,153,0.4));"></div></div>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:0;margin-bottom:0;border:1px solid rgba(52,211,153,0.25);border-radius:14px;overflow:hidden;">
+        <div style="background:rgba(52,211,153,0.07);padding:2rem;display:flex;flex-direction:column;justify-content:center;border-right:1px solid rgba(52,211,153,0.2);">
+          <div style="font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:rgba(52,211,153,0.6);margin-bottom:0.5rem;">Step 03</div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:#34d399;line-height:1.1;">Reminiscence<br>Agent</div>
+          <div style="margin-top:1rem;width:40px;height:3px;background:#34d399;border-radius:2px;opacity:0.5;"></div>
+        </div>
+        <div style="padding:2rem;">
+          <div style="font-size:0.88rem;color:var(--text);line-height:1.75;margin-bottom:1rem;">Randomly replays old nodes during idle/sleep. Adjusts relevance_scores. High-score nodes replay often and reinforce their corresponding model weights. Low-score nodes get flagged for pruning.</div>
+          <div style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);border-radius:8px;padding:0.9rem 1.1rem;">
+            <div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:#fb923c;margin-bottom:0.4rem;">⚠ Problem this creates</div>
+            <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">If it runs while you're working, it competes for CPU with actual tasks. And the mapping from graph nodes to model weights needs a bridge — the node concept and the attention head are different things.</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;margin:0;"><div style="width:2px;height:28px;background:linear-gradient(to bottom,rgba(52,211,153,0.4),rgba(251,146,60,0.4));"></div></div>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:0;margin-bottom:0;border:1px solid rgba(251,146,60,0.25);border-radius:14px;overflow:hidden;">
+        <div style="background:rgba(251,146,60,0.07);padding:2rem;display:flex;flex-direction:column;justify-content:center;border-right:1px solid rgba(251,146,60,0.2);">
+          <div style="font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:rgba(251,146,60,0.6);margin-bottom:0.5rem;">Step 04</div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:#fb923c;line-height:1.1;">Scheduled<br>Training</div>
+          <div style="margin-top:1rem;width:40px;height:3px;background:#fb923c;border-radius:2px;opacity:0.5;"></div>
+        </div>
+        <div style="padding:2rem;">
+          <div style="font-size:0.88rem;color:var(--text);line-height:1.75;margin-bottom:1rem;">Training happens during idle/sleep. Sensing runs 24/7 at near-zero cost. Heavy computation happens when you don't care — just like your brain consolidates memory overnight.</div>
+          <div style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);border-radius:8px;padding:0.9rem 1.1rem;">
+            <div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:#fb923c;margin-bottom:0.4rem;">⚠ Problem this creates</div>
+            <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">Neural nets trained on new data batches overwrite old learned patterns. Catastrophic forgetting kicks in around 1–2 months of accumulated data.</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;margin:0;"><div style="width:2px;height:28px;background:linear-gradient(to bottom,rgba(251,146,60,0.4),rgba(0,255,136,0.4));"></div></div>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:0;margin-bottom:2rem;border:1px solid rgba(0,255,136,0.25);border-radius:14px;overflow:hidden;">
+        <div style="background:rgba(0,255,136,0.06);padding:2rem;display:flex;flex-direction:column;justify-content:center;border-right:1px solid rgba(0,255,136,0.2);">
+          <div style="font-size:0.7rem;letter-spacing:0.15em;text-transform:uppercase;color:rgba(0,255,136,0.6);margin-bottom:0.5rem;">Step 05</div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:var(--green);line-height:1.1;">Unified<br>Database</div>
+          <div style="margin-top:1rem;width:40px;height:3px;background:var(--green);border-radius:2px;opacity:0.5;"></div>
+        </div>
+        <div style="padding:2rem;">
+          <div style="font-size:0.88rem;color:var(--text);line-height:1.75;margin-bottom:1rem;">The graph.db stores a relevance_score on every node. Score decays over time if unused. The same score that governs memory replay now also drives the pruning mask — one database, two jobs. No separate calibration pass needed.</div>
+          <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:0.9rem 1.1rem;">
+            <div style="font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--green);margin-bottom:0.4rem;">✓ Resolution</div>
+            <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">Bridge the gap between graph nodes (semantic concepts) and model components (attention heads) using a static domain_to_heads lookup table built once at setup. Pruning is then a DB read + table lookup — no inference needed during the pruning step itself.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="final-box">
+        <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">04 — Final Resolution: Controlled Learning + Unified Pruning</div>
+        <div class="final-grid">
+          <div>
+            <div class="final-lbl">LOW LR + FEW EPOCHS</div>
+            <div class="final-desc" style="font-size:0.84rem;line-height:1.75;">After 2 months, new data is ~1–2% of total accumulated knowledge. A tiny LR nudges the model gently — old weights dominate by sheer mass. 1–2 epochs max prevents overfitting to recent behavior.</div>
+          </div>
+          <div>
+            <div class="final-lbl">GRAPH SCORE → PRUNING MASK</div>
+            <div class="final-desc" style="font-size:0.84rem;line-height:1.75;">The same graph.db that drives memory also drives pruning. Score ≥ 7 → protect those heads. Score ≤ 3 → flag for removal. The lookup table maps domain → head_ids. Pruning is a DB read, not an inference job.</div>
+          </div>
+        </div>
+        <div class="final-result" style="font-size:0.85rem;line-height:1.75;"><span>Result:</span> Three systems protecting the model — the graph preserves structural memory, controlled training preserves pattern memory, and personal graph scores ensure the sparse subnetwork is shaped around your actual work. All three are necessary. None is sufficient alone.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ PAGE: WORKFLOW ═══════════════ -->
+<div class="page" id="page-workflow">
+  <div class="workflow-page">
+    <div class="wf-header">
+      <div>
+        <div class="wf-title">NeuroPACA — Full System Workflow</div>
+        <div class="wf-sub">End-to-end lifecycle · Init → Sensing → Diagnosis → Learning → Action → Comms → Feedback</div>
+      </div>
+      <div class="wf-legend">
+        <div class="wl-item"><div class="wl-dot" style="background:#388bfd"></div>Sensing</div>
+        <div class="wl-item"><div class="wl-dot" style="background:#fb923c"></div>Diagnosis</div>
+        <div class="wl-item"><div class="wl-dot" style="background:#a78bfa"></div>Learning</div>
+        <div class="wl-item"><div class="wl-dot" style="background:#34d399"></div>Action</div>
+        <div class="wl-item"><div class="wl-dot" style="background:#f472b6"></div>Comms</div>
+        <div class="wl-item"><div class="wl-dot" style="background:#ffd700"></div>Terminal $</div>
+      </div>
+    </div>
+    <div style="padding:1.5rem 2rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.5rem;min-height:500px;">
+      <!-- Column 1 -->
+      <div style="overflow-y:auto;">
+        <div class="phase-div"><div class="phase-div-line"></div><div class="phase-div-label" style="background:#1c2128;color:#7d8590;border:1px solid #30363d;">Phase 0 · Init</div><div class="phase-div-line"></div></div>
+        <div class="swf-step-card s-done"><div class="swf-num">1</div><div class="swf-status">DONE</div><div class="swf-title">BOOT</div><div class="swf-sub">System startup · daemon launches · NeuroPACA active</div></div>
+        <div class="swf-connector"><div class="swf-conn-line" style="background:#2ea043;"></div><div class="swf-conn-arrow" style="border-top-color:#2ea043;"></div></div>
+        <div class="swf-step-card s-done"><div class="swf-num">2</div><div class="swf-status">DONE</div><div class="swf-title">INIT SERVICES</div><div class="swf-sub">Load BitNet model via Ollama · register X Y Z W V agents · start event bus</div></div>
+        <div class="phase-div" style="margin-top:14px;"><div class="phase-div-line"></div><div class="phase-div-label" style="background:#0d1f35;color:#388bfd;border:1px solid #388bfd;">Phase 1 · Sensing</div><div class="phase-div-line"></div></div>
+        <div class="swf-step-card s-active"><div class="swf-num">3</div><div class="swf-status">ACTIVE</div><div class="swf-title">X · PASSIVE SENSING</div><div class="swf-sub">CPU · RAM · disk · temp · processes · network · logs — every 60s</div></div>
+        <div class="swf-connector"><div class="swf-conn-line" style="background:#388bfd;"></div><div class="swf-conn-arrow" style="border-top-color:#388bfd;"></div></div>
+        <div class="swf-step-card s-active"><div class="swf-num">4</div><div class="swf-status">ACTIVE</div><div class="swf-title">EVENT BUS</div><div class="swf-sub">Signals published async · all managers subscribe · no direct coupling</div></div>
+        <div class="phase-div" style="margin-top:14px;"><div class="phase-div-line"></div><div class="phase-div-label" style="background:#2d1800;color:#fb923c;border:1px solid #fb923c;">Phase 2 · Diagnosis</div><div class="phase-div-line"></div></div>
+        <div class="swf-step-card s-active"><div class="swf-num">5</div><div class="swf-status">ACTIVE</div><div class="swf-title">Y · ANOMALY DETECTION</div><div class="swf-sub">Correlate signals · filter noise · threshold decision · BitNet LLM for complex cases</div></div>
+        <div style="margin-top:16px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:12px;">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#7d8590;font-family:'JetBrains Mono',monospace;margin-bottom:8px;">Normal Flow</div>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <span style="font-size:9.5px;padding:3px 8px;border-radius:3px;background:#388bfd14;border:1px solid #388bfd33;color:#388bfd;font-family:'JetBrains Mono',monospace;">X reads data</span>
+            <span style="font-size:9.5px;padding:3px 8px;border-radius:3px;background:#38bdf814;border:1px solid #38bdf833;color:#38bdf8;font-family:'JetBrains Mono',monospace;">→ Event Bus</span>
+            <span style="font-size:9.5px;padding:3px 8px;border-radius:3px;background:#fb923c14;border:1px solid #fb923c33;color:#fb923c;font-family:'JetBrains Mono',monospace;">→ Y diagnoses</span>
+            <span style="font-size:9.5px;padding:3px 8px;border-radius:3px;background:#a78bfa14;border:1px solid #a78bfa33;color:#a78bfa;font-family:'JetBrains Mono',monospace;">→ Z updates scores</span>
+            <span style="font-size:9.5px;padding:3px 8px;border-radius:3px;background:#2dd4bf14;border:1px solid #2dd4bf33;color:#2dd4bf;font-family:'JetBrains Mono',monospace;">→ W acts safely</span>
+            <span style="font-size:9.5px;padding:3px 8px;border-radius:3px;background:#f472b614;border:1px solid #f472b633;color:#f472b6;font-family:'JetBrains Mono',monospace;">→ V tells you</span>
+          </div>
+        </div>
+      </div>
+      <!-- Column 2 -->
+      <div style="overflow-y:auto;">
+        <div class="phase-div"><div class="phase-div-line"></div><div class="phase-div-label" style="background:#1a0d2e;color:#a78bfa;border:1px solid #a78bfa;">Phase 3 · Learning (always parallel)</div><div class="phase-div-line"></div></div>
+        <div class="swf-step-card s-active"><div class="swf-num">6</div><div class="swf-status">PASSIVE</div><div class="swf-title">Z · BEHAVIORAL LEARNING</div><div class="swf-sub">Watch process patterns · update relevance_scores in graph.db · Hebbian co-occurrence weights</div></div>
+        <div class="swf-connector"><div class="swf-conn-line" style="background:#a78bfa;"></div><div class="swf-conn-arrow" style="border-top-color:#a78bfa;"></div></div>
+        <div class="swf-step-card s-todo"><div class="swf-num">7</div><div class="swf-status">SCHEDULED</div><div class="swf-title">REMINISCENCE AGENT (SLEEP)</div><div class="swf-sub">Replay old nodes · update scores · identify prune candidates · regenerate pruning mask</div></div>
+        <div class="swf-connector"><div class="swf-conn-line" style="background:#a78bfa;"></div><div class="swf-conn-arrow" style="border-top-color:#a78bfa;"></div></div>
+        <div class="swf-step-card s-todo"><div class="swf-num">8</div><div class="swf-status">WEEKLY</div><div class="swf-title">GRAPH TRAINING + PRUNE CYCLE</div><div class="swf-sub">Low LR · 1–2 epochs · raw data purged · new sparse BitNet subnetwork written to disk</div></div>
+        <div class="swf-connector"><div class="swf-conn-line" style="background:#34d399;"></div><div class="swf-conn-arrow" style="border-top-color:#34d399;"></div></div>
+        <div class="phase-div" style="margin-top:14px;"><div class="phase-div-line"></div><div class="phase-div-label" style="background:#0d2318;color:#34d399;border:1px solid #34d399;">Phase 4 · Action</div><div class="phase-div-line"></div></div>
+        <div class="swf-step-card s-active"><div class="swf-num">9</div><div class="swf-status">TRIGGERED</div><div class="swf-title">W · ACTION ENGINE</div><div class="swf-sub">Safety check gate · sandbox execution · backup before action · rollback available</div></div>
+        <div class="swf-connector"><div class="swf-conn-line" style="background:#f472b6;"></div><div class="swf-conn-arrow" style="border-top-color:#f472b6;"></div></div>
+        <div class="phase-div" style="margin-top:14px;"><div class="phase-div-line"></div><div class="phase-div-label" style="background:#200d1a;color:#f472b6;border:1px solid #f472b6;">Phase 5 · Communication</div><div class="phase-div-line"></div></div>
+        <div class="swf-step-card s-active"><div class="swf-num">10</div><div class="swf-status">ACTIVE</div><div class="swf-title">V · COMMS LAYER</div><div class="swf-sub">Filter noise · notify only when needed · format $ responses · tray icon · daily report</div></div>
+        <div style="margin-top:14px;background:#0d1f0d;border:1px solid #2ea04333;border-radius:8px;padding:12px;">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#2ea043;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">↺ Feedback Loop</div>
+          <div style="font-size:10px;color:#7d8590;line-height:1.7;font-family:'JetBrains Mono',monospace;">Action result → Z score update → graph.db → next prune cycle reflects outcome</div>
+        </div>
+      </div>
+      <!-- Column 3 -->
+      <div style="overflow-y:auto;">
+        <div class="special-paths">
+          <div class="sp-header">Override Channels</div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#ffd700;">$</span><div><div class="sp-title">Terminal Override</div><div class="sp-desc">Bypasses normal pipeline · direct to BitNet LLM + W action · Z context auto-injected</div></div><span class="sp-badge" style="color:#ffd700;border-color:#ffd700;">INSTANT</span></div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#ff4444;">$!</span><div><div class="sp-title">Emergency Path</div><div class="sp-desc">Skips Y + Z · autonomous immediate action · critical events only</div></div><span class="sp-badge" style="color:#ff4444;border-color:#ff4444;">URGENT</span></div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#34d399;">$$</span><div><div class="sp-title">Safe Execution</div><div class="sp-desc">Full backup + verify before any action · never during tests</div></div><span class="sp-badge" style="color:#34d399;border-color:#34d399;">SAFE</span></div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#a78bfa;">$?</span><div><div class="sp-title">Context Question</div><div class="sp-desc">Project-aware Q&A · injects stack + phase + recent events into prompt</div></div><span class="sp-badge" style="color:#a78bfa;border-color:#a78bfa;">SMART</span></div>
+        </div>
+        <div class="special-paths" style="margin-top:12px;">
+          <div class="sp-header">Background Loops</div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#a78bfa;">↻</span><div><div class="sp-title">Score Update Loop</div><div class="sp-desc">Z watches processes every 60s · relevance_scores drift naturally with usage</div></div><span class="sp-badge" style="color:#a78bfa;border-color:#a78bfa;">24/7</span></div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#fb923c;">↻</span><div><div class="sp-title">Feedback Loop</div><div class="sp-desc">Every action result refines Z scores and Y thresholds</div></div><span class="sp-badge" style="color:#fb923c;border-color:#fb923c;">LOOP</span></div>
+          <div class="sp-row"><span class="sp-arrow" style="color:#fbbf24;">🌙</span><div><div class="sp-title">Sleep Prune Cycle</div><div class="sp-desc">Scores read → mask built → sparse BitNet subnetwork rebuilt on disk</div></div><span class="sp-badge" style="color:#fbbf24;border-color:#fbbf24;">NIGHTLY</span></div>
+        </div>
+        <div style="margin-top:12px;">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#7d8590;font-family:'JetBrains Mono',monospace;margin-bottom:10px;">Example Scenarios</div>
+          <div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:10px 12px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;">
+            <div style="font-size:9.5px;color:#fb923c;margin-bottom:4px;letter-spacing:1px;font-weight:bold;">A · Auto Cleanup</div>
+            <div style="font-size:9.5px;color:#7d8590;line-height:1.7;">Disk critical → X flags → Y confirms → W clears 14GB → silent. You wake up, all good.</div>
+          </div>
+          <div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:10px 12px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;">
+            <div style="font-size:9.5px;color:#a78bfa;margin-bottom:4px;letter-spacing:1px;font-weight:bold;">B · Score-Driven Prune</div>
+            <div style="font-size:9.5px;color:#7d8590;line-height:1.7;">zoom_calls score drops to 0.9 → nightly prune removes heads [3,8,14] → model 12% smaller</div>
+          </div>
+          <div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:10px 12px;font-family:'JetBrains Mono',monospace;">
+            <div style="font-size:9.5px;color:#34d399;margin-bottom:4px;letter-spacing:1px;font-weight:bold;">C · Predictive Warmup</div>
+            <div style="font-size:9.5px;color:#7d8590;line-height:1.7;">Z knows you code at 10am → 9:55am pre-starts VSCode, venv, caches docs. Everything ready.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ PAGE: SPARSE MODEL ═══════════════ -->
+<div class="page" id="page-sparse">
+  <div class="sparse-hero">
+    <p class="section-label">Sparse Personalized Model</p>
+    <h2 class="section-title">One Database.<br><em style="font-family:'Instrument Serif',serif;color:var(--accent2);">Two Jobs.</em></h2>
+    <p class="section-desc" style="max-width:680px;">The personal graph doesn't just remember you — it decides which parts of the model survive. Graph memory and model pruning share a single data structure. One relevance_score per node, governing both.</p>
+  </div>
+
+  <!-- Unified node structure -->
+  <div style="padding:0 3rem 4rem;background:var(--bg);">
+    <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">01 — The Unified Node Structure</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;">
+      <div>
+        <p style="font-size:0.82rem;color:var(--muted);line-height:1.8;margin-bottom:1.5rem;">Every node in graph.db carries a <span style="color:var(--accent2);">relevance_score</span>. This score is computed from real usage — not manually assigned. It decays naturally when a concept goes unused and spikes when it becomes active again.</p>
+        <div class="code-block">
+<span class="cmt"># every graph node looks like this</span>
+node = {
+  <span class="str">"concept"</span>: <span class="str">"pytest"</span>,
+  <span class="str">"domain"</span>: <span class="str">"Engineering"</span>,
+  <span class="str">"edges"</span>: [<span class="str">"python"</span>, <span class="str">"fastapi"</span>, <span class="str">"vscode"</span>],
+  <span class="str">"last_seen"</span>: <span class="num">1748940000</span>,
+  <span class="str">"frequency"</span>: <span class="num">0.42</span>,
+  <span class="str">"connections"</span>: <span class="num">7</span>,
+  <span class="str">"bridge_value"</span>: <span class="num">0.3</span>,
+
+  <span class="cmt"># ← the new field. governs both memory + pruning</span>
+  <span class="str">"relevance_score"</span>: <span class="num">8.7</span>
+}
+        </div>
+      </div>
+      <div>
+        <p style="font-size:0.82rem;color:var(--muted);line-height:1.8;margin-bottom:1.5rem;">The score is a normalized composite of four signals. Each one is independently meaningful; together they capture how central a concept is to your actual working life.</p>
+        <div class="code-block">
+<span class="cmt"># score computation</span>
+<span class="kw">def</span> compute_score(node):
+    freq   = node[<span class="str">"frequency"</span>] * <span class="num">3.0</span>
+    <span class="cmt"># how often you use it</span>
+
+    recency = decay(node[<span class="str">"last_seen"</span>]) * <span class="num">3.0</span>
+    <span class="cmt"># how recently you used it</span>
+
+    conns  = log(node[<span class="str">"connections"</span>]) * <span class="num">2.0</span>
+    <span class="cmt"># how connected it is in the graph</span>
+
+    bridge = node[<span class="str">"bridge_value"</span>] * <span class="num">2.0</span>
+    <span class="cmt"># does it link different domains?</span>
+
+    <span class="kw">return</span> normalize(freq + recency + conns + bridge)
+    <span class="cmt"># → 0.0 to 10.0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Score tiers -->
+  <div style="padding:0 3rem 4rem;background:var(--bg2);border-top:1px solid var(--border);">
+    <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;padding-top:4rem;">02 — Score → Pruning Decision</div>
+    <p style="font-size:0.85rem;color:var(--muted);line-height:1.8;max-width:640px;margin-bottom:2rem;">The same score that governs memory replay priority in the graph also determines which attention heads survive in the model. No separate calibration process. No additional inference pass. Just a DB read.</p>
+    <div class="score-tier">
+      <div class="tier-card" style="border-color:rgba(52,211,153,0.3);background:rgba(52,211,153,0.05);">
+        <div class="tier-range" style="color:#34d399;">8–10</div>
+        <div class="tier-label" style="color:#34d399;">🔒 Critical · Protect</div>
+        <div class="tier-desc">This concept is central to your workflow. The attention heads that activate for its domain are protected from pruning. Reminiscence agent replays frequently.</div>
+        <div style="margin-top:1rem;font-size:0.7rem;color:#34d399;background:rgba(52,211,153,0.1);padding:0.5rem 0.8rem;border-radius:6px;">pytest · python · vscode</div>
+      </div>
+      <div class="tier-card" style="border-color:rgba(251,191,36,0.3);background:rgba(251,191,36,0.04);">
+        <div class="tier-range" style="color:#fbbf24;">4–7</div>
+        <div class="tier-label" style="color:#fbbf24;">↔ Moderate · Keep Compressible</div>
+        <div class="tier-desc">Used but not dominant. Weights are kept but eligible for quantization or magnitude pruning within their layer. Not flagged for removal.</div>
+        <div style="margin-top:1rem;font-size:0.7rem;color:#fbbf24;background:rgba(251,191,36,0.08);padding:0.5rem 0.8rem;border-radius:6px;">system · mental models · habits</div>
+      </div>
+      <div class="tier-card" style="border-color:rgba(248,113,113,0.3);background:rgba(248,113,113,0.04);">
+        <div class="tier-range" style="color:#f87171;">0–3</div>
+        <div class="tier-label" style="color:#f87171;">✂️ Rarely Fires · Prune</div>
+        <div class="tier-desc">This concept rarely activates for you. The attention heads associated with its domain are candidates for removal in the next pruning cycle.</div>
+        <div style="margin-top:1rem;font-size:0.7rem;color:#f87171;background:rgba(248,113,113,0.08);padding:0.5rem 0.8rem;border-radius:6px;">zoom_calls · chrome_tabs · meetings</div>
+      </div>
+    </div>
+
+    <!-- domain_to_heads lookup -->
+    <div style="margin-top:3rem;">
+      <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">03 — The Bridge: domain_to_heads Lookup Table</div>
+      <p style="font-size:0.85rem;color:var(--muted);line-height:1.8;max-width:640px;margin-bottom:1.5rem;">Graph nodes are semantic concepts. Model components are attention heads. These are different spaces. The bridge is a static lookup table built <em style="color:var(--text);">once</em> at setup by probing the model with representative inputs per domain. After that, pruning is just a table lookup — no inference needed at prune time.</p>
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:12px;overflow:hidden;">
+        <div style="padding:1rem 1.5rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:0.72rem;font-weight:600;">domain_to_heads.json — built once at setup, never changes</span>
+          <span style="font-size:0.65rem;color:var(--muted);">layer · head_id pairs</span>
+        </div>
+        <div class="code-block" style="border-radius:0;border:none;">
+<span class="cmt"># built once at install via model probing</span>
+domain_to_heads = {
+  <span class="str">"Engineering"</span>: [(<span class="num">4</span>,<span class="num">2</span>), (<span class="num">7</span>,<span class="num">5</span>), (<span class="num">12</span>,<span class="num">1</span>), (<span class="num">19</span>,<span class="num">8</span>)],
+  <span class="str">"Research"</span>:    [(<span class="num">3</span>,<span class="num">0</span>), (<span class="num">9</span>,<span class="num">3</span>), (<span class="num">15</span>,<span class="num">6</span>)],
+  <span class="str">"System"</span>:       [(<span class="num">2</span>,<span class="num">1</span>), (<span class="num">6</span>,<span class="num">4</span>), (<span class="num">11</span>,<span class="num">0</span>)],
+  <span class="str">"Meetings"</span>:     [(<span class="num">1</span>,<span class="num">3</span>), (<span class="num">5</span>,<span class="num">7</span>), (<span class="num">8</span>,<span class="num">2</span>)],
+  <span class="cmt"># ... all 10 domains</span>
+}
+
+<span class="cmt"># at prune time — no inference, just reads</span>
+<span class="kw">for</span> node <span class="kw">in</span> graph.get_all_nodes():
+    score = node[<span class="str">"relevance_score"</span>]
+    heads = domain_to_heads[node[<span class="str">"domain"</span>]]
+    <span class="kw">if</span> score < <span class="num">3</span>:
+        prune_mask.flag(heads)
+    <span class="kw">elif</span> score >= <span class="num">7</span>:
+        prune_mask.protect(heads)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lottery Ticket Hypothesis -->
+  <div style="padding:4rem 3rem;background:var(--bg);">
+    <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">04 — The Lottery Ticket Hypothesis</div>
+    <div class="lth-card">
+      <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:3rem;align-items:start;">
+        <div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:800;margin-bottom:1rem;color:#a78bfa;">What LTH says</div>
+          <div style="font-size:0.85rem;color:var(--muted);line-height:1.85;">Frankle & Carlin (2019) showed that within any large randomly-initialized neural network, there exist small sparse subnetworks — "winning tickets" — that, when trained from scratch with the same initialization, can match the performance of the full network.</div>
+          <div style="margin-top:1.5rem;background:rgba(167,139,250,0.08);border-radius:8px;padding:1rem 1.2rem;">
+            <div style="font-size:0.72rem;color:#a78bfa;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.5rem;">The key insight</div>
+            <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">The winning ticket is not smaller because it lost capacity. It's smaller because it <em style="color:var(--text);">never needed</em> the rest of the network for the tasks it was trained on. The pruned weights were lottery losers from the start.</div>
+          </div>
+        </div>
+        <div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:800;margin-bottom:1rem;color:#34d399;">What NeuroPACA adds</div>
+          <div style="font-size:0.85rem;color:var(--muted);line-height:1.85;margin-bottom:1.2rem;">Standard LTH finds winning tickets by iterative magnitude pruning — prune smallest weights, retrain, repeat. This finds a general winning ticket for the training distribution. NeuroPACA finds a <em style="color:var(--text);">personal winning ticket</em> — the subnetwork that wins for your specific task distribution.</div>
+          <div style="display:flex;flex-direction:column;gap:0.8rem;">
+            <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:0.9rem 1.1rem;">
+              <div style="font-size:0.72rem;color:#34d399;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.4rem;">Standard LTH</div>
+              <div style="font-size:0.78rem;color:var(--muted);">Prune by weight magnitude → retrain → repeat. Finds ticket that's good for the pretraining corpus. Generic.</div>
+            </div>
+            <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.2);border-radius:8px;padding:0.9rem 1.1rem;">
+              <div style="font-size:0.72rem;color:var(--green);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.4rem;">NeuroPACA LTH</div>
+              <div style="font-size:0.78rem;color:var(--muted);">Prune by graph relevance_score → no retraining needed. Finds ticket that's good for your actual work. Personal.</div>
+            </div>
+          </div>
+          <div style="margin-top:1.2rem;font-size:0.8rem;color:var(--muted);line-height:1.8;padding:1rem;background:var(--bg3);border-radius:8px;">
+            The graph score doesn't arbitrarily remove weights. It removes weights that correspond to tasks you demonstrably don't do — which is exactly what LTH says you can safely prune. Your personal data IS the ticket selection criterion.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Visual LTH diagram -->
+    <div style="margin-top:2rem;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:2rem;overflow:hidden;">
+      <svg viewBox="0 0 900 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;">
+        <!-- Full network -->
+        <text x="100" y="22" fill="rgba(255,255,255,0.5)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle" letter-spacing="2">FULL MODEL</text>
+        <rect x="20" y="30" width="160" height="140" rx="8" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <!-- Circles representing heads -->
+        <circle cx="45" cy="60" r="10" fill="rgba(108,143,255,0.5)" stroke="#6c8fff" stroke-width="1.5"/>
+        <circle cx="75" cy="60" r="10" fill="rgba(251,146,60,0.5)" stroke="#fb923c" stroke-width="1.5"/>
+        <circle cx="105" cy="60" r="10" fill="rgba(52,211,153,0.5)" stroke="#34d399" stroke-width="1.5"/>
+        <circle cx="135" cy="60" r="10" fill="rgba(244,114,182,0.5)" stroke="#f472b6" stroke-width="1.5"/>
+        <circle cx="155" cy="60" r="10" fill="rgba(139,92,246,0.3)" stroke="#8b5cf6" stroke-width="1" opacity="0.4"/>
+        <circle cx="45" cy="100" r="10" fill="rgba(108,143,255,0.5)" stroke="#6c8fff" stroke-width="1.5"/>
+        <circle cx="75" cy="100" r="10" fill="rgba(139,92,246,0.2)" stroke="#8b5cf6" stroke-width="1" opacity="0.4"/>
+        <circle cx="105" cy="100" r="10" fill="rgba(52,211,153,0.5)" stroke="#34d399" stroke-width="1.5"/>
+        <circle cx="135" cy="100" r="10" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1" opacity="0.4"/>
+        <circle cx="155" cy="100" r="10" fill="rgba(244,114,182,0.5)" stroke="#f472b6" stroke-width="1.5"/>
+        <circle cx="45" cy="140" r="10" fill="rgba(139,92,246,0.2)" stroke="#8b5cf6" stroke-width="1" opacity="0.4"/>
+        <circle cx="75" cy="140" r="10" fill="rgba(52,211,153,0.5)" stroke="#34d399" stroke-width="1.5"/>
+        <circle cx="105" cy="140" r="10" fill="rgba(108,143,255,0.3)" stroke="#6c8fff" stroke-width="1" opacity="0.4"/>
+        <circle cx="135" cy="140" r="10" fill="rgba(251,146,60,0.5)" stroke="#fb923c" stroke-width="1.5"/>
+        <circle cx="155" cy="140" r="10" fill="rgba(244,114,182,0.3)" stroke="#f472b6" stroke-width="1" opacity="0.4"/>
+
+        <!-- Arrow + LTH label -->
+        <line x1="200" y1="100" x2="280" y2="100" stroke="rgba(167,139,250,0.6)" stroke-width="2" marker-end="url(#arr-p)"/>
+        <text x="240" y="88" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="8" text-anchor="middle">graph scores</text>
+        <text x="240" y="116" fill="rgba(167,139,250,0.5)" font-family="JetBrains Mono,monospace" font-size="7" text-anchor="middle">select ticket</text>
+
+        <!-- Standard LTH ticket -->
+        <text x="380" y="22" fill="rgba(255,255,255,0.5)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle" letter-spacing="2">STANDARD TICKET</text>
+        <rect x="300" y="30" width="160" height="140" rx="8" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <circle cx="325" cy="60" r="10" fill="rgba(108,143,255,0.5)" stroke="#6c8fff" stroke-width="1.5"/>
+        <circle cx="355" cy="60" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="385" cy="60" r="10" fill="rgba(52,211,153,0.5)" stroke="#34d399" stroke-width="1.5"/>
+        <circle cx="415" cy="60" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="445" cy="60" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="325" cy="100" r="10" fill="rgba(108,143,255,0.5)" stroke="#6c8fff" stroke-width="1.5"/>
+        <circle cx="355" cy="100" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="385" cy="100" r="10" fill="rgba(52,211,153,0.5)" stroke="#34d399" stroke-width="1.5"/>
+        <circle cx="415" cy="100" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="445" cy="100" r="10" fill="rgba(244,114,182,0.5)" stroke="#f472b6" stroke-width="1.5"/>
+        <circle cx="325" cy="140" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="355" cy="140" r="10" fill="rgba(52,211,153,0.5)" stroke="#34d399" stroke-width="1.5"/>
+        <circle cx="385" cy="140" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <circle cx="415" cy="140" r="10" fill="rgba(251,146,60,0.5)" stroke="#fb923c" stroke-width="1.5"/>
+        <circle cx="445" cy="140" r="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <text x="380" y="185" fill="rgba(255,255,255,0.25)" font-family="JetBrains Mono,monospace" font-size="8" text-anchor="middle">generic · good for average user</text>
+
+        <!-- VS -->
+        <text x="540" y="108" fill="rgba(255,255,255,0.3)" font-family="Syne,sans-serif" font-size="24" text-anchor="middle" font-weight="800">vs</text>
+
+        <!-- Personal ticket -->
+        <text x="700" y="22" fill="#00ff88" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle" letter-spacing="2">PERSONAL TICKET ★</text>
+        <rect x="620" y="30" width="160" height="140" rx="8" fill="rgba(0,255,136,0.04)" stroke="rgba(0,255,136,0.3)" stroke-width="1.5"/>
+        <circle cx="645" cy="60" r="10" fill="rgba(52,211,153,0.8)" stroke="#34d399" stroke-width="2"/>
+        <circle cx="675" cy="60" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="705" cy="60" r="10" fill="rgba(52,211,153,0.8)" stroke="#34d399" stroke-width="2"/>
+        <circle cx="735" cy="60" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="765" cy="60" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="645" cy="100" r="10" fill="rgba(108,143,255,0.8)" stroke="#6c8fff" stroke-width="2"/>
+        <circle cx="675" cy="100" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="705" cy="100" r="10" fill="rgba(52,211,153,0.8)" stroke="#34d399" stroke-width="2"/>
+        <circle cx="735" cy="100" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="765" cy="100" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="645" cy="140" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="675" cy="140" r="10" fill="rgba(108,143,255,0.8)" stroke="#6c8fff" stroke-width="2"/>
+        <circle cx="705" cy="140" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="735" cy="140" r="10" fill="rgba(52,211,153,0.8)" stroke="#34d399" stroke-width="2"/>
+        <circle cx="765" cy="140" r="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <text x="700" y="185" fill="rgba(0,255,136,0.7)" font-family="JetBrains Mono,monospace" font-size="8" text-anchor="middle">personal · tuned to your work</text>
+
+        <!-- Legend -->
+        <circle cx="820" cy="55" r="6" fill="rgba(52,211,153,0.8)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="832" y="59" fill="rgba(255,255,255,0.4)" font-family="JetBrains Mono,monospace" font-size="7">protected head</text>
+        <circle cx="820" cy="75" r="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+        <text x="832" y="79" fill="rgba(255,255,255,0.25)" font-family="JetBrains Mono,monospace" font-size="7">pruned head</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Live score example -->
+  <div style="padding:4rem 3rem;background:var(--bg2);border-top:1px solid var(--border);">
+    <div style="font-size:0.72rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:18px;">05 — Live Score → Mask Example</div>
+    <p style="font-size:0.85rem;color:var(--muted);line-height:1.8;max-width:640px;margin-bottom:2rem;">The graph and the model drift together over time. As your work changes, scores change, and the next prune cycle produces a different subnetwork — the model that fits who you are now.</p>
+    <div style="background:#080c12;border:1px solid var(--border2);border-radius:12px;overflow:hidden;">
+      <div style="padding:0.8rem 1.2rem;background:var(--bg3);border-bottom:1px solid var(--border);font-size:0.7rem;color:var(--muted);">graph.db → pruning mask → sparse BitNet subnetwork</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+        <div style="padding:1.5rem;border-right:1px solid var(--border);">
+          <div style="font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:1rem;">graph.db nodes</div>
+          <div style="display:flex;flex-direction:column;gap:0.5rem;font-size:0.78rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.8rem;background:rgba(52,211,153,0.08);border-radius:6px;border:1px solid rgba(52,211,153,0.2);">
+              <span style="color:#34d399;">Engineering</span><span style="color:#34d399;font-weight:700;">9.2 → PROTECT</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.8rem;background:rgba(52,211,153,0.08);border-radius:6px;border:1px solid rgba(52,211,153,0.2);">
+              <span style="color:#34d399;">Research</span><span style="color:#34d399;font-weight:700;">8.1 → PROTECT</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.8rem;background:rgba(251,191,36,0.06);border-radius:6px;border:1px solid rgba(251,191,36,0.15);">
+              <span style="color:#fbbf24;">System</span><span style="color:#fbbf24;">5.4 → keep</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.8rem;background:rgba(251,191,36,0.06);border-radius:6px;border:1px solid rgba(251,191,36,0.15);">
+              <span style="color:#fbbf24;">Mental Models</span><span style="color:#fbbf24;">4.8 → keep</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.8rem;background:rgba(248,113,113,0.07);border-radius:6px;border:1px solid rgba(248,113,113,0.2);">
+              <span style="color:#f87171;">Meetings</span><span style="color:#f87171;">0.9 → PRUNE ✂️</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.8rem;background:rgba(248,113,113,0.07);border-radius:6px;border:1px solid rgba(248,113,113,0.2);">
+              <span style="color:#f87171;">Comms/Email</span><span style="color:#f87171;">1.8 → PRUNE ✂️</span>
+            </div>
+          </div>
+        </div>
+        <div style="padding:1.5rem;">
+          <div style="font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:1rem;">generated prune mask</div>
+          <div class="code-block" style="font-size:0.72rem;padding:1rem;">
+<span class="cmt"># Engineering → protect heads [4,7,12,19]</span>
+<span class="cmt"># Research    → protect heads [3,9,15]</span>
+<span class="cmt"># Meetings    → prune  heads [1,5,8]</span>
+<span class="cmt"># Email       → prune  heads [2,6]</span>
+
+prune_mask = {
+  <span class="str">"protect"</span>: [<span class="num">3</span>,<span class="num">4</span>,<span class="num">7</span>,<span class="num">9</span>,<span class="num">12</span>,<span class="num">15</span>,<span class="num">19</span>],
+  <span class="str">"prune"</span>:   [<span class="num">1</span>,<span class="num">2</span>,<span class="num">5</span>,<span class="num">6</span>,<span class="num">8</span>]
+}
+
+<span class="cmt"># result: ~23% smaller subnetwork</span>
+<span class="cmt"># tuned to: engineering + research</span>
+<span class="cmt"># BitNet b1.58 baseline + personal prune</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:1.5rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;">
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:1.2rem;text-align:center;">
+        <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:#34d399;">1.4 GB</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">BitNet 7B base model</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:1.2rem;text-align:center;">
+        <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:var(--accent2);">~23%</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">further reduced by personal prune</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:1.2rem;text-align:center;">
+        <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:var(--green);">~1.1 GB</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">your personal winning ticket</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="footer-title">NeuroPACA</div>
+    <p class="footer-sub">One score. Two jobs. The graph and the model drift together.</p>
+    <p class="footer-sub" style="margin-top:0.8rem;font-size:0.65rem;color:rgba(122,128,153,0.4);">Research concept · 2026</p>
+  </footer>
+</div>
+
+<script>
+// ─── PAGE NAVIGATION ───────────────────────────
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  document.getElementById('nav-' + id).classList.add('active');
+  window.scrollTo(0, 0);
+  setTimeout(() => {
+    document.querySelectorAll('.reveal').forEach(el => el.classList.remove('visible'));
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+    }, {threshold: 0.05});
+    document.querySelectorAll('#page-' + id + ' .reveal').forEach(el => obs.observe(el));
+    if (id === 'architecture') { initGraphCanvas(); renderClassDiagram(); }
+  }, 50);
+}
+
+// ─── CURSOR ─────────────────────────────────────
+const cursor = document.getElementById('cursor');
+const ring = document.getElementById('cursor-ring');
+const tooltip = document.getElementById('tooltip');
+let mx=0,my=0,rx=0,ry=0;
+document.addEventListener('mousemove', e => {
+  mx=e.clientX; my=e.clientY;
+  cursor.style.left=mx+'px'; cursor.style.top=my+'px';
+  const el = document.elementFromPoint(mx,my);
+  const tip = el && el.closest('[data-tip]');
+  if (tip) { tooltip.style.display='block'; tooltip.textContent=tip.dataset.tip; tooltip.style.left=(mx+16)+'px'; tooltip.style.top=(my+16)+'px'; }
+  else tooltip.style.display='none';
+});
+setInterval(() => {
+  rx+=(mx-rx)*0.12; ry+=(my-ry)*0.12;
+  ring.style.left=rx+'px'; ring.style.top=ry+'px';
+}, 16);
+document.querySelectorAll('a,button,.feat-card,.prefix-item,.module-card,.page-card,.hybrid-card,.tier-card').forEach(el => {
+  el.addEventListener('mouseenter', () => { cursor.style.transform='translate(-50%,-50%) scale(2)'; cursor.style.background='var(--accent2)'; });
+  el.addEventListener('mouseleave', () => { cursor.style.transform='translate(-50%,-50%) scale(1)'; cursor.style.background='var(--accent)'; });
+});
+
+// ─── SCROLL REVEAL ──────────────────────────────
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, {threshold: 0.05});
+document.querySelectorAll('#page-home .reveal').forEach(el => obs.observe(el));
+
+// ─── TERMINAL ───────────────────────────────────
+const responses={
+  '$':{'diagnose my system':'◆ Running full diagnosis...\n  CPU: 34% avg (normal)\n  RAM: 6.2GB / 16GB (ok)\n  Disk: 234GB free (healthy)\n  Temp: 58°C (within range)\n  → No issues detected ✓','why is my ram spiking':'◆ python.exe consuming 1.2GB\n  Batch size too large detected\n  Recommend: reduce batch_size to 16\n  Chrome has 9 tabs open (+980MB)\n  → Close unused tabs?','test my project':'◆ Detecting project...\n  Found: FastAPI project (Python)\n  Writing pytest suite...\n  Running sandbox...\n  → 14/17 tests passed · 3 need review','hello':'◆ Hey! Deep coding mode detected.\n  Stack: Python · FastAPI · Postgres\n  Predicted: test run in ~18min\n  Pre-cached pytest docs ✓'},
+  '$?':{'why is node crashing':'◆ Context: Found package.json\n  node_modules/.cache is 4.2GB (bloated)\n  webpack.config memory limit too low\n  Recommend: --max-old-space-size=4096\n  Also: npm cache clean --force','what stack am i using':'◆ Detected from active processes:\n  Backend: Python + FastAPI + uvicorn\n  Database: PostgreSQL\n  Frontend: Node.js + webpack\n  Editor: VSCode with Python ext'},
+  '$!':{'out of disk':'◆ EMERGENCY MODE ACTIVATED\n  Scanning safe cleanup targets...\n  /tmp: 3.8GB → clearing...\n  pip cache: 2.1GB → clearing...\n  node_modules/.cache: 4.2GB → clearing\n  → Freed 10.1GB ✓ Disk now at 18%','system is slow':'◆ EMERGENCY DIAGNOSIS\n  CPU thermal throttling! 94°C\n  Killing heavy bg processes...\n  chrome helpers (4x) → terminated\n  python training → paused\n  → Temp dropped to 71°C ✓'},
+  '$$':{'update everything safely':'◆ Safe update initiated\n  Checking: not in deep work ✓\n  Checking: no active tests ✓\n  Checking: backup exists ✓\n  → Updating: pip packages (12)\n  → Updating: npm globals (5)\n  → Queuing: OS update tonight 3am'}
+};
+function getResponse(cmd){
+  cmd=cmd.trim();
+  for(const prefix of ['$$','$?','$!','$']){
+    if(cmd.startsWith(prefix)){
+      const rest=cmd.slice(prefix.length).trim().toLowerCase();
+      const bucket=responses[prefix];
+      if(bucket){
+        for(const key of Object.keys(bucket)){ if(rest.includes(key.split(' ')[0])||rest===key) return{prefix,text:bucket[key]}; }
+        return{prefix,text:`◆ Processing: "${rest}"\n  Analyzing context...\n  Running with current project profile\n  → Action queued ✓`};
+      }
+    }
+  }
+  return null;
+}
+function addLine(text,color='var(--text)'){
+  const out=document.getElementById('it-output');
+  if(!out)return;
+  text.split('\n').forEach(l=>{ const d=document.createElement('div'); d.className='it-line'; d.style.color=color; d.textContent=l; out.appendChild(d); });
+  out.scrollTop=out.scrollHeight;
+}
+function runTermCmd(cmd){ const inp=document.getElementById('it-input'); if(inp){inp.value=cmd;} setTimeout(()=>executeCmd(cmd),100); }
+function executeCmd(cmd){
+  addLine('jatin@laptop:~$ '+cmd,'var(--muted)');
+  const r=getResponse(cmd);
+  const colors={'$':'var(--accent)','$?':'var(--accent2)','$!':'#f87171','$$':'var(--accent3)'};
+  if(r) setTimeout(()=>addLine(r.text,colors[r.prefix]||'var(--accent)'),300);
+  else addLine(cmd+': command executed','var(--muted)');
+}
+function handleTermInput(e){ if(e.key==='Enter'){ const v=e.target.value.trim(); if(!v)return; executeCmd(v); e.target.value=''; } }
+
+// ─── NEUROMORPHIC CANVAS (HiDPI) ─────────────────
+const canvas=document.getElementById('neuroCanvas');
+const nctx=canvas.getContext('2d');
+const NDPr=window.devicePixelRatio||1;
+const NW=canvas.parentElement.offsetWidth||640;
+const NH=Math.round(NW*0.56);
+canvas.width=NW*NDPr; canvas.height=NH*NDPr;
+canvas.style.width=NW+'px'; canvas.style.height=NH+'px';
+nctx.scale(NDPr,NDPr);
+// node positions defined as 0–1 fractions of canvas, resolved at draw time
+const nnodesRel=[
+  {fx:0.10,fy:0.22,label:'cpu_spike',color:'#6c8fff',r:0.042,pot:0},
+  {fx:0.10,fy:0.50,label:'ram_spike',color:'#6c8fff',r:0.042,pot:0},
+  {fx:0.10,fy:0.78,label:'proc_change',color:'#6c8fff',r:0.042,pot:0},
+  {fx:0.35,fy:0.22,label:'load\npattern',color:'#a78bfa',r:0.048,pot:0},
+  {fx:0.35,fy:0.50,label:'work\npattern',color:'#a78bfa',r:0.048,pot:0},
+  {fx:0.35,fy:0.78,label:'fail\npattern',color:'#a78bfa',r:0.048,pot:0},
+  {fx:0.62,fy:0.22,label:'throttle',color:'#34d399',r:0.042,pot:0},
+  {fx:0.62,fy:0.50,label:'prepare',color:'#34d399',r:0.042,pot:0},
+  {fx:0.62,fy:0.78,label:'repair',color:'#34d399',r:0.042,pot:0},
+  {fx:0.88,fy:0.50,label:'output',color:'#fb923c',r:0.052,pot:0},
+];
+function getNN(){return nnodesRel.map(n=>({...n,x:n.fx*NW,y:n.fy*NH,r:n.r*NW}));}
+let nnodes=getNN();
+const nedges=[[0,3,0.8],[0,4,0.3],[1,4,0.9],[1,3,0.2],[2,5,0.95],[2,4,0.4],[3,6,0.85],[3,7,0.3],[4,7,0.9],[4,6,0.2],[5,8,0.88],[5,7,0.3],[6,9,0.7],[7,9,0.9],[8,9,0.6]];
+const nspikes=[];
+function fireNSpike(from,to){const a=nnodes[from],b=nnodes[to];nspikes.push({x:a.x,y:a.y,tx:b.x,ty:b.y,prog:0,color:a.color});}
+function drawNeuro(){
+  nnodes=getNN();
+  nctx.clearRect(0,0,NW,NH);
+  nedges.forEach(([a,b,w])=>{ nctx.beginPath();nctx.moveTo(nnodes[a].x,nnodes[a].y);nctx.lineTo(nnodes[b].x,nnodes[b].y);nctx.strokeStyle=`rgba(255,255,255,${w*0.15})`;nctx.lineWidth=w*1.5;nctx.stroke(); });
+  nspikes.forEach(s=>{ const x=s.x+(s.tx-s.x)*s.prog,y=s.y+(s.ty-s.y)*s.prog;nctx.beginPath();nctx.arc(x,y,4,0,Math.PI*2);nctx.fillStyle=s.color;nctx.shadowBlur=12;nctx.shadowColor=s.color;nctx.fill();nctx.shadowBlur=0;s.prog+=0.03; });
+  for(let i=nspikes.length-1;i>=0;i--){ if(nspikes[i].prog>=1){ const e=nedges.find(e2=>nnodes[e2[0]].x===nspikes[i].x&&nnodes[e2[0]].y===nspikes[i].y); if(e)nnodes[e[1]].pot=Math.min(1,nnodes[e[1]].pot+0.5); nspikes.splice(i,1); } }
+  nnodes.forEach(n=>{ const f=n.pot>0.5;nctx.beginPath();nctx.arc(n.x,n.y,n.r+(f?4:0),0,Math.PI*2);nctx.fillStyle=f?n.color:n.color+'22';nctx.strokeStyle=n.color;nctx.lineWidth=f?2:1;if(f){nctx.shadowBlur=24;nctx.shadowColor=n.color;}nctx.fill();nctx.stroke();nctx.shadowBlur=0;nctx.fillStyle='rgba(255,255,255,0.92)';nctx.font=`bold ${Math.round(NW*0.022)}px JetBrains Mono`;nctx.textAlign='center';const lines=n.label.split('\n');lines.forEach((l,li)=>nctx.fillText(l,n.x,n.y+3+(li-lines.length/2+0.5)*13));if(f){nctx.beginPath();nctx.arc(n.x,n.y,n.r+9,0,Math.PI*2);nctx.strokeStyle=n.color+'55';nctx.lineWidth=1.5;nctx.stroke();}n.pot=Math.max(0,n.pot-0.02); });
+  requestAnimationFrame(drawNeuro);
+}
+drawNeuro();
+setInterval(()=>{ const s=Math.floor(Math.random()*3);nnodes[s].pot=1;nedges.filter(e=>e[0]===s).forEach(e=>fireNSpike(e[0],e[1])); },1800);
+canvas.addEventListener('mousemove',e=>{ const r=canvas.getBoundingClientRect(),mx2=(e.clientX-r.left),my2=(e.clientY-r.top);nnodes.forEach((n,i)=>{ if(Math.hypot(mx2-n.x,my2-n.y)<n.r+5){n.pot=1;nedges.filter(e=>e[0]===i).forEach(e=>fireNSpike(e[0],e[1]));} }); });
+
+
+// ─── GRAPH CANVAS ────────────────────────────────
+function initGraphCanvas(){
+  const gc=document.getElementById('graphCanvas');
+  if(!gc||gc._initialized)return;
+  gc._initialized=true;
+  const gctx=gc.getContext('2d');
+  gc.width=gc.offsetWidth||900; gc.height=340;
+  const cx=gc.width/2, cy=gc.height/2;
+  const domains=[
+    {name:'Research',color:'#6c8fff'},{name:'Engineering',color:'#34d399'},{name:'Learning',color:'#a78bfa'},
+    {name:'Tools',color:'#fb923c'},{name:'System',color:'#f472b6'},{name:'Habits',color:'#fbbf24'},
+    {name:'Projects',color:'#06b6d4'},{name:'Comms',color:'#84cc16'},{name:'Mental\nModels',color:'#ec4899'},
+    {name:'Time\nPatterns',color:'#8b5cf6'},
+  ];
+  const masterR=120;
+  const masters=domains.map((d,i)=>{ const a=(i/domains.length)*Math.PI*2-Math.PI/2; return{x:cx+masterR*Math.cos(a),y:cy+masterR*Math.sin(a),label:d.name,color:d.color,r:14,pot:0,type:'master'}; });
+  const center={x:cx,y:cy,label:'YOU',color:'#ffffff',r:20,pot:0,type:'center'};
+  const subs=[];
+  masters.forEach((m,mi)=>{
+    const cnt=Math.floor(Math.random()*4)+2;
+    for(let i=0;i<cnt;i++){
+      const a=((mi+Math.random()*0.8-0.4)/domains.length)*Math.PI*2-Math.PI/2;
+      const r=masterR+45+Math.random()*35;
+      subs.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a),color:m.color+'99',r:5,pot:0,master:mi,type:'sub'});
+    }
+  });
+  const gnodes=[center,...masters,...subs];
+  const gedges=[];
+  masters.forEach((_,i)=>gedges.push([0,i+1,0.6]));
+  subs.forEach((s,i)=>gedges.push([s.master+1,masters.length+1+i,0.4]));
+  [[1,3],[2,6],[3,8],[4,9]].forEach(([a,b])=>gedges.push([a,b,0.2]));
+  const gspikes=[];
+  function fireGSpike(fi,ti){const a=gnodes[fi],b=gnodes[ti];gspikes.push({x:a.x,y:a.y,tx:b.x,ty:b.y,prog:0,color:a.color||'#6c8fff'});}
+  function drawGraph(){
+    gctx.clearRect(0,0,gc.width,gc.height);
+    gedges.forEach(([a,b,w])=>{ if(gnodes[a]&&gnodes[b]){gctx.beginPath();gctx.moveTo(gnodes[a].x,gnodes[a].y);gctx.lineTo(gnodes[b].x,gnodes[b].y);gctx.strokeStyle=`rgba(255,255,255,${w*0.12})`;gctx.lineWidth=1;gctx.stroke();} });
+    gspikes.forEach(s=>{ const x=s.x+(s.tx-s.x)*s.prog,y=s.y+(s.ty-s.y)*s.prog;gctx.beginPath();gctx.arc(x,y,3,0,Math.PI*2);gctx.fillStyle=s.color;gctx.shadowBlur=8;gctx.shadowColor=s.color;gctx.fill();gctx.shadowBlur=0;s.prog+=0.025; });
+    for(let i=gspikes.length-1;i>=0;i--){ if(gspikes[i].prog>=1)gspikes.splice(i,1); }
+    gnodes.forEach(n=>{ if(!n)return;const f=n.pot>0.5;gctx.beginPath();gctx.arc(n.x,n.y,n.r+(f?3:0),0,Math.PI*2);gctx.fillStyle=f?(n.color||'#fff'):(n.color||'#fff')+(n.type==='center'?'dd':'22');gctx.strokeStyle=n.color||'#fff';gctx.lineWidth=n.type==='center'?2:1;if(f){gctx.shadowBlur=15;gctx.shadowColor=n.color||'#fff';}gctx.fill();gctx.stroke();gctx.shadowBlur=0;if(n.label&&n.type!=='sub'){gctx.fillStyle='rgba(255,255,255,0.85)';gctx.font=`bold ${n.type==='center'?9:7}px JetBrains Mono`;gctx.textAlign='center';const lines=n.label.split('\n');lines.forEach((l,li)=>gctx.fillText(l,n.x,n.y+3+(li-lines.length/2+0.5)*9));}n.pot=Math.max(0,n.pot-0.015); });
+    requestAnimationFrame(drawGraph);
+  }
+  drawGraph();
+  setInterval(()=>{ const ri=Math.floor(Math.random()*masters.length)+1;gnodes[ri].pot=1;gedges.filter(e=>e[0]===ri).forEach(e=>fireGSpike(e[0],e[1])); },2200);
+  setInterval(()=>{ gnodes[0].pot=1;gedges.filter(e=>e[0]===0).forEach(e=>fireGSpike(e[0],e[1])); },4000);
+}
+
+// ─── CLASS DIAGRAM DATA + RENDER ──────────────────
+const CD_MODULES = [
+  {
+    id:'L1', layer:'L1', label:'L1 · Core Infrastructure',
+    color:'#34d399', bg:'rgba(52,211,153,0.06)', border:'rgba(52,211,153,0.35)',
+    classes:[
+      {
+        name:'EventBus', tag:'singleton',
+        fields:['- _listeners: Dict[EventType, List[Callable]]','- _lock: asyncio.Lock'],
+        methods:['+ subscribe(event, callback: Callable)','+ unsubscribe(event, callback: Callable)','+ emit_async(event, payload) → None','+ emit_sync(event, payload) → None'],
+        warns:['⚠ emit_sync() is blocking — prefer emit_async','⚠ No persistence across restarts']
+      },
+      {
+        name:'GraphMemory', tag:'singleton',
+        fields:['- graph: networkx.DiGraph','- db_path: str','- _lock: threading.RLock'],
+        methods:['+ get_node(node_type, name) → Node','+ upsert_node(node_type, name, attrs)','+ add_edge(src, dst, relation, weight)','+ get_relevance(node_type, name) → float','+ decay_scores(factor, min_val)','+ get_top_k(domain, k, filters) → List[Node]','+ prune_low_score(threshold, domain)','+ export_subgraph(domain) → DiGraph'],
+        warns:['⚠ Uses threading.RLock — no async/await inside','⚠ All writes serialized through single lock']
+      },
+      {
+        name:'BitNetRuntime', tag:'singleton',
+        fields:['- model_path: str','- n_threads: int','- _loaded: bool','- _lock: asyncio.Lock'],
+        methods:['+ load() → None','+ unload() → None','+ infer(prompt, max_tokens, temperature) → str','+ is_loaded() → bool','+ build_context_from_nodes(nodes: List[Node]) → str','+ get_free_mem(stage_idx: int) → float'],
+        warns:['⚠ BitNetRuntime.infer() is blocking, offload to executor','⚠ Always check is_loaded() before calling infer()']
+      },
+      {
+        name:'Config', tag:'dataclass',
+        fields:['+ model_path: str','+ n_threads: int','+ db_threshold_seconds: int = 60','+ max_tokens: int, temperature: float','+ log_level: str','+ idle_threshold_seconds: int','+ max_file_tokens: int = 4096','+ load_beam: Dict[str, int]','+ max_failures: int = 3'],
+        methods:['+ from_file(path) → Config','+ get_cpu_usage() → float'],
+        warns:[]
+      },
+      {
+        name:'Node / Edge', tag:'dataclass',
+        fields:['Node: id, node_type: NodeType, name, created_at, relevance_score: float, priority: int','Edge: source_id, target_id, relation: RelationType, created_at, interval_seconds: float'],
+        methods:[],
+        warns:[]
+      },
+      {
+        name:'EventType (enum)', tag:'enum',
+        fields:['METRIC_COLLECTED, TASK_SWITCHED, ACTION_TRIGGERED','FILE_CHANGED, HIGH_LOAD_DETECTED','PRESSURE_THRESHOLD_REACHED','THOUGHT_GENERATED, IDLE_START','APP_SWITCH, APP_LAUNCH, APP_EXIT','AGENT_COMPLETED, SYSTEM_ERROR'],
+        methods:[],warns:[]
+      },
+      {
+        name:'NodeType / RelationType (enums)', tag:'enum',
+        fields:['NodeType: TASK, APP, FILE, WORKFLOW_LOG, IDE, RESEARCH, HABIT, MEMORY, PATTERN, ISSUE','RelationType: RELATED_TO, DEPENDS_ON, PART_OF, PRECEDED_BY, FOLLOWED_BY, MODIFIED_BY'],
+        methods:[],warns:[]
+      }
+    ]
+  },
+  {
+    id:'L2', layer:'L2', label:'L2 · Sensing',
+    color:'#6c8fff', bg:'rgba(108,143,255,0.06)', border:'rgba(108,143,255,0.35)',
+    classes:[
+      {
+        name:'BaseCollector', tag:'abstract',
+        fields:['# name: str','# interval: float, last_pull: float','# _enabled: bool, _shared: bool'],
+        methods:['+ collect() → MetricSnapshot  [abstract]','+ is_enabled() → bool'],
+        warns:['⚠ collect() must be non-blocking']
+      },
+      {
+        name:'XMetricsCollector', tag:'class',
+        fields:['- collectors: List[BaseCollector]','- event_bus: EventBus','- _collect_interval: List[BaseCollector]'],
+        methods:['+ start() → None','+ register_collector(c: BaseCollector)','+ _collected(snapshot: MetricSnapshot)'],
+        warns:['⚠ runs in own thread loop']
+      },
+      {
+        name:'SystemMetricCollector / FileSystemCollector / ActivityCollector', tag:'class',
+        fields:['SystemMetric: collects CPU/RAM/disk/temp via psutil','FileSystem: watch_paths, recent_changes, ObserverThread','Activity: test_active_window, timestamp, data, estimate_score'],
+        methods:['All extend BaseCollector, implement collect() → MetricSnapshot'],
+        warns:['⚠ Activity.get_idle_seconds(): platform-specific']
+      }
+    ]
+  },
+  {
+    id:'L3', layer:'L3', label:'L3 · Diagnosis',
+    color:'#fb923c', bg:'rgba(251,146,60,0.06)', border:'rgba(251,146,60,0.35)',
+    classes:[
+      {
+        name:'Insight', tag:'dataclass',
+        fields:['+ id: UUID','+ confidence: float','+ related_signal: Signal','+ recent_snapshot: Deque[MetricSnapshot]','+ context_nodes: List[Node]','+ timestamp: datetime'],
+        methods:[],warns:[]
+      },
+      {
+        name:'Signal', tag:'dataclass',
+        fields:['+ signal_type: SignalType','+ confidence: float','+ load: float','+ timestamp: datetime'],
+        methods:[],warns:[]
+      },
+      {
+        name:'SignalType (enum)', tag:'enum',
+        fields:['COLOR_SESSION, HIGH_LOAD','DISTRACTION, IDLE','FILE_ACTIVITY, FOCUS_SESSION','USER_RETURN'],
+        methods:[],warns:[]
+      },
+      {
+        name:'SignalCorrelation', tag:'class',
+        fields:['- event_bus: EventBus','- graph_memory: GraphMemory','- pattern_registry: List[BasePattern]','- recent_snapshots: Deque[MetricSnapshot]','- context_nodes: List[Node]'],
+        methods:['+ on_metric_event(event: Event) → None','+ _analyze_snapshot(s: MetricSnapshot) → None','+ _update_graph_signal(signal: Signal) → None','+ validate_graph_signal(signal: Signal) → None'],
+        warns:['⚠ SignalCorrelator produces SIGNAL_CORRELATED; avoid directly calling PressureAccumulator between them']
+      },
+      {
+        name:'BasePattern', tag:'abstract',
+        fields:['+ matches(snapshots, bool)  [abstract]','+ create_signal(snapshots) → Signal  [abstract]'],
+        methods:[],warns:[]
+      },
+      {
+        name:'Concrete Patterns', tag:'class',
+        fields:['HighLoadPattern, IdlePattern','FocusSessionPattern, DistractionPattern'],
+        methods:['FocusSession: app switching > 5s in 2 min','HighLoad: CPU% > 90 for 5 min','Idle: no input > idle_threshold'],
+        warns:[]
+      }
+    ]
+  },
+  {
+    id:'L4', layer:'L4', label:'L4 · Learning',
+    color:'#a78bfa', bg:'rgba(167,139,250,0.06)', border:'rgba(167,139,250,0.35)',
+    classes:[
+      {
+        name:'BehaviourPlasticity', tag:'class',
+        fields:['- event_bus: EventBus','- graph_memory: GraphMemory','- timer: BitNetRuntime','- adapt_buffer: List[Tuple[Event, Insight]]'],
+        methods:['+ on_signal_event(event: Event) → None','+ fire_runtime(signal: Signal, insight: Insight) → None','+ _advised(signal: Signal, insight: Insight) → None','+ publish_insight(insight: Insight) → None'],
+        warns:['⚠ fire_runtime() triggers BitNet inference — expensive','⚠ adapt_buffer grows unbounded if not flushed']
+      }
+    ]
+  },
+  {
+    id:'L5', layer:'L5', label:'L5 · Drive',
+    color:'#f472b6', bg:'rgba(244,114,182,0.06)', border:'rgba(244,114,182,0.35)',
+    classes:[
+      {
+        name:'PressureAccumulator', tag:'class',
+        fields:['- event_bus: EventBus','- threshold: float','- decay_rate: float','- _pressure: float','- log: Output(float)'],
+        methods:['+ on_signal_event(event: Event) → None','+ add_pressure_sth(sth_amount, float, reason)','+ decay() → None','+ get_sth_pressure(idx: PressureEntry) → float','+ _publish_if_over_threshold() → None'],
+        warns:['⚠ pressure decays 50%/min if signals stop arriving']
+      },
+      {
+        name:'PressureEntry', tag:'dataclass',
+        fields:['+ pressure: float','+ confidence: float','+ last_updated: datetime'],
+        methods:[],warns:[]
+      }
+    ]
+  },
+  {
+    id:'L6', layer:'L6', label:'L6 · Idle Cognition',
+    color:'#38bdf8', bg:'rgba(56,189,248,0.06)', border:'rgba(56,189,248,0.35)',
+    classes:[
+      {
+        name:'DefaultModeNetwork', tag:'class',
+        fields:['- event_bus: EventBus','- graph_memory: GraphMemory','- bitnet: BitNetRuntime','- idle_directory: timestamp','- idle_tasks: Optional[Task]','- idle_lock: Optional[asyncio.Task]'],
+        methods:['+ on_idle_start_event(event: Event) → None','+ on_activity_detected(event: Event) → None','+ _run_idle_session() → None','+ _simulate_idle_node(weight) → None','+ generate_proactive_insight(weight) → None','+ save_idle_node(insight) → None','+ save_to_disk() → None'],
+        warns:['⚠ Idle thoughts expire 48h — no long-term persistence','⚠ BitNet model must be loaded via Ollama before trigger']
+      }
+    ]
+  },
+  {
+    id:'L9', layer:'L9', label:'L9 · Interface',
+    color:'#fbbf24', bg:'rgba(251,191,36,0.06)', border:'rgba(251,191,36,0.35)',
+    classes:[
+      {
+        name:'InterfaceLayer', tag:'class',
+        fields:['- event_bus: EventBus','- graph_memory: GraphMemory','- bitnet: BitNetRuntime','- conversation_history: List[Message]'],
+        methods:['+ on_user_input(text: str) → None','+ _add_context_query(str) → List[Node]','+ generate_response(query, str) → List[Node]','+ send_to_user_message(ack: None)','+ _build_messages(context_nodes: List[Node])'],
+        warns:['⚠ Want only']
+      },
+      {
+        name:'InterfaceChannel', tag:'enum',
+        fields:['USE_SOCKET','NOTIFICATION_ONLY'],
+        methods:[],warns:[]
+      },
+      {
+        name:'Message', tag:'dataclass',
+        fields:['+ role: str','+ content: str','+ related_node_ids: List[UUID]'],
+        methods:[],warns:[]
+      }
+    ]
+  },
+  {
+    id:'L10', layer:'L10', label:'L10 · Orchestration',
+    color:'#e879f9', bg:'rgba(232,121,249,0.06)', border:'rgba(232,121,249,0.35)',
+    isAbstract: true,
+    classes:[
+      {
+        name:'NeuroPACAOrchestrator', tag:'class',
+        fields:['- graph_bus: EventBus','- graph_memory: GraphMemory','- bitnet: BitNetRuntime','- modules: List[BaseModule]','- _running: bool'],
+        methods:['+ start() → None','+ stop() → None','+ _load_modules() → None'],
+        warns:[]
+      },
+      {
+        name:'BaseModule', tag:'abstract',
+        fields:['Abstract base shared by ALL 8 modules','Orchestrator manages List[BaseModule]','Lifecycle contract not detailed in the blueprint'],
+        methods:[],warns:[]
+      },
+      {
+        name:'Critical Invariants', tag:'warn',
+        fields:[
+          '1. EventBus / GraphMemory / BitNetRuntime are singletons — modules hold references, they do NOT inherit from them',
+          '2. GraphMemory uses asyncio.Lock (not threading.Lock)',
+          '3. BitNetRuntime.infer() is blocking — defer via async, await loop.run_in_executor()',
+          '4. SignalCorrelator produces SIGNAL_CORRELATED; PressureAccumulator consumes it — avoid directly calling between them'
+        ],
+        methods:[],warns:[]
+      }
+    ]
+  }
+];
+
+function renderClassDiagram(){
+  const grid = document.getElementById('cdGrid');
+  if(!grid) return;
+  grid.innerHTML = '';
+
+  CD_MODULES.forEach(mod => {
+    const el = document.createElement('div');
+    el.className = 'cd-module' + (mod.isAbstract ? ' abstract' : '') + ' open';
+    el.dataset.layer = mod.layer;
+    el.style.background = mod.bg;
+    el.style.borderColor = mod.border;
+
+    const header = document.createElement('div');
+    header.className = 'cd-module-header';
+    header.style.background = mod.bg;
+    header.innerHTML = `
+      <div class="cd-mod-left">
+        <span class="cd-mod-badge" style="color:${mod.color};border-color:${mod.border};">${mod.id}</span>
+        <span class="cd-mod-name" style="color:${mod.color};">${mod.label.replace(/^L\d+ · /,'')}</span>
+      </div>
+      <span class="cd-mod-toggle" style="color:${mod.color};">▶</span>`;
+    header.addEventListener('click', () => {
+      el.classList.toggle('open');
+      // force column reflow for masonry
+      const g = document.getElementById('cdGrid');
+      if(g){ g.style.columns=''; requestAnimationFrame(()=>{ g.style.columns='3'; }); }
+    });
+
+    const body = document.createElement('div');
+    body.className = 'cd-body';
+
+    mod.classes.forEach(cls => {
+      const cd = document.createElement('div');
+      cd.className = 'cd-class';
+
+      // special warn box for Critical Invariants
+      if(cls.tag === 'warn'){
+        cd.innerHTML = `<div class="cd-inv"><div class="cd-inv-title">⚠ CRITICAL INVARIANTS</div>${cls.fields.map(f=>`<div>${f}</div>`).join('')}</div>`;
+        body.appendChild(cd);
+        return;
+      }
+
+      const tagColor = cls.tag==='abstract'?'#f87171':cls.tag==='enum'?'#fbbf24':cls.tag==='dataclass'?'#38bdf8':mod.color;
+      let html = `<div class="cd-class-name" style="color:${mod.color};">
+        ${cls.name}
+        <span class="cd-class-tag" style="color:${tagColor};border-color:${tagColor}33;">${cls.tag}</span>
+      </div>`;
+      if(cls.parent) html += `<div class="cd-class-parent">extends ${cls.parent}</div>`;
+
+      if(cls.fields.length){
+        html += `<div class="cd-fields"><div class="cd-section-lbl">fields</div>
+          ${cls.fields.map(f=>`<div class="cd-row">${f}</div>`).join('')}</div>`;
+      }
+      if(cls.methods.length){
+        html += `<div class="cd-methods"><div class="cd-section-lbl">methods</div>
+          ${cls.methods.map(m=>`<div class="cd-row pub">${m}</div>`).join('')}</div>`;
+      }
+      if(cls.warns.length){
+        html += cls.warns.map(w=>`<div class="cd-row warn">${w}</div>`).join('');
+      }
+
+      cd.innerHTML = html;
+      body.appendChild(cd);
+    });
+
+    el.appendChild(header);
+    el.appendChild(body);
+    grid.appendChild(el);
+  });
+
+  // Filter buttons
+  document.querySelectorAll('.cd-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.cd-filter').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const layer = btn.dataset.layer;
+      document.querySelectorAll('.cd-module').forEach(m => {
+        m.style.display = (layer==='all' || m.dataset.layer===layer) ? 'inline-block' : 'none';
+      });
+      // reflow masonry after filter
+      const g = document.getElementById('cdGrid');
+      if(g){ g.style.columns=''; requestAnimationFrame(()=>{ g.style.columns='3'; }); }
+    });
+  });
+}
+
+// call on page switch — hook into showPage
+const _origShowPage = window.showPage;
+</script>
+</body>
+</html>

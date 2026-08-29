@@ -1,0 +1,45 @@
+# rules.md §7 / §8 — ruff + mypy clean before commit; tests ship with code.
+# Install once:  pre-commit install
+# Run on demand: pre-commit run --all-files
+minimum_pre_commit_version: "4.0.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+        exclude: '^(1000071408\.png|.*\.html)$'
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: forbid-new-submodules
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.4
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.18.2
+    hooks:
+      - id: mypy
+        # Match the pyproject config: type-check the package, not tests/spikes.
+        files: ^src/neuropaca/
+        pass_filenames: false
+        additional_dependencies: []
+
+  - repo: local
+    hooks:
+      - id: no-spike-imports-in-daemon
+        name: "src/ must never import spikes/ (rules.md §4, §15)"
+        entry: >-
+          bash -c '! grep -rnE "^[[:space:]]*(import|from)[[:space:]]+spikes" src/ || (echo "src/ must never import spikes/" && exit 1)'
+        language: system
+        pass_filenames: false
+        files: ^src/

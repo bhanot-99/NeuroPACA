@@ -1,0 +1,25 @@
+# GBNF skeleton for the insight-generation task (rules.md §4.1, problems.md 1.13).
+# Static template. build_grammar() replaces __ALIASES__ with the disjunction of
+# the exact node aliases in THIS prompt, e.g.:  "\"n1\"" | "\"n2\"" | "\"n3\""
+# Assembled as pure string work BEFORE _inference_lock is taken.
+
+root        ::= "{" ws
+                "\"insight\":" ws (sentence | "null") ws "," ws
+                "\"cited_nodes\":" ws cited ws "," ws
+                "\"confidence\":" ws confidence ws
+                "}"
+
+cited       ::= "[" ws (alias (ws "," ws alias)*)? ws "]"
+
+# --- spliced per call: the ONLY dynamic part of the grammar ---
+alias       ::= __ALIASES__
+
+# One sentence. Bounded length keeps a 2B model from rambling.
+sentence    ::= "\"" char{1,240} "\""
+char        ::= [^"\\\x00-\x1f] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)
+hex         ::= [0-9a-fA-F]
+
+confidence  ::= "0" "." digit digit? | "1" ".0" | "1"
+
+digit       ::= [0-9]
+ws          ::= [ \t\n]*

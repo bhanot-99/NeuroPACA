@@ -1,0 +1,44 @@
+# --- NeuroPACA ---
+# Runtime data — graph, idle cache, action log, logs (Architecture.md §15).
+# The daemon owns this directory; only the placeholder is tracked.
+/data/*
+!/data/.gitkeep
+*.log
+
+# Model weights and llama.cpp build artifacts (B0 spike)
+/models/
+*.gguf
+/spikes/**/llama.cpp/
+
+# Spike run artifacts — timestamped, machine-specific. The canonical result that
+# backs a paper claim is committed deliberately with `git add -f`.
+/spikes/b0_bitnet/results/*
+!/spikes/b0_bitnet/results/.gitkeep
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# --- Tooling caches ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Obsidian vault internals (kept out of the code repo)
+/.obsidian/
+/.trash/
