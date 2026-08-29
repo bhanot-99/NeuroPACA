@@ -2,10 +2,12 @@
 
 ## 📍 Current state
 
-- **Phase:** B1 — Core Infrastructure. **In progress** on branch `b1-core-infra`. B0 done. The B0 model spike is still not run (gates L4/L6/L9 fallbacks, not B1).
-- **Currently working on:** B1. Committed so far: `a95ce07` (decisions D-5/D-6 + tooling), `ddc8290` (core data foundation — `enums`, `models`, `Config`, `health` + 20 tests, all green).
-- **Next action (B1), in order:** `core/event_bus.py` (bounded queue drop-on-full per D-5, per-subscriber isolation, `_reset_for_tests`), `core/graph_memory.py` (`MultiDiGraph`, lock-split `_*_locked` workers, hub sets, atomic JSON save, `find_related` no-hub-traversal, `recalculate_importance` with `bridge_value=0.0`), `tests/conftest.py` (autouse singleton reset), `core/inference.py` (`InferenceBackend` protocol + `FakeInferenceBackend` + `LlamaCppBackend` skeleton, `grammar=None`), `core/bitnet_runtime.py` skeleton, `core/base_module.py` ABC, `orchestration/orchestrator.py` + `scheduler.py`, `src/neuropaca/daemon.py` + `[project.scripts]`. Then the 10k-node fixture generator + perf/soak/concurrency harnesses for the exit criteria.
-- **Note for next session:** the ECC GateGuard fact-forcing hook fires on every file write — for the rest of B1's scaffold, run with `ECC_GATEGUARD=off` (or `ECC_DISABLED_HOOKS=pre:edit-write:gateguard-fact-force`).
+- **Phase:** B1 — Core Infrastructure. **Code + tests done** on branch `b1-core-infra`; formal exit-criteria harnesses still owed. B0 done. The B0 model spike is still not run (gates L4/L6/L9 fallbacks, not B1).
+- **Currently working on:** B1. Commits: `a95ce07` decisions+tooling, `ddc8290` data foundation, `f71f34c` test contract, `fd516ed` L1 core + orchestration. `ruff` + `mypy` (25 files) + **76 pytest** green. Live daemon boots to a running idle loop holding the 11-hub graph and shuts down clean, graph persisted.
+- **What's implemented:** `core/{enums,models,config,health,event_bus,graph_memory,inference,bitnet_runtime,base_module}.py`, `orchestration/{orchestrator,scheduler}.py`, `daemon.py` (+ `neuropaca` console script), `tests/conftest.py` (autouse singleton reset) + `tests/test_{core_foundation,event_bus,graph_memory,orchestrator}.py`.
+- **Next action (finish B1):** the exit-criteria harnesses — a 10k-node graph fixture generator; a perf test asserting 10k-node `load()` < 2 s and `find_related(depth=2)` < 50 ms; a 1 h RSS-soak harness (like `spikes/b0_bitnet/benchmark_runtime.py`); the concurrent-writer stress already covered in `test_graph_memory.py` but add a longer-running variant. Then a `BaseModule` conformance test + a `NullModule` test double. Then B2.
+- **Deferred within B1 (noted, not blocking):** `load()` still reads the graph file on the loop (small, startup-only — ruff-clean; wrap in `to_thread` if it grows). `consolidate()` is a locked no-op until B6. `Event.priority` is metadata only (FIFO queue).
+- **Note:** the ECC GateGuard fact-forcing hook fires on every file write — `ECC_GATEGUARD=off` (or `ECC_DISABLED_HOOKS=pre:edit-write:gateguard-fact-force`) makes bulk file work practical.
 - **Last updated:** 2026-08-29
 
 ## ✅ Completed log
