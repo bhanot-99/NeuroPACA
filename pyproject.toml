@@ -8,8 +8,14 @@ license = { text = "Proprietary — research prototype" }
 authors = [{ name = "Jatin Bhanot" }]
 
 # Runtime dependencies are added per build phase, on approval (rules.md §9).
-# B0 ships no runtime deps — only the package skeleton, logging, and errors.
-dependencies = []
+# B1 · Core Infrastructure — GraphMemory wraps a networkx.MultiDiGraph
+# (Architecture.md §3.2, D-5). Approved 2026-08-29.
+dependencies = [
+    "networkx==3.4.2",
+]
+
+[project.scripts]
+neuropaca = "neuropaca.daemon:main"
 
 [project.optional-dependencies]
 # Tooling for the B0 foundation: ruff + mypy + pre-commit + pytest + CI (phases.md B0).
@@ -17,6 +23,7 @@ dev = [
     "ruff==0.14.4",
     "mypy==1.18.2",
     "pytest==8.4.2",
+    "pytest-asyncio==0.25.3",
     "pre-commit==4.4.0",
 ]
 # The B0 de-risking spike (spikes/b0_bitnet/) — NOT a daemon dependency, never
@@ -45,7 +52,7 @@ default-groups = []
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["src", "tests", "spikes"]
+src = ["src", "tests", "spikes", "scripts"]
 
 [tool.ruff.lint]
 select = [
@@ -63,6 +70,7 @@ known-first-party = ["neuropaca"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
 "spikes/**" = ["T201"]  # print() is fine in a throwaway spike
+"scripts/**" = ["E402"]  # sys.path bootstrap must precede imports in a standalone script
 
 # ------------------------------------------------------------------------------
 # mypy — strict on core/ (rules.md §7). Widened phase by phase.
@@ -79,6 +87,13 @@ no_implicit_reexport = true
 module = "neuropaca.core.*"
 strict = true
 
+[[tool.mypy.overrides]]
+# networkx 3.4.2 ships no py.typed marker. Without this, mypy --strict on
+# neuropaca.core.* (GraphMemory wraps a MultiDiGraph) fails with
+# "Cannot find implementation or library stub for module named 'networkx'".
+module = "networkx.*"
+ignore_missing_imports = true
+
 # ------------------------------------------------------------------------------
 # pytest
 # ------------------------------------------------------------------------------
@@ -86,6 +101,7 @@ strict = true
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "integration: touches real psutil / filesystem / a real model — excluded from the default run",
 ]

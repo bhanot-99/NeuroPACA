@@ -56,7 +56,8 @@ Monitors CPU, RAM, disk, temperature, processes, network, and system logs every 
 `SignalCorrelator` matches recent snapshots against a registry of `BasePattern`s and emits typed `Signal`s: `HIGH_LOAD` (CPU > 90 % for 5 min), `FOCUS_SESSION` (high CPU + coding app > 20 min), `DISTRACTION` (app switching > 5× in 2 min), `IDLE` (no input > threshold). Rule-based; the local LLM is only consulted for complex cases.
 
 ### F3 · Unified graph memory
-`GraphMemory` wraps a `networkx.DiGraph`. 10 master domain nodes (Engineering, Research, Tools, System, Habits, Projects, Meetings, Comms, Mental Models, Learning) plus a central `YOU` routing hub. New data is classified into a domain first, then placed in the right cluster — the routing layer collapses an O(n) comparison. Edges strengthen by Hebbian co-occurrence (`weight += ~0.01` when events recur together). `relevance_score` decays when unused, spikes on heavy use.
+`GraphMemory` wraps a `networkx.MultiDiGraph` (B1 decision — parallel edges carry
+distinct `RelationType`s between the same pair; see `Architecture.md §3.2`). 10 master domain nodes (Engineering, Research, Tools, System, Habits, Projects, Meetings, Comms, Mental Models, Learning) plus a central `YOU` routing hub. New data is classified into a domain first, then placed in the right cluster — the routing layer collapses an O(n) comparison. Edges strengthen by Hebbian co-occurrence (`weight += ~0.01` when events recur together). `relevance_score` decays when unused, spikes on heavy use.
 
 ### F4 · Local BitNet inference
 `BitNetRuntime` runs **BitNet b1.58 2B4T** in-process via **llama.cpp** — weights ∈ {−1, 0, +1}, 1.58 bits/param, CPU-native, no GPU. ~0.4 GB of weights, ~1.1 GB resident with runtime overhead, one inference at a time system-wide. Used by L3 (complex cases only), L4 (insight generation), L6 (idle thoughts), and L9 (`$` responses). Personal weight pruning is deferred — see [`pruning.md`](pruning.md).

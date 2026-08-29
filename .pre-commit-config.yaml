@@ -32,7 +32,9 @@ repos:
         # Match the pyproject config: type-check the package, not tests/spikes.
         files: ^src/neuropaca/
         pass_filenames: false
-        additional_dependencies: []
+        # Runtime deps the daemon imports must resolve in the hook's isolated
+        # venv (B1 · GraphMemory wraps networkx). Keep in lockstep with pyproject.
+        additional_dependencies: ["networkx==3.4.2"]
 
   - repo: local
     hooks:

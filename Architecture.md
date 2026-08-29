@@ -43,11 +43,12 @@ These are on the blueprint. Violating any of them is a defect.
 ### 3.1 `EventBus` «singleton»
 
 ```
-- _instance     : EventBus                       (class-level)
-- subscribers   : Dict[EventType, List[Callable]]
-- event_queue   : asyncio.Queue
-- loop          : asyncio.AbstractEventLoop
-- is_running    : bool
+- _instance      : EventBus                      (class-level)
+- subscribers    : Dict[EventType, List[Callable]]
+- event_queue    : asyncio.Queue(maxsize=1000)   (B1 decision — bounded)
+- loop           : asyncio.AbstractEventLoop
+- is_running     : bool
+- _dropped_count : int                           (surfaced in SystemHealth)
 
 + get_instance()                              : EventBus  (static)
 + subscribe(event_type: EventType, callback: Callable)   : None
@@ -58,27 +59,38 @@ These are on the blueprint. Violating any of them is a defect.
 ```
 
 - `publish()` enqueues and returns immediately — publishers never wait on subscribers.
+- **Bounded queue, drop-on-full** (B1 decision, approved 2026-08-29). `publish()`
+  is `put_nowait()` wrapped in `try/except asyncio.QueueFull`: on full it drops
+  the incoming event, increments `_dropped_count`, and logs one `ERROR`
+  ("EventBus queue full — dropped {event_type}"). It does **not** enqueue a
+  `SYSTEM_ERROR` *event* (the queue is full — that would drop too); the drop is a
+  logged SYSTEM_ERROR-severity condition and `_dropped_count` shows in
+  `SystemHealth`. A full queue means the dispatch loop is wedged — that is the
+  real bug to fix, not the drop.
+- Per-subscriber isolation: `_dispatch_loop` wraps each callback; a handler that
+  raises is caught and reported as a `SYSTEM_ERROR` event, siblings still run. A
+  failure inside a `SYSTEM_ERROR` handler is logged only — never re-published.
 - Signals are published async; all modules subscribe; no direct coupling.
 - No persistence across restarts. Anything needing durability writes to the graph.
 
 ### 3.2 `GraphMemory` «singleton»
 
 ```
-- graph            : networkx.DiGraph
+- graph            : networkx.MultiDiGraph          (B1 decision — see below)
 - persistence_path : str
 - last_save        : datetime
 - dirty            : bool
 - _lock            : asyncio.Lock
 
 + get_instance()                              : GraphMemory  (static)
-+ add_node(node_id, node_type: NodeType, attributes) : Node
-+ add_edge(source, target, relation: RelationType, weight) : Edge
-+ get_node(node_id)                           : Optional[Node]
++ add_node(node_id: str, node_type: NodeType, attributes) : Node
++ add_edge(source: str, target: str, relation: RelationType, weight) : Edge
++ get_node(node_id: str)                      : Optional[Node]
 + query(node_type: NodeType, filters)         : List[Node]
-+ find_related(node_id, depth)                : List[Node]
-+ get_edges(node_id)                          : List[Edge]
-+ update_node(node_id, attributes)            : None
-+ delete_node(node_id)                        : None
++ find_related(node_id: str, depth, *, traverse_hubs=False) : List[Node]
++ get_edges(node_id: str)                     : List[Edge]
++ update_node(node_id: str, attributes)       : None
++ delete_node(node_id: str)                   : None
 + recalculate_importance()                    : None
 + consolidate()                               : None
 + prune(older_than, min_importance)           : int
@@ -88,8 +100,35 @@ These are on the blueprint. Violating any of them is a defect.
 Score-management surface (from the concept): `get_top_k(domain, k, filters)`, `decay_scores(factor, min_val)`, `prune_low_score(threshold, domain)`, `export_subgraph(domain)`.
 
 - `graph` is private. Nothing outside `GraphMemory` touches the `networkx` object.
-- All writes serialise through the single `_lock`.
-- `save()` is atomic: temp file → `fsync` → replace.
+- **`networkx.MultiDiGraph`, not `DiGraph`** (B1 decision, approved 2026-08-29). A
+  plain `DiGraph` collapses every relation between the same ordered pair into one
+  edge — `pytest CAUSED_BY crash` and `pytest FOLLOWED_BY commit` between the same
+  two nodes cannot coexist. Edge identity is `(source, target, relation)`; the
+  `RelationType` is the networkx edge **key**. `get_edges()` returns every
+  parallel edge. On-disk form (`nx.node_link_data`, `multigraph: true`) gains a
+  `key` per link.
+- **Node / Edge IDs are `str` everywhere** (B1 decision). `file:/abs/path`,
+  `app:code`, `domain:engineering`, `YOU` — stable and deterministic (rules.md
+  §3). No `UUID` for anything that identifies or references a node; every
+  node-reference field (`Message.related_node_ids`, `Insight.context_nodes`, …)
+  is `List[str]`. `Event.id` stays a `UUID` — it identifies an event, not a node.
+- **Routing skeleton is a hard-coded protected set** (B1 decision): the 11 hub
+  IDs — `YOU` plus `domain:{engineering, research, tools, system, habits,
+  projects, meetings, comms, mental_models, learning}` (PRD §F3). `prune()` and
+  `prune_low_score()` skip any ID in this set regardless of age or score —
+  low-score cleanup must never collapse the routing layer. Created once at
+  `load()` when the store is empty.
+- **`find_related()` does not traverse through hubs** (B1 decision). The `YOU`
+  hub and the 10 domain hubs connect to nearly everything; a depth-2 BFS through
+  one of them fans out to the whole graph and blows the < 50 ms target. BFS never
+  expands a hub node's neighbours (`traverse_hubs=False` default); a hub still
+  appears in the result if it is directly adjacent to the seed.
+- All writes serialise through the single `_lock`. Public methods acquire the
+  lock and call **lock-free `_*_locked` workers**; compound operations
+  (`consolidate`, `prune`) take the lock **once** and call several workers.
+  `asyncio.Lock` is not reentrant — a public method calling another public method
+  while holding `_lock` deadlocks the loop forever (problems.md 1.10).
+- `save()` is atomic: temp file → `fsync` → `os.replace` → `fsync` the directory.
 
 **`relevance_score`** (0–10 composite, recomputed on a schedule, never per-event):
 
@@ -114,17 +153,26 @@ score = normalize(
 - temperature       : float
 - is_busy           : bool
 
-+ get_instance()                              : BitNetRuntime  (static)
-+ load_model() / unload_model()               : None
-+ infer(prompt, max_tokens, temperature)      : str        ← BLOCKING
-+ infer_async(prompt, max_tokens)             : Awaitable[str]  «async»
-+ build_context_from_nodes(nodes: List[Node]) : str
-+ get_ram_usage_mb()                          : float
++ get_instance()                                          : BitNetRuntime  (static)
++ load_model() / unload_model()                           : None
++ infer(prompt, max_tokens, temperature, grammar=None)    : str        ← BLOCKING
++ infer_async(prompt, max_tokens, grammar=None)           : Awaitable[str]  «async»
++ build_context_from_nodes(nodes: List[Node])             : str
++ get_ram_usage_mb()                                      : float
 ```
 
 - Owns `model` + `tokenizer` **in-process via llama.cpp** — not an HTTP call to Ollama. See §10.
 - `infer_async()` acquires `_inference_lock`, then `run_in_executor`. One inference at a time, system-wide.
 - Model can be unloaded and lazily reloaded.
+- **`grammar: Optional[str] = None`** (B1 decision, approved 2026-08-29) — a GBNF
+  string, assembled by the caller *before* the lock (rules.md §4.1). Present on
+  both `infer` / `infer_async` **and** the `InferenceBackend` protocol from B1,
+  so B4's constrained-generation path needs no signature change. `None` = free
+  decode (used only by tests and the `$` interactive path).
+- **`InferenceBackend` protocol** (B1): `load()`, `unload()`, `infer(prompt, max_tokens, temperature, grammar=None) -> str`, `get_ram_usage_mb() -> float`.
+  Two implementations in B1: `LlamaCppBackend` (skeleton) and
+  `FakeInferenceBackend` (deterministic — rules.md §8). Selected by
+  `Config.inference_backend`. Module code never imports a backend (rules.md §4).
 
 ### 3.4 `Config` «dataclass»
 
@@ -139,9 +187,14 @@ log_level                   : str
 poll_intervals              : Dict[str, float]
 graph_save_interval_seconds : int
 bitnet_max_tokens           : int
+inference_backend           : str = "llama"    (B1 — "fake" in tests)
 ```
 
 Concept variant also carries `n_threads`, `max_failures = 3`, `max_file_tokens = 4096`. Loaded once at startup, immutable thereafter. `from_file(path) -> Config`.
+
+**`inference_backend`** (B1 decision, approved 2026-08-29): `"llama"` selects
+`LlamaCppBackend`, `"fake"` selects `FakeInferenceBackend`. Validation is
+backend-aware — `model_path` must exist when `"llama"`, is ignored when `"fake"`.
 
 ### 3.5 Core data model
 
@@ -156,6 +209,13 @@ Event «dataclass»            Node «dataclass»                Edge «dataclas
                                relevance_score : float
                                priority        : int
 ```
+
+**Node references are `str`, not `UUID`** (B1 decision, approved 2026-08-29).
+`Node.id` / `Edge.source_id` / `Edge.target_id` are already `str`. Every field
+anywhere in the system that *holds* a node id is `List[str]` / `str` too —
+`Message.related_node_ids` (§9), `Insight.context_nodes` / `related_signal` (§5),
+event payloads. The blueprint's `List[UUID]` on `Message` is superseded. Only
+`Event.id` stays a `UUID` — it identifies an event, never a node.
 
 ### 3.6 Enumerations
 
@@ -353,7 +413,7 @@ DefaultModeNetwork «Module»
 InterfaceLayer «Module»                    Message «dataclass»
   - event_bus           : EventBus           role             : str
   - graph_memory        : GraphMemory        content          : str
-  - bitnet_runtime      : BitNetRuntime      related_node_ids : List[UUID]
+  - bitnet_runtime      : BitNetRuntime      related_node_ids : List[str]  (B1 — not UUID)
   - conversation_history: List[Message]      timestamp        : datetime
   - max_history_length  : int
   - channel             : InterfaceChannel   InterfaceChannel
@@ -457,7 +517,7 @@ Confirm both against a full-width re-export of the diagram before building them.
 | `INSIGHT_GENERATED` | L4 | L5, L9 | `Insight` |
 | `PRESSURE_THRESHOLD_REACHED` | L5 | L7 | `PressureEntry` |
 | `ACTION_TRIGGERED` | L7 | L9, L4 | action, result |
-| `MEMORY_UPDATED` | L1/L6 | L9 (optional) | node ids, operation |
+| `MEMORY_UPDATED` | the mutating module (L3 / L6 / L9) | L9 (optional) | `{node_ids: List[str], operation: str}` |
 | `USER_MESSAGE` | L9 | L4 (optional) | text, timestamp |
 | `AGENT_SPAWNED` / `AGENT_COMPLETED` | L8 | — | agent id, goal, outcome |
 | `SYSTEM_ERROR` | any | L9, L10 | module, exception, severity |
