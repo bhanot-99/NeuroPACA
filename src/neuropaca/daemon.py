@@ -15,6 +15,7 @@ import sys
 from neuropaca.core.config import Config
 from neuropaca.core.errors import ConfigError
 from neuropaca.core.logging import configure, get_logger
+from neuropaca.orchestration.modules import build_modules
 from neuropaca.orchestration.orchestrator import NeuroPACAOrchestrator
 
 _DEFAULT_CONFIG_PATH = "neuropaca.toml"
@@ -29,7 +30,7 @@ def main() -> None:
         get_logger("daemon").error("cannot start: %s", exc)
         sys.exit(2)
 
-    orchestrator = NeuroPACAOrchestrator(config)
+    orchestrator = NeuroPACAOrchestrator(config, module_builder=build_modules)
     try:
         asyncio.run(orchestrator.run())
     except KeyboardInterrupt:

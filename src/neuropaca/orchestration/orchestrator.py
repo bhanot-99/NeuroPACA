@@ -18,6 +18,7 @@ import asyncio
 import logging
 import signal
 import time
+from collections.abc import Callable
 
 from neuropaca.core import logging as np_logging
 from neuropaca.core.base_module import BaseModule
@@ -33,10 +34,13 @@ _log = logging.getLogger(__name__)
 
 _SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 
+ModuleBuilder = Callable[[Config, EventBus, GraphMemory, BitNetRuntime], list[BaseModule]]
+
 
 class NeuroPACAOrchestrator:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, *, module_builder: ModuleBuilder | None = None) -> None:
         self._config = config
+        self._module_builder = module_builder
         self._event_bus: EventBus | None = None
         self._graph_memory: GraphMemory | None = None
         self._bitnet_runtime: BitNetRuntime | None = None
@@ -81,7 +85,13 @@ class NeuroPACAOrchestrator:
         self._bitnet_runtime = BitNetRuntime.get_instance(create_backend(self._config))
         await self._graph_memory.load()
         self._scheduler = Scheduler(self._graph_memory, self._config)
-        for module in self._modules:  # L2-L9 modules arrive from B2 on
+        if self._module_builder is not None:
+            self._modules.extend(
+                self._module_builder(
+                    self._config, self._event_bus, self._graph_memory, self._bitnet_runtime
+                )
+            )
+        for module in self._modules:  # manually-registered first, then built
             await module.initialize()
         self._initialized = True
         _log.info(
