@@ -147,6 +147,42 @@ async def test_recalculate_importance_keeps_scores_in_range(tmp_path) -> None:
     assert 0.0 <= gm.get_node("hot").relevance_score <= 10.0
 
 
+async def test_upsert_creates_a_missing_node(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    node = await gm.upsert_node("file:/w/a.py", NodeType.FILE, {"label": "a.py"})
+    assert node.label == "a.py"
+    assert gm.get_node("file:/w/a.py") is not None
+
+
+async def test_upsert_preserves_score_and_created_at_but_bumps_access(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    original = await gm.add_node(
+        "file:/w/a.py", NodeType.FILE, {"label": "a.py", "relevance_score": 6.25, "access_count": 4}
+    )
+
+    updated = await gm.upsert_node("file:/w/a.py", NodeType.FILE, {"label": "renamed.py"})
+
+    assert updated.label == "renamed.py"  # supplied attr merged
+    assert updated.relevance_score == 6.25  # never reset
+    assert updated.created_at == original.created_at  # preserved
+    assert updated.access_count == 5  # bumped by one
+    assert updated.last_accessed >= original.last_accessed
+
+
+async def test_upsert_ignores_attempts_to_overwrite_protected_attrs(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("file:/w/a.py", NodeType.FILE, {"relevance_score": 9.0, "access_count": 2})
+    updated = await gm.upsert_node(
+        "file:/w/a.py",
+        NodeType.CONCEPT,  # a different type is ignored on an existing node
+        {"relevance_score": 0.0, "access_count": 0, "label": "kept"},
+    )
+    assert updated.relevance_score == 9.0
+    assert updated.access_count == 3
+    assert updated.node_type is NodeType.FILE
+    assert updated.label == "kept"
+
+
 async def test_reset_isolates_the_graph(tmp_path) -> None:
     gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "a.json"))
     await gm.add_node("x", NodeType.CONCEPT, None)

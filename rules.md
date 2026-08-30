@@ -53,6 +53,7 @@ text = await self.bitnet_runtime.infer_async(prompt, 256)
 - Every write acquires `_lock`. All writes serialise through the one lock.
 - `save()` is atomic: temp file → `fsync` → `os.replace`.
 - Node IDs are stable and deterministic (`file:/abs/path`, `app:code`, …) — never random for a re-derivable entity.
+- Touching an entity that may already exist is `upsert_node()`, never `add_node()` (which overwrites `relevance_score` / `access_count` / `created_at`) and never a `get_node()`-then-`add_node()` check-then-act (racy — one lock per decision). Upsert both endpoints before `add_edge()`.
 - `relevance_score` is recomputed on a schedule, never per-event.
 - Growth is bounded by design: routing layer + score decay + `prune_low_score` + raw-data purge. A code path that can add nodes without bound is wrong.
 - Every DMN graph job acquires, mutates, and releases the lock once per atomic call — never once around a whole batch loop.
