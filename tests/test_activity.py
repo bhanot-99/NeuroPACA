@@ -17,6 +17,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.models import Event
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.activity.idle import FakeIdleSource, IdleCallback, IdleTransition
+from neuropaca.sensing.activity.window import FakeWindowSource
 
 
 def _collect(sink: list[Event]) -> Callable[[Event], object]:
@@ -32,8 +33,19 @@ async def _running_bus() -> EventBus:
     return bus
 
 
-async def _started(bus: EventBus, source: FakeIdleSource, **cfg: object) -> ActivityCollector:
-    collector = ActivityCollector(bus, Config(inference_backend="fake", **cfg), idle_source=source)
+async def _started(
+    bus: EventBus,
+    source: FakeIdleSource,
+    *,
+    window: FakeWindowSource | None = None,
+    **cfg: object,
+) -> ActivityCollector:
+    collector = ActivityCollector(
+        bus,
+        Config(inference_backend="fake", **cfg),
+        idle_source=source,
+        window_source=window or FakeWindowSource(),
+    )
     await collector.initialize()
     await collector.start()
     return collector
@@ -123,7 +135,10 @@ async def test_source_that_cannot_start_self_disables_without_crashing() -> None
     bus.subscribe(EventType.SYSTEM_ERROR, _collect(errors))
 
     collector = ActivityCollector(
-        bus, Config(inference_backend="fake"), idle_source=_BrokenSource()
+        bus,
+        Config(inference_backend="fake"),
+        idle_source=_BrokenSource(),
+        window_source=_BrokenSource(),
     )
     await collector.initialize()
     await collector.start()  # must not raise
@@ -131,10 +146,37 @@ async def test_source_that_cannot_start_self_disables_without_crashing() -> None
 
     assert collector.is_running is True  # module up, just inert
     assert collector.health().ok is True
-    assert any(e.payload["module"] == "sensing.activity" for e in errors)
-    assert any(e.payload["severity"] == "collector-disabled" for e in errors)
+    assert any(e.payload["module"] == "sensing.activity.idle" for e in errors)
+    assert any(e.payload["module"] == "sensing.activity.window" for e in errors)
+    assert all(e.payload["severity"] == "collector-disabled" for e in errors)
 
-    await collector.stop()  # must not call the broken source's stop()
+    await collector.stop()  # must not call the broken sources' stop()
+    await bus.stop()
+
+
+# ------------------------------------------------------------------ APP_SWITCH
+
+
+async def test_app_switch_fires_on_focused_app_id_change() -> None:
+    bus = await _running_bus()
+    idle, window = FakeIdleSource(), FakeWindowSource()
+    collector = await _started(bus, idle, window=window)
+
+    switches: list[Event] = []
+    bus.subscribe(EventType.APP_SWITCH, _collect(switches))
+
+    window.emit("md.Obsidian", "notes")
+    window.emit("md.Obsidian", "notes 2")  # same app_id — no event
+    window.emit("brave-browser", "web")
+    await bus.join()
+
+    assert [e.payload["app_id"] for e in switches] == ["md.Obsidian", "brave-browser"]
+    assert switches[0].payload["previous_app_id"] is None
+    assert switches[1].payload["previous_app_id"] == "md.Obsidian"
+    assert switches[1].payload["title"] == "web"
+    assert collector.health().detail.endswith("2 switches")
+
+    await collector.stop()
     await bus.stop()
 
 
