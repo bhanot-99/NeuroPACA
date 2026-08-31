@@ -84,6 +84,7 @@ These are on the blueprint. Violating any of them is a defect.
 
 + get_instance()                              : GraphMemory  (static)
 + add_node(node_id: str, node_type: NodeType, attributes) : Node
++ upsert_node(node_id: str, node_type: NodeType, attributes) : Node   (B3 decision — get-or-create)
 + add_edge(source: str, target: str, relation: RelationType, weight) : Edge
 + get_node(node_id: str)                      : Optional[Node]
 + query(node_type: NodeType, filters)         : List[Node]
@@ -126,6 +127,17 @@ Score-management surface (from the concept): `get_top_k(domain, k, filters)`, `d
 - All writes serialise through the single `_lock`. Public methods acquire the
   lock and call **lock-free `_*_locked` workers**; compound operations
   (`consolidate`, `prune`) take the lock **once** and call several workers.
+- **`upsert_node()` is the only sanctioned get-or-create** (B3 decision, approved
+  2026-08-30). `add_node()` on an existing id *overwrites every attribute* —
+  wiping `relevance_score` / `access_count` / `created_at`; a module that touches
+  the same entity every poll must use `upsert_node()`. On an existing node it
+  merges only the supplied `attributes`, bumps `access_count`, refreshes
+  `last_accessed`, and **preserves** `created_at` and `relevance_score`; on a
+  missing node it creates it like `add_node()`. One `_lock` acquisition, so the
+  check-and-create is race-free against the scheduler and (from B4) L4. Callers
+  must `upsert_node()` both endpoints **before** `add_edge()` — networkx
+  `add_edge` silently creates attribute-less phantom nodes that then crash
+  `get_node()` and serialisation.
   `asyncio.Lock` is not reentrant — a public method calling another public method
   while holding `_lock` deadlocks the loop forever (problems.md 1.10).
 - `save()` is atomic: temp file → `fsync` → `os.replace` → `fsync` the directory.
@@ -188,6 +200,7 @@ poll_intervals              : Dict[str, float]
 graph_save_interval_seconds : int
 bitnet_max_tokens           : int
 inference_backend           : str = "llama"    (B1 — "fake" in tests)
+correlation_window_seconds  : int = 1800       (B3 — L3 per-collector deque bound)
 ```
 
 Concept variant also carries `n_threads`, `max_failures = 3`, `max_file_tokens = 4096`. Loaded once at startup, immutable thereafter. `from_file(path) -> Config`.
@@ -298,34 +311,68 @@ MetricSnapshot «dataclass»
 
 ```
 SignalCorrelator «Module»                  BasePattern «abstract»
-  - event_bus        : EventBus              + matches(snapshots) : bool
-  - graph_memory     : GraphMemory           + create_signal(snapshots) : Signal
-  - pattern_registry : List[BasePattern]
-  - recent_snapshots : Deque[MetricSnapshot] HighLoadPattern · IdlePattern
-  - correlation_window : timedelta           FocusSessionPattern · DistractionPattern
-  + on_metric_event(event)  : None
-  - _correlate()            : List[Signal]   Signal «dataclass»
-  - _update_graph(signal)   : None             signal_type      : SignalType
-  - _publish_signal(signal) : None             confidence       : float
-                                               related_node_ids : List[str]
-Insight «dataclass»                            source_snapshots : List[MetricSnapshot]
-  id · confidence · related_signal             timestamp        : datetime
-  context_nodes · timestamp
+  - event_bus        : EventBus              + signal_type : SignalType        (class attr)
+  - graph_memory     : GraphMemory           + collectors  : tuple[str, ...]   (class attr)
+  - patterns         : List[BasePattern]     + matches(window, baseline) : bool
+  - recent_snapshots : Dict[str, Deque[MetricSnapshot]]   (one deque per collector)
+  - baselines        : Dict[(str,str), MetricBaseline]    (per collector+metric)
+  + on_metric_event(event)  : None  «async»  + create_signal(window, baseline) : SignalDraft
+  - _update_graph(draft)    : Signal «async» HighLoadPattern · IdlePattern
+  - _publish(signal)        : None
+                                             SignalDraft «dataclass»    Signal «dataclass»
+MetricBaseline                                 signal_type              signal_type
+  + observe(value: float)  : None              confidence               confidence
+  + zscore(value: float)   : float             node_specs : List[NodeSpec]  related_node_ids : List[str]
+  (rolling mean + population stddev,           source_snapshots         source_snapshots
+   bounded window — confidence only)           reason : str             timestamp
 ```
 
-**Concrete pattern triggers (from the blueprint):**
+**Concrete pattern triggers.** B3 ships **`HighLoadPattern` + `IdlePattern` only**
+(B3 decision, approved 2026-08-30). `FocusSessionPattern` and `DistractionPattern`
+need the active window and `APP_SWITCH` events — deferred with `ActivityCollector`
+to **B2.5** (`problems.md` 1.7, phases.md).
 
-| Pattern | Trigger |
-| --- | --- |
-| `FocusSessionPattern` | high CPU + coding app active > 20 min |
-| `DistractionPattern` | app switching > 5× in 2 min |
-| `HighLoadPattern` | CPU % > 90 for > 5 min |
-| `IdlePattern` | no input > `idle_threshold` |
+| Pattern | Trigger (absolute — blueprint numbers) | Deps present in B2? |
+| --- | --- | --- |
+| `HighLoadPattern` | `system.cpu_percent > 90` for ≥ `ceil(300 / system_poll)` consecutive snapshots | ✅ |
+| `IdlePattern` | `system.cpu_percent < 5` for ≥ `ceil(idle_threshold_seconds / system_poll)` consecutive snapshots; resets at `cpu ≥ 10` (shares `IDLE_CPU_PERCENT` / `ACTIVE_CPU_PERCENT` with L2's `_IdleWatcher`) | ✅ |
+| `FocusSessionPattern` | high CPU + coding app active > 20 min | ❌ deferred → B2.5 |
+| `DistractionPattern` | app switching > 5× in 2 min | ❌ deferred → B2.5 |
 
-- Interprets X sensor data — correlate signals, filter noise, predict failures.
-- Rule-based; the local LLM is only invoked for complex cases.
-- Adding a pattern = a class + one registry line. `SignalCorrelator` never changes.
-- `_update_graph()` writes the implicated nodes **before** publishing.
+- Rule-based, **zero inference in L3** (B3 exit criterion). The "LLM for complex
+  cases" hook is a later addition, not B3.
+- **Patterns are pure and synchronous.** `matches()` / `create_signal()` do
+  CPU-only maths over a snapshot window + a read-only `MetricBaseline` and return
+  a `SignalDraft` carrying **path strings, never graph nodes**. A pattern holds no
+  `EventBus` / `GraphMemory` reference and no `await`. Each pattern instance keeps
+  its own edge-trigger state (`_firing: bool`) so a signal is emitted **once per
+  episode**, reset on the exit condition.
+- **`SignalCorrelator` is the exclusive graph orchestrator.** It owns the
+  per-collector deques and the baselines, maps a `SignalDraft`'s `node_specs`
+  through `await graph_memory.upsert_node()` (each call one `_lock` cycle — never
+  one lock around the batch, rules.md §3), fills `Signal.related_node_ids`, then
+  publishes. Adding a 5th pattern = a class + one line in `build_modules()`;
+  `SignalCorrelator` does not change.
+- **`on_metric_event` execution order** (runs on the EventBus dispatch loop):
+  (1) append snapshot to its collector's deque; (2) update baselines; (3) run
+  every pattern whose `collectors` includes this snapshot's `collector_name`,
+  sync, no await; (4) for each firing pattern `await _update_graph(draft)` —
+  bounded sequence of `upsert_node` / `add_edge`, not one transaction;
+  (5) `publish(SIGNAL_CORRELATED, {"signal": signal})`; (6) `publish(MEMORY_UPDATED,
+  {"node_ids": [...], "operation": "signal_correlate"})` — the mutating module
+  publishes it, not `GraphMemory` (D-5.3); (7) `publish(PATTERN_DETECTED,
+  {"pattern": name, "confidence": c})` — catalogued now, no subscriber until L9.
+  All alias/id/string work happens before step 4; nothing is awaited that a
+  subscriber must finish (rules.md §2).
+- **B3 `_update_graph` scope:** upserts `FILE` nodes for changed paths inside the
+  correlation window; no `domain:*` edges and `bridge_value` stays `0.0` —
+  domain classification and `app_map` are deferred with process-name sensing
+  (B3 decision; `problems.md` 1.6). `HighLoadPattern.related_node_ids` come
+  strictly from `filesystem` activity; `IdlePattern` writes none.
+
+**`recent_snapshots` bound.** `deque(maxlen = ceil(correlation_window_seconds /
+poll_intervals[collector]) + 1)` per collector — with the defaults (1800 s window,
+60 s system poll) that is 31. Provably bounded, config-derived, unit-tested.
 
 ---
 

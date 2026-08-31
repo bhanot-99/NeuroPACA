@@ -253,7 +253,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    assert len(modules) == 1
+    assert [m.name for m in modules] == ["sensing", "diagnosis"]  # L2 before L3
     assert isinstance(modules[0], XMetricCollector)
     assert [c.name for c in modules[0]._collectors] == ["system"]
 

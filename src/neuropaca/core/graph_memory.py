@@ -108,6 +108,17 @@ class GraphMemory:
         async with self._lock:
             return self._add_node_unsafe(node_id, node_type, attributes or {})
 
+    async def upsert_node(
+        self, node_id: str, node_type: NodeType, attributes: dict[str, Any] | None = None
+    ) -> Node:
+        """Get-or-create under one lock (D-8). On a missing node, create it like
+        `add_node()`. On an existing node, merge only the supplied `attributes`
+        (except the protected `created_at` / `relevance_score` / `node_type`),
+        bump `access_count`, refresh `last_accessed` — never reset the score.
+        Use this, not `add_node()`, for any entity a module touches repeatedly."""
+        async with self._lock:
+            return self._upsert_node_unsafe(node_id, node_type, attributes or {})
+
     async def add_edge(
         self,
         source_id: str,
@@ -252,6 +263,24 @@ class GraphMemory:
         )
         self._dirty = True
         return edge
+
+    _UPSERT_PROTECTED: ClassVar[frozenset[str]] = frozenset(
+        {"created_at", "relevance_score", "access_count", "node_type", "last_accessed"}
+    )
+
+    def _upsert_node_unsafe(
+        self, node_id: str, node_type: NodeType, attributes: dict[str, Any]
+    ) -> Node:
+        if node_id not in self._graph:
+            return self._add_node_unsafe(node_id, node_type, attributes)
+        data = self._graph.nodes[node_id]
+        for key, value in attributes.items():
+            if key not in self._UPSERT_PROTECTED:
+                data[key] = value
+        data["access_count"] = int(data.get("access_count", 0)) + 1
+        data["last_accessed"] = _utcnow()
+        self._dirty = True
+        return self._node_from_attrs(node_id, data)
 
     def _update_node_unsafe(self, node_id: str, attributes: dict[str, Any]) -> None:
         if node_id not in self._graph:

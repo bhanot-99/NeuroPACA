@@ -47,6 +47,9 @@ class Config:
     # B2 · Sensing (L2, D-7). poll_intervals keys are collector names ("system",
     # "filesystem"). watch_paths empty => FileSystemCollector stays disabled.
     snapshot_buffer_size: int = 720
+    # B3 · Diagnosis (L3, D-8). Bounds SignalCorrelator's per-collector snapshot
+    # deques: maxlen = ceil(correlation_window_seconds / poll_intervals[name]) + 1.
+    correlation_window_seconds: int = 1800
     watch_paths: list[str] = field(default_factory=list)
     filesystem_ignore_globs: list[str] = field(
         default_factory=lambda: [
@@ -87,6 +90,7 @@ class Config:
             "max_failures",
             "max_file_tokens",
             "snapshot_buffer_size",
+            "correlation_window_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")

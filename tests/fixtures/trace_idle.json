@@ -1,0 +1,55 @@
+{
+  "name": "idle",
+  "description": "CPU < 5% for 5 polls, then back to active; IDLE fires exactly once.",
+  "poll_seconds": 60,
+  "snapshots": [
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:00:00+00:00",
+      "data": {
+        "cpu_percent": 2.4
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:01:00+00:00",
+      "data": {
+        "cpu_percent": 3.9
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:02:00+00:00",
+      "data": {
+        "cpu_percent": 0.8
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:03:00+00:00",
+      "data": {
+        "cpu_percent": 4.1
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:04:00+00:00",
+      "data": {
+        "cpu_percent": 1.5
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:05:00+00:00",
+      "data": {
+        "cpu_percent": 21.7
+      },
+      "anomaly_score": 0.0
+    }
+  ]
+}
