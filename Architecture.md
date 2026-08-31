@@ -304,6 +304,7 @@ MetricSnapshot «dataclass»
 - `snapshot_buffer` is a bounded ring buffer.
 - Inputs: `psutil`, `/proc`, shell hooks (Bash/Zsh), editor extension APIs, system event logs.
 - Emits `METRIC_COLLECTED`, and `IDLE_DETECTED` / `ACTIVITY_DETECTED` on idle-state transitions.
+- **B2.5a (D-9):** `ActivityCollector` is a `BaseModule` (event-driven, not polled). Idle backend behind the `IdleSource` protocol — `WaylandIdleSource` (`ext-idle-notify-v1` via pywayland, `loop.add_reader` on the compositor fd) in prod, `FakeIdleSource` in tests. `get_idle_seconds()` is not a query — `idled`/`resumed` are edges; the collector tracks elapsed for the `ACTIVITY_DETECTED` payload. `SystemMetricCollector` snapshot gains `top_processes` (names only). Active-window + `app_map.toml` + `FOCUS_SESSION`/`DISTRACTION` are B2.5b.
 
 ---
 

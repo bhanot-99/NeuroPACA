@@ -28,13 +28,15 @@ def _utcnow() -> datetime:
 
 
 class SystemMetricCollector(BaseCollector):
-    def __init__(self, poll_interval_seconds: float = 60.0) -> None:
+    def __init__(self, poll_interval_seconds: float = 60.0, *, top_process_count: int = 5) -> None:
         super().__init__("system", poll_interval_seconds)
         self._primed = False
+        self._top_n = max(0, top_process_count)
 
     def collect(self) -> MetricSnapshot:
         if not self._primed:
             psutil.cpu_percent(interval=None)  # prime — the next read is a delta, not 0.0
+            _prime_process_cpu()
             self._primed = True
         cpu = psutil.cpu_percent(interval=1.0)
         vm = psutil.virtual_memory()
@@ -46,6 +48,8 @@ class SystemMetricCollector(BaseCollector):
             "disk_percent": disk.percent,
             "disk_free_gb": round(disk.free / (1024**3), 2),
         }
+        if self._top_n:
+            data["top_processes"] = _top_processes_by_cpu(self._top_n)
         load = _load_avg_1m()
         if load is not None:
             data["load_avg_1m"] = load
@@ -55,6 +59,28 @@ class SystemMetricCollector(BaseCollector):
         return MetricSnapshot(
             collector_name=self.name, timestamp=_utcnow(), data=data, anomaly_score=0.0
         )
+
+
+def _prime_process_cpu() -> None:
+    # psutil.Process.cpu_percent() returns 0.0 on first read per process — prime
+    # every process once so the collector's second poll onward has real deltas.
+    for proc in psutil.process_iter():
+        try:
+            proc.cpu_percent(None)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+
+def _top_processes_by_cpu(limit: int) -> list[dict[str, Any]]:
+    """Top-N processes by CPU. Names only — never cmdline/args (rules.md §6)."""
+    rows: list[tuple[str, float]] = []
+    for proc in psutil.process_iter(["name"]):
+        try:
+            rows.append((proc.info["name"] or "?", proc.cpu_percent(None)))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    rows.sort(key=lambda r: r[1], reverse=True)
+    return [{"name": n, "cpu_percent": round(c, 1)} for n, c in rows[:limit] if c > 0.0]
 
 
 def _load_avg_1m() -> float | None:

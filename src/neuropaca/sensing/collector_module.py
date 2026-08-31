@@ -74,6 +74,7 @@ class XMetricCollector(BaseModule):
         *,
         clock: Clock | None = None,
         runner: _Runner | None = None,
+        emit_idle_from_cpu: bool = True,
     ) -> None:
         super().__init__("sensing", event_bus, config)
         self._clock: Clock = clock or SystemClock()
@@ -82,6 +83,9 @@ class XMetricCollector(BaseModule):
         self._tasks: list[asyncio.Task[None]] = []
         self._buffer: deque[MetricSnapshot] = deque(maxlen=max(1, config.snapshot_buffer_size))
         self._idle_watcher = _IdleWatcher()
+        # B2.5 (D-9): the real ActivityCollector supersedes this CPU-derived idle
+        # stand-in — build_modules passes False when activity_enabled.
+        self._emit_idle_from_cpu = emit_idle_from_cpu
         self._max_failures = config.max_failures
 
     def register_collector(self, collector: BaseCollector) -> None:
@@ -178,7 +182,7 @@ class XMetricCollector(BaseModule):
                 payload={"snapshot": snapshot},
             )
         )
-        if collector.name == "system":
+        if collector.name == "system" and self._emit_idle_from_cpu:
             raw = snapshot.data.get("cpu_percent")
             cpu = float(raw) if isinstance(raw, (int, float)) else None
             event = self._idle_watcher.observe(cpu, snapshot.timestamp)

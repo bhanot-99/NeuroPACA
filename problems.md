@@ -88,15 +88,15 @@ This file holds two things:
 
 ---
 
-### 1.7 Reading the active window is OS-specific and harder than it looks · 🟡
+### 1.7 Reading the active window is OS-specific and harder than it looks · 🟢 mostly resolved (D-9)
 
 **Problem.** Knowing "which app is focused right now" and "how long since the last keypress" is easy on some systems and genuinely hard on others (modern Linux desktops especially). The blueprint just says "platform-specific."
 
 **Why it matters.** Two of the four behavioural patterns (`FOCUS_SESSION`, `DISTRACTION`) need the active window. Those are also the patterns that map to topics. No active window → half the behavioural vocabulary is gone.
 
-**How to counter it.**
-- Treat the active-window backend as its **own spike**, not a quick collector.
-- Ship the **system-metrics-only** version first (CPU/RAM/disk → `HIGH_LOAD`). Prove the loop works. Add window-tracking and its two patterns in a later step, once the core is proven useful.
+**Resolution (2026-08-31, D-9 · spike `spikes/b2_5_activity/`).** The APIs on the target box (Wayland/COSMIC) are Wayland protocols, not D-Bus/X11:
+- **Idle / "last keypress" — DONE (B2.5a).** `ext-idle-notify-v1` (`ext_idle_notifier_v1 v2`, bundled in `pywayland`) — edge events `idled` / `resumed`, `loop.add_reader` on the compositor fd, no thread. `ActivityCollector` ships in B2.5a and is live-verified. `org.freedesktop.ScreenSaver` (cosmic-idle) has no idle-query method; XWayland `_NET_ACTIVE_WINDOW` → `0x0`.
+- **Active window — feasible, B2.5b.** `zcosmic_toplevel_info_v1 v3` carries `app_id` / `title` / `state=activated`. Needs the cosmic protocol XML vendored + `pywayland.scanner` run with the full dependency chain (it errored `KeyError: wl_output` on the cosmic XML alone). Its own mini-task → B2.5b, with `FOCUS_SESSION` / `DISTRACTION`.
 
 ---
 

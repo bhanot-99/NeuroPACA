@@ -41,9 +41,13 @@ Repo skeleton per `Architecture.md §15`; `pyproject.toml`, `uv` lockfile, `ruff
 
 **Exit:** 24 h soak < 1 % mean CPU, RSS flat, buffer provably bounded, killing one collector leaves the others running.
 
-### B2.5 · Process & Activity Sensing *(spike, inserted D-8)*
-The deferred half of L2, packaged as one step: a Wayland/COSMIC active-window + idle-seconds backend spike; a top-N-process-by-CPU reading added to `SystemMetricCollector`; `ActivityCollector` + real `IDLE_DETECTED` / `ACTIVITY_DETECTED` edges; `app_map.toml` (process/app + path → domain) with O(1) lookup, loaded once at startup; `FocusSessionPattern` + `DistractionPattern` and their `APP_SWITCH` plumbing; domain classification wired into `SignalCorrelator._update_graph` (`domain:*` edges, `bridge_value` goes live).
-**Exit:** active window + idle-seconds read reliably on the target box; the two deferred patterns fire on fixtures and stay silent on negatives; classification is dict + glob only, zero inference in the poll path.
+### B2.5 · Process & Activity Sensing *(spike + build, inserted D-8, split D-9)*
+
+**B2.5a · Idle (DONE 2026-08-31).** `IdleSource` protocol + `WaylandIdleSource` (`ext-idle-notify-v1` via pywayland, `loop.add_reader`, no thread) + `FakeIdleSource`; `ActivityCollector` (BaseModule) → real `IDLE_DETECTED` / `ACTIVITY_DETECTED`, superseding the D-7 CPU-derived stand-in; `top_processes` (names only) in `SystemMetricCollector`. `pywayland` is a `[activity]` optional extra, lazy-imported, self-disables when absent.
+> **Exit:** `FakeIdleSource` drives the two edges (edge-triggered, degraded path self-disables + `SYSTEM_ERROR`, no crash); live-verified on cosmic-comp.
+
+**B2.5b · Active window (TODO).** Vendor `zcosmic_toplevel_info_v1` XML + `pywayland.scanner` dep chain; `ToplevelSource` + `APP_SWITCH` (new EventType, Architecture §13 bump); `app_map.toml` (app_id / wm_class / path-glob → domain), O(1) lookup, loaded once; `FocusSessionPattern` + `DistractionPattern`; domain classification in `SignalCorrelator._update_graph` (`domain:*` edges, `bridge_value` goes live).
+> **Exit:** active window read reliably on the target box; the two patterns fire on fixtures and stay silent on negatives; classification is dict + glob only, zero inference in the poll path.
 
 ### B3 · Diagnosis (L3)
 `Signal` / `SignalDraft`, `BasePattern` (pure, synchronous, edge-triggered), `MetricBaseline` (rolling mean/stddev, confidence-scaling only), `SignalCorrelator` (per-collector `Dict[str, Deque[MetricSnapshot]]`, `_update_graph` via `upsert_node` before publish, publishes `SIGNAL_CORRELATED` + `MEMORY_UPDATED` + `PATTERN_DETECTED`), the **two** patterns `HighLoadPattern` (`cpu > 90` for ≥ 5 min) and `IdlePattern` (`cpu < 5` for ≥ `idle_threshold`), pattern contract suite. `GraphMemory.upsert_node` and `Config.correlation_window_seconds = 1800` land here (D-8). Absolute blueprint thresholds trigger; `MetricBaseline` only scales `confidence`. `FocusSession` / `Distraction` are **not** in B3 — see B2.5.

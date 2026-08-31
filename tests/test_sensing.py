@@ -262,6 +262,14 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     )
     assert [c.name for c in with_fs[0]._collectors] == ["system", "filesystem"]
 
+    # B2.5: activity_enabled inserts ActivityCollector (L2) and stands the
+    # CPU-derived idle stand-in down.
+    with_activity = build_modules(
+        Config(inference_backend="fake", activity_enabled=True), bus, graph, runtime
+    )
+    assert [m.name for m in with_activity] == ["sensing", "activity", "diagnosis"]
+    assert with_activity[0]._emit_idle_from_cpu is False
+
 
 async def test_orchestrator_runs_sensing_via_build_modules(tmp_path) -> None:
     config = Config(
