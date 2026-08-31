@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import re
 import tomllib
 from pathlib import Path
 
@@ -43,9 +44,16 @@ class AppMap:
         by_wm_class: dict[str, str],
         path_globs: list[tuple[str, str]],
     ) -> None:
-        self._by_app_id = by_app_id
-        self._by_wm_class = by_wm_class
-        self._path_globs = path_globs
+        # Values are the full `domain:<slug>` node id, not the bare slug — the
+        # APP_SWITCH fast path returns them verbatim, no per-call f-string.
+        self._by_app_id = {k: f"domain:{v}" for k, v in by_app_id.items()}
+        self._by_wm_class = {k: f"domain:{v}" for k, v in by_wm_class.items()}
+        # Compile the globs once — `fnmatch.fnmatch` per call re-normcases and
+        # hits its own cache every time; here we want a bare `re.Pattern.match`.
+        self._path_globs: list[tuple[re.Pattern[str], str]] = [
+            (re.compile(fnmatch.translate(pattern)), f"domain:{domain}")
+            for pattern, domain in path_globs
+        ]
 
     # ------------------------------------------------------------------ builders
     @classmethod
@@ -113,12 +121,16 @@ class AppMap:
         path: str | None = None,
     ) -> str | None:
         """Return a ``domain:<slug>`` node id, or ``None`` on a miss."""
-        if app_id and app_id in self._by_app_id:
-            return f"domain:{self._by_app_id[app_id]}"
-        if wm_class and wm_class in self._by_wm_class:
-            return f"domain:{self._by_wm_class[wm_class]}"
+        if app_id is not None:
+            hit = self._by_app_id.get(app_id)
+            if hit is not None:
+                return hit
+        if wm_class is not None:
+            hit = self._by_wm_class.get(wm_class)
+            if hit is not None:
+                return hit
         if path:
             for pattern, domain in self._path_globs:
-                if fnmatch.fnmatch(path, pattern):
-                    return f"domain:{domain}"
+                if pattern.match(path):
+                    return domain
         return None
