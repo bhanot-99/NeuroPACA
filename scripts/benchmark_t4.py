@@ -26,7 +26,6 @@ sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))
 
 from neuropaca.core.graph_memory import GraphMemory
-from tests.fixtures.generate_10k_graph import FIXTURE_PATH, write_fixture
 
 _PROBE_INTERVAL_S = 0.01
 _LAG_LIMIT_MS = 50.0
@@ -41,6 +40,8 @@ async def _probe(samples: list[float], stop: asyncio.Event) -> None:
 
 
 async def _run(rounds: int) -> int:
+    from tests.fixtures.generate_10k_graph import FIXTURE_PATH, write_fixture
+
     if not FIXTURE_PATH.exists():
         write_fixture(FIXTURE_PATH)
 
