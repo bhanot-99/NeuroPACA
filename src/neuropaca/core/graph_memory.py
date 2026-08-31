@@ -141,6 +141,15 @@ class GraphMemory:
         async with self._lock:
             self._update_node_unsafe(node_id, attributes)
 
+    async def reinforce_edge(self, node_a: str, node_b: str, delta: float = 0.01) -> int:
+        """Hebbian co-occurrence bump (Architecture.md §6, D-11): add `delta` to
+        the `weight` of every existing edge between `node_a` and `node_b`, in
+        either direction and across all parallel `RelationType`s. Creates
+        nothing — "if the edge exists". Returns the number of edges bumped. One
+        `_lock` cycle."""
+        async with self._lock:
+            return self._reinforce_edge_unsafe(node_a, node_b, delta)
+
     async def delete_node(self, node_id: str) -> None:
         async with self._lock:
             self._delete_node_unsafe(node_id)
@@ -381,6 +390,19 @@ class GraphMemory:
         data["last_accessed"] = _utcnow()
         self._dirty = True
         return self._node_from_attrs(node_id, data)
+
+    def _reinforce_edge_unsafe(self, node_a: str, node_b: str, delta: float) -> int:
+        bumped = 0
+        for u, v in ((node_a, node_b), (node_b, node_a)):
+            if not self._graph.has_edge(u, v):
+                continue
+            for key in list(self._graph[u][v]):
+                data = self._graph[u][v][key]
+                data["weight"] = float(data.get("weight", 0.0)) + delta
+                bumped += 1
+        if bumped:
+            self._dirty = True
+        return bumped
 
     def _update_node_unsafe(self, node_id: str, attributes: dict[str, Any]) -> None:
         if node_id not in self._graph:

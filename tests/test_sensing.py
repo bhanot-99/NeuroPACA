@@ -253,7 +253,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    assert [m.name for m in modules] == ["sensing", "diagnosis"]  # L2 before L3
+    assert [m.name for m in modules] == ["sensing", "diagnosis", "learning"]  # L2 -> L3 -> L4
     assert isinstance(modules[0], XMetricCollector)
     assert [c.name for c in modules[0]._collectors] == ["system"]
 
@@ -267,7 +267,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     with_activity = build_modules(
         Config(inference_backend="fake", activity_enabled=True), bus, graph, runtime
     )
-    assert [m.name for m in with_activity] == ["sensing", "activity", "diagnosis"]
+    assert [m.name for m in with_activity] == ["sensing", "activity", "diagnosis", "learning"]
     assert with_activity[0]._emit_idle_from_cpu is False
 
 

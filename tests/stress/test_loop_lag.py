@@ -22,7 +22,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scripts.measure_loop_lag import _run  # noqa: E402  (path bootstrap must precede)
+from scripts.measure_loop_lag import _infer_stress, _run  # noqa: E402
 
 pytestmark = pytest.mark.stress
 
@@ -31,3 +31,11 @@ async def test_loop_lag_stays_under_50ms_during_a_file_blast() -> None:
     # _run returns the would-be process exit code: 0 iff max loop lag < 50 ms
     exit_code = await _run(seconds=4.0, big_graph=False)
     assert exit_code == 0, "event-loop lag exceeded the 50 ms B4 baseline (see printed report)"
+
+
+async def test_loop_lag_stays_under_50ms_during_a_10s_inference() -> None:
+    # B4 exit clause I — a ~10 s backend inference (real llama.cpp if the wheel +
+    # a model are present, else a backend that blocks its thread ~2 s/call) must
+    # not wake the 10 ms probe more than 50 ms late.
+    exit_code = await _infer_stress()
+    assert exit_code == 0, "inference stalled the event loop — executor offload broken (B4 exit I)"

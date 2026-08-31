@@ -86,6 +86,7 @@ These are on the blueprint. Violating any of them is a defect.
 + add_node(node_id: str, node_type: NodeType, attributes) : Node
 + upsert_node(node_id: str, node_type: NodeType, attributes) : Node   (B3 decision — get-or-create)
 + add_edge(source: str, target: str, relation: RelationType, weight) : Edge
++ reinforce_edge(a: str, b: str, delta=0.01)  : int   (B4 — Hebbian; existing edges only, both directions)
 + get_node(node_id: str)                      : Optional[Node]
 + query(node_type: NodeType, filters)         : List[Node]
 + find_related(node_id: str, depth, *, traverse_hubs=False) : List[Node]
@@ -166,7 +167,8 @@ score = normalize(
 - is_busy           : bool
 
 + get_instance()                                          : BitNetRuntime  (static)
-+ load_model() / unload_model()                           : None
++ load_model() / unload_model()                           : None        ← load_model BLOCKING
++ load_model_async()                                      : Awaitable[bool]  «async»  (B4 lazy load, dedicated executor)
 + infer(prompt, max_tokens, temperature, grammar=None)    : str        ← BLOCKING
 + infer_async(prompt, max_tokens, grammar=None)           : Awaitable[str]  «async»
 + build_context_from_nodes(nodes: List[Node])             : str
@@ -202,6 +204,8 @@ bitnet_max_tokens           : int
 inference_backend           : str = "llama"    (B1 — "fake" in tests)
 correlation_window_seconds  : int = 1800       (B3 — L3 per-collector deque bound)
 app_map_path                : str = "data/app_map.default.toml"  (B2.5b — activity→domain rules)
+model_context_tokens        : int = 2048       (B4 — llama.cpp n_ctx)
+adaptation_buffer_size      : int = 64         (B4 — L4 (Signal, Insight) deque + novelty set)
 ```
 
 Concept variant also carries `n_threads`, `max_failures = 3`, `max_file_tokens = 4096`. Loaded once at startup, immutable thereafter. `from_file(path) -> Config`.
@@ -392,17 +396,41 @@ BitNetPlasticity «Module»
   - event_bus        : EventBus
   - graph_memory     : GraphMemory
   - bitnet_runtime   : BitNetRuntime
-  - adaptation_buffer: List[Tuple[Signal, Insight]]
-  + on_signal_event(event)        : None
-  - _generate_insight(signal)     : Insight  «async»
-  - _store_insight(insight)       : None
-  - _publish_insight(insight)     : None
+  - _buffer          : deque[Tuple[Signal, Insight]]  (maxlen = adaptation_buffer_size)
+  + on_signal_event(event)   : None  «async»
+  - _handle(signal)          : None  «async»  — gate -> lazy load -> infer -> store
+  - _too_similar(signal)     : bool         — Jaccard novelty vs _buffer
+  - _store(insight)          : Insight «async»
+  - _reinforce(insight, sig) : None    «async»
 ```
 
-- Builds the behavioural fingerprint — updates `relevance_score`s in the graph every cycle.
-- Hebbian: co-occurring events strengthen their edge weight (`weight += ~0.01`).
-- Not every signal deserves inference — gate on confidence, novelty, and `is_busy`. Dropping a signal is correct.
-- `adaptation_buffer` is bounded. It is a record of `(signal, insight)` pairs for later analysis — **not** an inference queue, and (in the core system) not a training set. Model weight adaptation is deferred (`pruning.md`).
+**Extractive, not generative (D-11).** The B0 spike proved BitNet b1.58 2B4T
+cannot write a grounded sentence over graph context (`problems.md` 1.13). L4 asks
+the model for exactly two enum-constrained fields against a GBNF grammar:
+
+```json
+{ "cited_node_id": "n2" | null,          // one of THIS prompt's K aliases, or abstain
+  "insight_category": "routine" | "anomaly" | "distraction" }
+```
+
+The human-readable `Insight.summary` is a **template** filled from the cited
+node's label + the signal type — never model text. `null` cited node = discard.
+
+- **Gate** (`_handle`, drop in order): `confidence < 0.7`; no `related_node_ids`;
+  `BitNetRuntime.is_busy`; **Jaccard(this signal's node set, any buffered
+  signal's) > 0.8** (no embeddings); model unavailable; no cited candidate
+  survives in the graph; the parse fails or abstains (`rules.md §4.1`).
+- **Lazy load.** `BitNetRuntime.load_model_async()` (dedicated executor) fires on
+  the *first signal that clears the gate* — an idle session never pays the
+  ~1.4 GB tax. The backend self-disables (logs, `is_loaded` stays False) if
+  `llama-cpp-python` or the model file is absent; L4 then drops every signal.
+- **Hebbian.** For the cited node × each other node in `signal.related_node_ids`,
+  `graph_memory.reinforce_edge(a, b, +0.01)` — bumps `weight` on an **existing**
+  edge only, either direction, one `_lock` cycle. `recalculate_importance()`
+  stays owned by the Scheduler.
+- **`_buffer`** is a bounded `deque[(Signal, Insight)]` — the novelty-comparison
+  set and a record for later analysis, **not** an inference queue or a training
+  set. Model weight adaptation is deferred (`pruning.md`).
 
 ---
 

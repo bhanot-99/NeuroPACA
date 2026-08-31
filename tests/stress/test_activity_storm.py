@@ -33,7 +33,10 @@ from neuropaca.diagnosis.correlator import SignalCorrelator
 pytestmark = pytest.mark.stress
 
 _STORM = 20_000
-_DRAIN_EVERY = 200  # << the 1000-slot bus, so nothing is ever dropped
+# Drain often — the publisher loop has no `await` between `publish()` calls, so a
+# batch this size is the longest the dispatch loop runs before the probe gets a
+# turn. 40 keeps that well under the 50 ms budget even on a loaded machine.
+_DRAIN_EVERY = 40
 _EXPECTED_DEQUE_MAXLEN = 901  # ceil(correlation_window_seconds 1800 / nominal 2 s poll) + 1
 _LAG_LIMIT_MS = 50.0
 _HEAP_DRIFT_LIMIT_KB = 512.0
