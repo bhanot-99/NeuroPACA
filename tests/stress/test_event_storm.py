@@ -69,8 +69,10 @@ async def test_event_storm_saturation_then_graceful_recovery(
 
     published = sum(counts)
     assert published == _STORM
-    # "never blocks": 50k synchronous put_nowait calls are effectively instant
-    assert storm_seconds < 2.0, f"publish() burst took {storm_seconds:.3f}s — it blocked"
+    # "never blocks": 50k `Event()` + `put_nowait` is CPU-bound but must not
+    # *await* — a blocked publisher would take tens of seconds, not ~1-3 s. The
+    # budget has CI headroom over the ~1 s warm run.
+    assert storm_seconds < 8.0, f"publish() burst took {storm_seconds:.3f}s — it blocked"
 
     dispatched = sum(received)
     assert dispatched == 0, "dispatch ran during the burst — Phase 1 is not deterministic"

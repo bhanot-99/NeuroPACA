@@ -27,6 +27,7 @@ import json
 import math
 import os
 import tempfile
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -149,6 +150,21 @@ class GraphMemory:
         `_lock` cycle."""
         async with self._lock:
             return self._reinforce_edge_unsafe(node_a, node_b, delta)
+
+    async def reinforce_cooccurrence(self, node_ids: Sequence[str], delta: float = 0.01) -> int:
+        """One episode's Hebbian update: bump every *existing* edge between every
+        pair of `node_ids` (both directions, all parallel relations) by `delta`.
+        Creates nothing. Returns the number of edges bumped. **One `_lock`
+        cycle** — this is a single insight's co-occurrence set, bounded by
+        `Config`'s L4 context K (a few nodes in production); the pair count is
+        O(k^2) of small dict lookups, well inside a chunk (rules.md §3)."""
+        unique = list(dict.fromkeys(node_ids))
+        async with self._lock:
+            bumped = 0
+            for i, a in enumerate(unique):
+                for b in unique[i + 1 :]:
+                    bumped += self._reinforce_edge_unsafe(a, b, delta)
+            return bumped
 
     async def delete_node(self, node_id: str) -> None:
         async with self._lock:

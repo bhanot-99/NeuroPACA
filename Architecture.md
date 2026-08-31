@@ -87,6 +87,7 @@ These are on the blueprint. Violating any of them is a defect.
 + upsert_node(node_id: str, node_type: NodeType, attributes) : Node   (B3 decision — get-or-create)
 + add_edge(source: str, target: str, relation: RelationType, weight) : Edge
 + reinforce_edge(a: str, b: str, delta=0.01)  : int   (B4 — Hebbian; existing edges only, both directions)
++ reinforce_cooccurrence(node_ids, delta=0.01) : int  (B4 — one episode's pairwise Hebbian, single lock)
 + get_node(node_id: str)                      : Optional[Node]
 + query(node_type: NodeType, filters)         : List[Node]
 + find_related(node_id: str, depth, *, traverse_hubs=False) : List[Node]
@@ -397,11 +398,10 @@ BitNetPlasticity «Module»
   - graph_memory     : GraphMemory
   - bitnet_runtime   : BitNetRuntime
   - _buffer          : deque[Tuple[Signal, Insight]]  (maxlen = adaptation_buffer_size)
-  + on_signal_event(event)   : None  «async»
-  - _handle(signal)          : None  «async»  — gate -> lazy load -> infer -> store
-  - _too_similar(signal)     : bool         — Jaccard novelty vs _buffer
-  - _store(insight)          : Insight «async»
-  - _reinforce(insight, sig) : None    «async»
+  + on_signal_event(event)      : None  «async»
+  - _handle(signal)             : None  «async»  — gate -> lazy load -> infer -> store
+  - _too_similar(signal)        : bool         — Jaccard novelty vs _buffer
+  - _store_insight(insight, sig): Insight «async»  — INSIGHT node + edges + Hebbian, one lock
 ```
 
 **Extractive, not generative (D-11).** The B0 spike proved BitNet b1.58 2B4T
@@ -424,10 +424,11 @@ node's label + the signal type — never model text. `null` cited node = discard
   the *first signal that clears the gate* — an idle session never pays the
   ~1.4 GB tax. The backend self-disables (logs, `is_loaded` stays False) if
   `llama-cpp-python` or the model file is absent; L4 then drops every signal.
-- **Hebbian.** For the cited node × each other node in `signal.related_node_ids`,
-  `graph_memory.reinforce_edge(a, b, +0.01)` — bumps `weight` on an **existing**
-  edge only, either direction, one `_lock` cycle. `recalculate_importance()`
-  stays owned by the Scheduler.
+- **Hebbian.** `_store_insight` calls `graph_memory.reinforce_cooccurrence(
+  cited ∪ signal.related_node_ids, +0.01)` — one `_lock` cycle, bumps `weight`
+  on **existing** edges only between every pair in the episode (both directions,
+  all parallel relations), creates nothing. `recalculate_importance()` stays
+  owned by the Scheduler.
 - **`_buffer`** is a bounded `deque[(Signal, Insight)]` — the novelty-comparison
   set and a record for later analysis, **not** an inference queue or a training
   set. Model weight adaptation is deferred (`pruning.md`).

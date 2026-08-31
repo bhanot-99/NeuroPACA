@@ -67,6 +67,15 @@ class BitNetPlasticity(BaseModule):
         self._buffer: deque[tuple[Signal, Insight]] = deque(maxlen=config.adaptation_buffer_size)
         self._generated = 0
         self._dropped = 0
+        # per-reason drop counters (observability — sum == _dropped)
+        self._drops: dict[str, int] = {
+            "confidence": 0,
+            "no_nodes": 0,
+            "busy": 0,
+            "novelty": 0,
+            "model": 0,
+            "abstain": 0,
+        }
         self._errors = 0
         self._last_at: datetime | None = None
 
@@ -113,28 +122,32 @@ class BitNetPlasticity(BaseModule):
                 system_error_event(module="learning", exception=str(exc), severity="handler")
             )
 
+    def _drop(self, reason: str) -> None:
+        self._dropped += 1
+        self._drops[reason] += 1
+
     async def _handle(self, signal: Signal) -> None:
         # (1-4) cheap gate — pure, no await
         if signal.confidence < _CONFIDENCE_GATE:
-            self._dropped += 1
+            self._drop("confidence")
             return
         if not signal.related_node_ids:
-            self._dropped += 1
+            self._drop("no_nodes")
             return
         if self._runtime.is_busy:
-            self._dropped += 1
+            self._drop("busy")
             return
         if self._too_similar(signal):
-            self._dropped += 1
+            self._drop("novelty")
             return
 
         # (5) lazy load — offloaded to the inference executor (rules.md §1)
         if not self._runtime.is_loaded:
             if self._runtime.backend_unavailable:
-                self._dropped += 1
+                self._drop("model")
                 return
             if not await self._runtime.load_model_async():
-                self._dropped += 1
+                self._drop("model")
                 self.event_bus.publish(
                     system_error_event(
                         module="learning",
@@ -147,7 +160,7 @@ class BitNetPlasticity(BaseModule):
         # (6) distilled context — top-K cited candidates that still exist
         nodes = self._context_nodes(signal)
         if not nodes:
-            self._dropped += 1
+            self._drop("no_nodes")
             return
         aliased = alias_nodes(nodes)
         aliases = [alias for alias, _ in aliased]
@@ -165,11 +178,10 @@ class BitNetPlasticity(BaseModule):
             snapshot_count=len(signal.source_snapshots),
         )
         if insight is None or not insight.traces_to_evidence():
-            self._dropped += 1
+            self._drop("abstain")
             return
 
-        stored = await self._store(insight)
-        await self._reinforce(stored, signal)
+        stored = await self._store_insight(insight, signal)
         self._buffer.append((signal, stored))
         self.event_bus.publish(
             Event(
@@ -196,16 +208,14 @@ class BitNetPlasticity(BaseModule):
         found.sort(key=lambda n: n.relevance_score, reverse=True)
         return found[:_CONTEXT_K]
 
-    async def _store(self, insight: Insight) -> Insight:
+    async def _store_insight(self, insight: Insight, signal: Signal) -> Insight:
+        """Write the `INSIGHT` node + its `RELATED_TO` edges, then the Hebbian
+        co-occurrence bump for the whole episode (cited nodes + the signal's
+        other related nodes) in one `_lock` cycle (Architecture.md §6, D-11)."""
         node_id = f"insight:{uuid4().hex[:12]}"
         await self._graph.upsert_node(node_id, NodeType.INSIGHT, {"label": insight.summary})
         for cited_id in insight.cited_node_ids:
             await self._graph.add_edge(node_id, cited_id, RelationType.RELATED_TO)
+        episode = [*insight.cited_node_ids, *signal.related_node_ids]
+        await self._graph.reinforce_cooccurrence(episode, _HEBBIAN_DELTA)
         return replace(insight, node_id=node_id)
-
-    async def _reinforce(self, insight: Insight, signal: Signal) -> None:
-        cited = set(insight.cited_node_ids)
-        others = [nid for nid in signal.related_node_ids if nid not in cited]
-        for cited_id in cited:
-            for other_id in others:
-                await self._graph.reinforce_edge(cited_id, other_id, _HEBBIAN_DELTA)
