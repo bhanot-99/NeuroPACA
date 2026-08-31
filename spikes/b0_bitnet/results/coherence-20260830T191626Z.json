@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-08-30T19:16:26.934732+00:00",
+  "model": "bitnet-2b4t-tq2_0.gguf",
+  "fixtures": "/home/bhanot/NeuroPaca/spikes/b0_bitnet/fixtures/ablation.jsonl",
+  "per_k": {
+    "1": {
+      "n": 20,
+      "valid_parse_rate": 0.75,
+      "citations_valid_rate": 0.75,
+      "citation_accuracy": 0.688,
+      "grounded_rate": 0.0,
+      "correct_abstain_rate": 0.0,
+      "mean_latency_s": 4.17
+    },
+    "3": {
+      "n": 20,
+      "valid_parse_rate": 1.0,
+      "citations_valid_rate": 1.0,
+      "citation_accuracy": 0.281,
+      "grounded_rate": 0.0,
+      "correct_abstain_rate": 0.0,
+      "mean_latency_s": 3.56
+    },
+    "5": {
+      "n": 20,
+      "valid_parse_rate": 0.95,
+      "citations_valid_rate": 0.95,
+      "citation_accuracy": 0.344,
+      "grounded_rate": 0.0,
+      "correct_abstain_rate": 0.0,
+      "mean_latency_s": 4.26
+    },
+    "8": {
+      "n": 20,
+      "valid_parse_rate": 1.0,
+      "citations_valid_rate": 1.0,
+      "citation_accuracy": 0.25,
+      "grounded_rate": 0.0,
+      "correct_abstain_rate": 0.0,
+      "mean_latency_s": 4.7
+    }
+  },
+  "citation_accuracy_target": 0.8,
+  "recommended_production_k": 1,
+  "meets_target": false,
+  "recommendation": "constrained 2B4T under target at every K -> use 3B Q4 for `$?` (rules.md \u00a74.1)"
+}

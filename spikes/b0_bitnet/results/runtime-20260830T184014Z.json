@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-08-30T18:40:14.489628+00:00",
+  "model": "bitnet-2b4t-tq2_0.gguf",
+  "minutes": 0.3,
+  "n_threads": null,
+  "rss_before_mb": 17.5,
+  "rss_after_load_mb": 1392.2,
+  "rss_end_mb": 1483.0,
+  "rss_drift_mb": 90.8,
+  "median_tok_per_s": 16.91,
+  "temp_c_min": 66.25,
+  "temp_c_max": 66.25,
+  "samples": [
+    {
+      "t_s": 6.3,
+      "rss_mb": 1477.8,
+      "temp_c": 66.25,
+      "tok_per_s": 15.32
+    }
+  ],
+  "budgets": {
+    "rss_after_load_mb": 1400.0,
+    "rss_drift_mb": 150.0,
+    "min_tok_per_s": 5.0
+  },
+  "verdict": {
+    "rss_after_load_ok": true,
+    "rss_drift_ok": true,
+    "tok_per_s_ok": true
+  },
+  "pass": true
+}

@@ -1,0 +1,8 @@
+[load] bitnet-2b4t-tq2_0.gguf in 0.6s
+K=1: {'n': 20, 'valid_parse_rate': 0.75, 'citations_valid_rate': 0.75, 'citation_accuracy': 0.688, 'grounded_rate': 0.0, 'correct_abstain_rate': 0.0, 'mean_latency_s': 4.17}
+K=3: {'n': 20, 'valid_parse_rate': 1.0, 'citations_valid_rate': 1.0, 'citation_accuracy': 0.281, 'grounded_rate': 0.0, 'correct_abstain_rate': 0.0, 'mean_latency_s': 3.56}
+K=5: {'n': 20, 'valid_parse_rate': 0.95, 'citations_valid_rate': 0.95, 'citation_accuracy': 0.344, 'grounded_rate': 0.0, 'correct_abstain_rate': 0.0, 'mean_latency_s': 4.26}
+K=8: {'n': 20, 'valid_parse_rate': 1.0, 'citations_valid_rate': 1.0, 'citation_accuracy': 0.25, 'grounded_rate': 0.0, 'correct_abstain_rate': 0.0, 'mean_latency_s': 4.7}
+
+->  /home/bhanot/NeuroPaca/spikes/b0_bitnet/results/coherence-20260830T191626Z.json
+constrained 2B4T under target at every K -> use 3B Q4 for `$?` (rules.md §4.1)
