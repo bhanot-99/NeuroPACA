@@ -50,6 +50,16 @@ class Config:
     # B3 · Diagnosis (L3, D-8). Bounds SignalCorrelator's per-collector snapshot
     # deques: maxlen = ceil(correlation_window_seconds / poll_intervals[name]) + 1.
     correlation_window_seconds: int = 1800
+    # B2.5b · Process & Activity Sensing (D-10). app_map_path points at the
+    # editable app_id/wm_class/path-glob -> domain rules file SignalCorrelator
+    # loads at startup. A missing file is non-fatal — activity stays unclassified.
+    app_map_path: str = "data/app_map.default.toml"
+    # B2.5 · Process & Activity Sensing (D-9). activity_enabled turns on the
+    # Wayland ext-idle-notify ActivityCollector (needs `pip install .[activity]`);
+    # when on, XMetricCollector stops emitting its CPU-derived idle stand-in.
+    # top_process_count = top-N process-by-CPU rows in each system snapshot (0 = off).
+    activity_enabled: bool = False
+    top_process_count: int = 5
     watch_paths: list[str] = field(default_factory=list)
     filesystem_ignore_globs: list[str] = field(
         default_factory=lambda: [
@@ -99,6 +109,8 @@ class Config:
             errs.append(f"pressure_threshold must be > 0, got {self.pressure_threshold}")
         if self.max_concurrent_agents < 0:
             errs.append(f"max_concurrent_agents must be >= 0, got {self.max_concurrent_agents}")
+        if self.top_process_count < 0:
+            errs.append(f"top_process_count must be >= 0, got {self.top_process_count}")
 
         for key, val in self.poll_intervals.items():
             if val <= 0:

@@ -26,6 +26,7 @@ class EventType(StrEnum):
     PRESSURE_THRESHOLD_REACHED = auto()
     IDLE_DETECTED = auto()
     ACTIVITY_DETECTED = auto()
+    APP_SWITCH = auto()  # B2.5b — focused app_id changed; payload {app_id, title, previous_app_id}
     INSIGHT_GENERATED = auto()
     USER_MESSAGE = auto()
     AGENT_SPAWNED = auto()

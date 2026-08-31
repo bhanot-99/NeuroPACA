@@ -1,0 +1,198 @@
+{
+  "name": "focus",
+  "description": "dev.zed.Zed focused with CPU ~42% for 22 min; FOCUS_SESSION fires once and writes app:dev.zed.Zed -> domain:engineering.",
+  "base": "2026-01-01T00:00:00+00:00",
+  "poll_seconds": 60,
+  "events": [
+    {
+      "kind": "app_switch",
+      "offset": 0,
+      "app_id": "dev.zed.Zed",
+      "title": "neuropaca \u2014 correlator.py"
+    },
+    {
+      "kind": "metric",
+      "offset": 0,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 60,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 120,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 180,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 240,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 300,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 360,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 420,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 480,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 540,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 600,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 660,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 720,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 780,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 840,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 900,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 960,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 1020,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 1080,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 1140,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 1200,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 43.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 1260,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 41.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 1320,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 42.0
+      }
+    }
+  ]
+}

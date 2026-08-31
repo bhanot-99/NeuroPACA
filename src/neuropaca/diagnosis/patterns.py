@@ -1,10 +1,15 @@
-"""L3 · the pattern registry (Architecture.md §5, D-8).
+"""L3 · the pattern registry (Architecture.md §5, D-8 / D-10).
 
-B3 ships two patterns — `HighLoadPattern` and `IdlePattern`. Both are the same
-shape: a per-snapshot predicate that must hold for N consecutive snapshots of the
-primary collector, edge-triggered so a signal fires once per episode and re-arms
-only when a reset predicate holds. `_RunLengthPattern` captures that idiom;
-`FocusSessionPattern` / `DistractionPattern` (deferred to B2.5) will not share it.
+B3 shipped two run-length patterns — `HighLoadPattern` and `IdlePattern`: a
+per-snapshot predicate that must hold for N consecutive snapshots of the primary
+collector, edge-triggered so a signal fires once per episode and re-arms only
+when a reset predicate holds. `_RunLengthPattern` captures that idiom.
+
+B2.5b adds two window-shaped patterns that read the `"activity"` pseudo-collector
+(synthetic `MetricSnapshot`s the correlator makes from `APP_SWITCH` events, D-10):
+`FocusSessionPattern` (a sustained deep-work episode) and `DistractionPattern`
+(rapid context-switching). They do not share `_RunLengthPattern` — they reason
+over an elapsed span, not a consecutive run.
 
 Patterns are **pure and synchronous**. They read a window of snapshots plus a
 read-only baseline and return a `SignalDraft` of *strings*. `SignalCorrelator`
@@ -18,11 +23,11 @@ import os
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import ClassVar, Protocol
 
 from neuropaca.core.config import Config
-from neuropaca.core.enums import NodeType, SignalType
+from neuropaca.core.enums import NodeType, RelationType, SignalType
 from neuropaca.diagnosis.signal import NodeSpec, SignalDraft
 from neuropaca.sensing.collectors.system import ACTIVE_CPU_PERCENT, IDLE_CPU_PERCENT
 from neuropaca.sensing.snapshot import MetricSnapshot
@@ -30,6 +35,13 @@ from neuropaca.sensing.snapshot import MetricSnapshot
 HIGH_LOAD_CPU_PERCENT = 90.0
 _HIGH_LOAD_SUSTAIN_SECONDS = 300.0
 _RELATED_FILE_CAP = 5
+
+# --- B2.5b activity patterns (D-10) --------------------------------------------
+_FOCUS_MIN_SECONDS = 1200.0  # 20 min, blueprint F2
+_FOCUS_DOMAINS: frozenset[str] = frozenset({"domain:engineering", "domain:research"})
+_DISTRACTION_WINDOW_SECONDS = 120.0  # 2 min, blueprint F2
+_DISTRACTION_MAX_SWITCHES = 5  # "> 5x" -> fires at the 6th
+_DISTRACTION_REARM_SWITCHES = 2  # rate has settled -> re-arm
 
 
 class BaselineLookup(Protocol):
@@ -45,6 +57,11 @@ def _clamp01(value: float) -> float:
 def _cpu(snapshot: MetricSnapshot) -> float | None:
     raw = snapshot.data.get("cpu_percent")
     return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+
+
+def _str_field(snapshot: MetricSnapshot, key: str) -> str | None:
+    raw = snapshot.data.get(key)
+    return raw if isinstance(raw, str) and raw else None
 
 
 class BasePattern(ABC):
@@ -214,10 +231,144 @@ class IdlePattern(_RunLengthPattern):
         )
 
 
+class FocusSessionPattern(BasePattern):
+    """A sustained deep-work episode (blueprint F2, D-10).
+
+    Fires once when the focused app has classified into `domain:engineering` or
+    `domain:research` for >= 20 min with no switch away, and the machine was not
+    idle across that span. The blueprint's "high CPU" is read as "not idle" —
+    editor-driven focus work rarely pins a core, so the gate is mean
+    `system.cpu_percent` >= `ACTIVE_CPU_PERCENT` over the span, not the HIGH_LOAD
+    threshold. Re-arms when the focus domain is left.
+
+    The last `"activity"` snapshot is the current focus; a switch appends a new
+    one, so "no switch away" == "the last activity snapshot is still in-focus".
+    """
+
+    signal_type: ClassVar[SignalType] = SignalType.FOCUS_SESSION
+    collectors: ClassVar[tuple[str, ...]] = ("system", "activity")
+
+    def __init__(self, *, min_seconds: float = _FOCUS_MIN_SECONDS) -> None:
+        self._min_seconds = min_seconds
+        self._firing = False
+
+    def evaluate(
+        self, windows: Mapping[str, Sequence[MetricSnapshot]], baselines: BaselineLookup
+    ) -> SignalDraft | None:
+        activity = windows.get("activity", ())
+        if not activity:
+            return None
+        current = activity[-1]
+        domain = _str_field(current, "domain")
+        in_focus = domain in _FOCUS_DOMAINS
+
+        if self._firing:
+            if not in_focus:
+                self._firing = False
+            return None
+        if not in_focus or domain is None:
+            return None
+
+        system = windows.get("system", ())
+        latest_system = system[-1].timestamp if system else current.timestamp
+        now = max(current.timestamp, latest_system)
+        held = (now - current.timestamp).total_seconds()
+        if held < self._min_seconds:
+            return None
+
+        span = [s for s in system if s.timestamp >= current.timestamp]
+        cpus = [c for c in (_cpu(s) for s in span) if c is not None]
+        if not cpus:
+            return None
+        mean_cpu = sum(cpus) / len(cpus)
+        if mean_cpu < ACTIVE_CPU_PERCENT:
+            return None
+
+        self._firing = True
+        app_id = _str_field(current, "app_id") or "unknown"
+        slug = domain.split(":", 1)[1]
+        spec = NodeSpec(
+            node_id=f"app:{app_id}",
+            node_type=NodeType.APP,
+            label=app_id,
+            edges=((domain, RelationType.PART_OF),),
+        )
+        over = _clamp01((held - self._min_seconds) / self._min_seconds)
+        confidence = _clamp01(0.6 + 0.4 * over)
+        reason = (
+            f"{app_id} ({slug}) focused for ~{held / 60:.0f} min, cpu ~{mean_cpu:.0f}% (active)"
+        )
+        return SignalDraft(
+            signal_type=self.signal_type,
+            confidence=confidence,
+            source_snapshots=(current, *span),
+            node_specs=(spec,),
+            reason=reason,
+        )
+
+
+class DistractionPattern(BasePattern):
+    """Rapid context-switching: more than 5 `APP_SWITCH` events inside a trailing
+    2-minute window (blueprint F2, D-10). Re-arms once the switch rate settles
+    back to <= 2 in the window. Writes no nodes — like `IdlePattern`, the signal
+    itself is the payload L4/L5 consume."""
+
+    signal_type: ClassVar[SignalType] = SignalType.DISTRACTION
+    collectors: ClassVar[tuple[str, ...]] = ("activity",)
+
+    def __init__(
+        self,
+        *,
+        window_seconds: float = _DISTRACTION_WINDOW_SECONDS,
+        max_switches: int = _DISTRACTION_MAX_SWITCHES,
+    ) -> None:
+        self._window_seconds = window_seconds
+        self._max_switches = max_switches
+        self._firing = False
+
+    def evaluate(
+        self, windows: Mapping[str, Sequence[MetricSnapshot]], baselines: BaselineLookup
+    ) -> SignalDraft | None:
+        activity = windows.get("activity", ())
+        if not activity:
+            return None
+        cutoff = activity[-1].timestamp - timedelta(seconds=self._window_seconds)
+        recent = [s for s in activity if s.timestamp >= cutoff]
+        count = len(recent)
+
+        if self._firing:
+            if count <= _DISTRACTION_REARM_SWITCHES:
+                self._firing = False
+            return None
+        if count <= self._max_switches:
+            return None
+
+        self._firing = True
+        distinct: list[str] = []
+        for snapshot in recent:
+            app_id = _str_field(snapshot, "app_id")
+            if app_id and app_id not in distinct:
+                distinct.append(app_id)
+        confidence = _clamp01(0.5 + 0.1 * (count - self._max_switches))
+        reason = (
+            f"{count} app switches in {self._window_seconds / 60:.0f} min "
+            f"({len(distinct)} distinct)"
+        )
+        return SignalDraft(
+            signal_type=self.signal_type,
+            confidence=confidence,
+            source_snapshots=tuple(recent),
+            reason=reason,
+        )
+
+
 def build_patterns(config: Config) -> list[BasePattern]:
-    """The B3 registry, in evaluation order. A 5th pattern is one more line."""
+    """The pattern registry, in evaluation order. Adding one is a class above
+    plus a line here — `SignalCorrelator` does not change (Architecture.md §5)."""
     system_poll = float(config.poll_intervals.get("system", 60.0))
     return [
         HighLoadPattern(poll_seconds=system_poll),
         IdlePattern(idle_threshold_seconds=config.idle_threshold_seconds, poll_seconds=system_poll),
+        FocusSessionPattern(),
+        DistractionPattern(),
     ]

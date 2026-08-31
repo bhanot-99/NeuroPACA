@@ -37,6 +37,13 @@ dev = [
 spike = [
     "llama-cpp-python==0.3.35",
 ]
+# B2.5 · Process & Activity Sensing (D-9). pywayland powers the real Wayland
+# ext-idle-notify ActivityCollector. Optional + lazy-imported: the daemon runs
+# without it (the collector self-disables), and CI never installs it (needs
+# libwayland-dev + wayland-scanner to build the cffi module).
+activity = [
+    "pywayland==0.4.19",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -56,6 +63,9 @@ default-groups = []
 target-version = "py312"
 line-length = 100
 src = ["src", "tests", "spikes", "scripts"]
+# B2.5b: pywayland.scanner-generated protocol bindings — vendored verbatim,
+# regenerate with sensing/activity/_protocols/scan.py, never hand-edit.
+extend-exclude = ["src/neuropaca/sensing/activity/_protocols/*_v1.py"]
 
 [tool.ruff.lint]
 select = [
@@ -95,6 +105,21 @@ strict = true
 # psutil, watchdog). Their call sites are outside the --strict core.
 module = ["networkx.*", "psutil.*", "watchdog.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pywayland ships partial/incomplete types and is an optional extra CI never
+# installs — treat it as fully untyped whether or not it is present (B2.5).
+module = ["pywayland.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# Vendored pywayland.scanner output (B2.5b) — generated, regenerate via
+# _protocols/scan.py, not type-checked.
+module = ["neuropaca.sensing.activity._protocols.*"]
+ignore_errors = true
+ignore_missing_imports = true
+follow_imports = "skip"
 
 # ------------------------------------------------------------------------------
 # pytest

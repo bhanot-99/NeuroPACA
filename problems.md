@@ -75,28 +75,25 @@ This file holds two things:
 
 ---
 
-### 1.6 How do we sort activity into 10 topics? · 🔴
+### 1.6 How do we sort activity into 10 topics? · 🟢 resolved (D-10, B2.5b)
 
 **Problem.** The design says "classify every new observation into one of 10 domains first." With what? A lookup of `python → Engineering` is brittle (`python` could be Engineering, Research, or Learning). Asking the LLM to classify every 60-second reading breaks the rule "no model calls in the fast path."
 
 **Why it matters.** Domain classification is the front door of the whole graph. If it's wrong or slow, everything downstream is wrong or slow.
 
-**How to counter it.**
-- Ship a **simple, editable rules file** (`app_map.yaml`): process/app name → domain, with sensible defaults the user can edit.
-- Accept that it's rough at first. The graph corrects itself over time via co-occurrence.
-- Never call the model in the polling loop. If a case is genuinely ambiguous, leave it unclassified rather than block.
+**Resolution (2026-08-31, D-10).** `diagnosis/app_map.py` — `AppMap`, an **editable TOML rules file** (`data/app_map.default.toml`) read once at `SignalCorrelator.initialize()`. Lookup on every `APP_SWITCH` is exact `app_id` (O(1)) → exact `wm_class` (O(1)) → `path_glob` (O(k), `fnmatch`). A miss returns `None` — the activity is left unclassified, never guessed, never blocked. Zero inference in the poll path. Unknown domains / sections in the file are logged and skipped, never fatal. The graph still self-corrects over time via co-occurrence; `bridge_value` (a node's distinct `domain:*` reach) is live from here.
 
 ---
 
-### 1.7 Reading the active window is OS-specific and harder than it looks · 🟡
+### 1.7 Reading the active window is OS-specific and harder than it looks · 🟢 resolved (D-9 idle, D-10 window)
 
 **Problem.** Knowing "which app is focused right now" and "how long since the last keypress" is easy on some systems and genuinely hard on others (modern Linux desktops especially). The blueprint just says "platform-specific."
 
 **Why it matters.** Two of the four behavioural patterns (`FOCUS_SESSION`, `DISTRACTION`) need the active window. Those are also the patterns that map to topics. No active window → half the behavioural vocabulary is gone.
 
-**How to counter it.**
-- Treat the active-window backend as its **own spike**, not a quick collector.
-- Ship the **system-metrics-only** version first (CPU/RAM/disk → `HIGH_LOAD`). Prove the loop works. Add window-tracking and its two patterns in a later step, once the core is proven useful.
+**Resolution (2026-08-31, D-9 · spike `spikes/b2_5_activity/`).** The APIs on the target box (Wayland/COSMIC) are Wayland protocols, not D-Bus/X11:
+- **Idle / "last keypress" — DONE (B2.5a).** `ext-idle-notify-v1` (`ext_idle_notifier_v1 v2`, bundled in `pywayland`) — edge events `idled` / `resumed`, `loop.add_reader` on the compositor fd, no thread. `ActivityCollector` ships in B2.5a and is live-verified. `org.freedesktop.ScreenSaver` (cosmic-idle) has no idle-query method; XWayland `_NET_ACTIVE_WINDOW` → `0x0`.
+- **Active window — DONE (B2.5b).** `zcosmic_toplevel_info_v1 v3` (`app_id` / `title` / `state=activated`), cosmic XML vendored + `pywayland.scanner` resolving the full dependency chain (`sensing/activity/_protocols/`). `WaylandWindowSource` → `APP_SWITCH`, live-verified (`app_id:"brave-browser"`). L3 consumes it: `AppMap` classification + `FocusSessionPattern` / `DistractionPattern` (D-10), fixture-verified.
 
 ---
 

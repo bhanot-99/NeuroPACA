@@ -1,0 +1,74 @@
+# app_map.default.toml — activity -> routing domain (B2.5b, D-10).
+#
+# SignalCorrelator reads this once at startup (Config.app_map_path) and consults
+# it on every APP_SWITCH: exact `app_id` first, then `wm_class` (XWayland
+# fallback), then `path_glob` (fnmatch against a working-directory path).
+#
+# The right-hand value MUST be one of the 10 routing domains:
+#   engineering  research  tools  system  habits
+#   projects     meetings  comms  mental_models  learning
+# An unknown domain, or an unknown section, is logged and skipped — never fatal.
+#
+# This file is meant to be edited. Copy it, point Config.app_map_path at your
+# copy, and tune it to the apps you actually use.
+
+[app_id]
+# --- engineering ---
+"dev.zed.Zed" = "engineering"
+"com.visualstudio.code" = "engineering"
+"code" = "engineering"
+"org.gnome.Console" = "engineering"
+"com.system76.CosmicTerm" = "engineering"
+"kitty" = "engineering"
+"Alacritty" = "engineering"
+"foot" = "engineering"
+"org.wezfurlong.wezterm" = "engineering"
+"jetbrains-pycharm" = "engineering"
+
+# --- research ---
+"md.obsidian.Obsidian" = "research"
+"md.Obsidian" = "research"
+"com.github.johnfactotum.Foliate" = "research"
+"org.pwmt.zathura" = "research"
+"org.gnome.Evince" = "research"
+
+# --- comms ---
+"com.slack.Slack" = "comms"
+"Slack" = "comms"
+"org.telegram.desktop" = "comms"
+"dev.geopjr.Tuba" = "comms"
+"org.gnome.Geary" = "comms"
+"thunderbird" = "comms"
+
+# --- meetings ---
+"us.zoom.Zoom" = "meetings"
+"zoom" = "meetings"
+
+# --- tools ---
+"org.gnome.Nautilus" = "tools"
+"com.system76.CosmicFiles" = "tools"
+"org.gnome.Calculator" = "tools"
+"com.system76.CosmicSettings" = "tools"
+
+# --- habits ---
+"com.spotify.Client" = "habits"
+"spotify" = "habits"
+"tv.plex.PlexDesktop" = "habits"
+
+[wm_class]
+# XWayland clients report a wm_class instead of an app_id.
+"code" = "engineering"
+"jetbrains-pycharm" = "engineering"
+"Slack" = "comms"
+"zoom" = "meetings"
+"Spotify" = "habits"
+
+[path_glob]
+# Matched against the focused window's working directory when one is known.
+"*/src/*" = "engineering"
+"*/tests/*" = "engineering"
+"*.py" = "engineering"
+"*/papers/*" = "research"
+"*/notes/*" = "research"
+"*/reading/*" = "research"
+"*/meetings/*" = "meetings"

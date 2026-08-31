@@ -1,0 +1,60 @@
+{
+  "name": "distraction",
+  "description": "6 app switches in 90 s across 6 unclassified apps; DISTRACTION fires once, FOCUS_SESSION stays silent (no focus-domain app).",
+  "base": "2026-01-01T00:00:00+00:00",
+  "poll_seconds": 60,
+  "events": [
+    {
+      "kind": "app_switch",
+      "offset": 0,
+      "app_id": "a.Alpha",
+      "title": ""
+    },
+    {
+      "kind": "app_switch",
+      "offset": 15,
+      "app_id": "b.Bravo",
+      "title": ""
+    },
+    {
+      "kind": "app_switch",
+      "offset": 30,
+      "app_id": "c.Charlie",
+      "title": ""
+    },
+    {
+      "kind": "app_switch",
+      "offset": 45,
+      "app_id": "d.Delta",
+      "title": ""
+    },
+    {
+      "kind": "app_switch",
+      "offset": 60,
+      "app_id": "e.Echo",
+      "title": ""
+    },
+    {
+      "kind": "app_switch",
+      "offset": 75,
+      "app_id": "f.Foxtrot",
+      "title": ""
+    },
+    {
+      "kind": "metric",
+      "offset": 0,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 33.0
+      }
+    },
+    {
+      "kind": "metric",
+      "offset": 90,
+      "collector_name": "system",
+      "data": {
+        "cpu_percent": 34.0
+      }
+    }
+  ]
+}

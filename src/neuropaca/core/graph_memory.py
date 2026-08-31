@@ -15,8 +15,8 @@ Rules that shape this file:
 - the 11 routing hubs (`YOU` + 10 `domain:*`) are a protected set: `prune()`
   never removes them, and `find_related()` never traverses *through* them.
 - `save()` is atomic: temp file -> fsync -> `os.replace`.
-- `relevance_score` is a fixed-scale 0-10 composite with `bridge_value = 0.0`
-  until the domain layer exists (B2/B3, D-6).
+- `relevance_score` is a fixed-scale 0-10 composite; `bridge_value` is live from
+  B2.5b (D-10) — a node's distinct `domain:*` hub reach, 0.0 / 0.5 / 1.0.
 """
 
 from __future__ import annotations
@@ -422,12 +422,23 @@ class GraphMemory:
             recency = 0.5 ** (age_days / 7.0)
             degree = int(self._graph.degree(node_id))
             connectivity = min(1.0, math.log1p(degree) / math.log1p(20))
-            bridge_value = 0.0  # D-6 — no cross-domain signal until B2/B3
+            bridge_value = self._bridge_value_unsafe(node_id)
             raw = frequency * 3.0 + recency * 3.0 + connectivity * 2.0 + bridge_value * 2.0
             data["relevance_score"] = round(min(10.0, max(0.0, raw)), 3)
             changed = True
         if changed:
             self._dirty = True
+
+    def _bridge_value_unsafe(self, node_id: str) -> float:
+        """0-1 cross-domain reach: a node wired to >= 2 `domain:*` hubs bridges
+        the graph and earns the full bonus; one domain is half; none is zero
+        (D-10 — the domain layer that made this non-trivial arrived in B2.5b).
+        Hub nodes themselves are excluded — `YOU`/`domain:*` are structure."""
+        if node_id in HUB_NODE_IDS:
+            return 0.0
+        neighbours = set(self._graph.successors(node_id)) | set(self._graph.predecessors(node_id))
+        domains = neighbours & DOMAIN_HUB_IDS
+        return min(1.0, len(domains) / 2.0)
 
     def _seed_hubs_unsafe(self) -> None:
         self._add_node_unsafe("YOU", NodeType.CONCEPT, {"label": "YOU"})
