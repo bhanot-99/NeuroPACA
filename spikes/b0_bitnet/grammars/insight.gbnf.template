@@ -3,11 +3,9 @@
 # the exact node aliases in THIS prompt, e.g.:  "\"n1\"" | "\"n2\"" | "\"n3\""
 # Assembled as pure string work BEFORE _inference_lock is taken.
 
-root        ::= "{" ws
-                "\"insight\":" ws (sentence | "null") ws "," ws
-                "\"cited_nodes\":" ws cited ws "," ws
-                "\"confidence\":" ws confidence ws
-                "}"
+# One logical line per rule — this llama.cpp GBNF parser ends a rule at a
+# top-level newline (a multi-line body segfaults the sampler). B0 spike note.
+root        ::= "{" ws "\"insight\":" ws (sentence | "null") ws "," ws "\"cited_nodes\":" ws cited ws "," ws "\"confidence\":" ws confidence ws "}"
 
 cited       ::= "[" ws (alias (ws "," ws alias)*)? ws "]"
 
