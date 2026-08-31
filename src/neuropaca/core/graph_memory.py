@@ -20,6 +20,7 @@ import asyncio
 import json
 import math
 import os
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -212,18 +213,27 @@ class GraphMemory:
         self._last_save = _utcnow()
 
     def _write_atomic(self, text: str) -> None:
-        tmp = self._path.with_name(self._path.name + ".tmp")
+        # A unique temp name per call: `save()` runs the write in a worker thread
+        # *outside* the lock, so two saves can overlap (e.g. a scheduler tick and
+        # shutdown). A shared `<name>.tmp` would let one call's os.replace consume
+        # the other's temp file — each write must own its temp.
+        parent = self._path.parent
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with open(tmp, "w", encoding="utf-8") as fh:
-                fh.write(text)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self._path)
+            parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=self._path.name + ".", suffix=".tmp")
+            tmp = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp, self._path)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                raise
         except OSError as exc:
-            tmp.unlink(missing_ok=True)
             raise GraphMemoryError(f"atomic save of {self._path} failed: {exc}") from exc
-        self._fsync_dir(self._path.parent)
+        self._fsync_dir(parent)
 
     # ------------------------------------------------------------ lock-free workers
     def _add_node_unsafe(
