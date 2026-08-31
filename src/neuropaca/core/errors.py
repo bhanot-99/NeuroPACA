@@ -54,3 +54,9 @@ class SafetyGateError(NeuroPACAError):
 class ModuleLifecycleError(NeuroPACAError):
     """A module failed its ``initialize()`` / ``start()`` / ``stop()`` contract
     (Architecture.md §3.7)."""
+
+
+class CollectorError(NeuroPACAError):
+    """An L2 collector could not set up or run — e.g. the OS refused a filesystem
+    watch (inotify limit). The collector self-disables; the others keep running
+    (Architecture.md §4, D-7)."""

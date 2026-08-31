@@ -9,9 +9,13 @@ authors = [{ name = "Jatin Bhanot" }]
 
 # Runtime dependencies are added per build phase, on approval (rules.md §9).
 # B1 · Core Infrastructure — GraphMemory wraps a networkx.MultiDiGraph
-# (Architecture.md §3.2, D-5). Approved 2026-08-29.
+#      (Architecture.md §3.2, D-5). Approved 2026-08-29.
+# B2 · Sensing — psutil (SystemMetricCollector), watchdog (FileSystemCollector).
+#      Approved 2026-08-29 (D-7).
 dependencies = [
     "networkx==3.4.2",
+    "psutil==7.2.2",
+    "watchdog==6.0.0",
 ]
 
 [project.scripts]
@@ -32,7 +36,6 @@ dev = [
 # the convenience path.
 spike = [
     "llama-cpp-python==0.3.35",
-    "psutil==7.2.2",
 ]
 
 [build-system]
@@ -88,10 +91,9 @@ module = "neuropaca.core.*"
 strict = true
 
 [[tool.mypy.overrides]]
-# networkx 3.4.2 ships no py.typed marker. Without this, mypy --strict on
-# neuropaca.core.* (GraphMemory wraps a MultiDiGraph) fails with
-# "Cannot find implementation or library stub for module named 'networkx'".
-module = "networkx.*"
+# Third-party packages without bundled type information (B1: networkx; B2:
+# psutil, watchdog). Their call sites are outside the --strict core.
+module = ["networkx.*", "psutil.*", "watchdog.*"]
 ignore_missing_imports = true
 
 # ------------------------------------------------------------------------------
@@ -100,8 +102,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not integration'"
 asyncio_mode = "auto"
 markers = [
-    "integration: touches real psutil / filesystem / a real model — excluded from the default run",
+    "integration: touches real psutil / filesystem / a real model — run with `-m integration`",
 ]

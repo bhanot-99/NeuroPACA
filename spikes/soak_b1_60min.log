@@ -1,0 +1,70 @@
+start: Sat Aug 29 11:27:04 PM IST 2026
+soak: 60 min, sampling every 60s
+
+  minute   0   RSS     83.55 MiB
+  minute   1   RSS     83.55 MiB
+  minute   2   RSS     85.54 MiB
+  minute   3   RSS     91.98 MiB
+  minute   4   RSS     84.05 MiB
+  minute   5   RSS     92.10 MiB
+  minute   6   RSS    100.12 MiB
+  minute   7   RSS    101.12 MiB
+  minute   8   RSS    102.12 MiB
+  minute   9   RSS    103.12 MiB
+  minute  10   RSS    104.12 MiB
+  minute  11   RSS    105.12 MiB
+  minute  12   RSS    106.11 MiB
+  minute  13   RSS    107.09 MiB
+  minute  14   RSS    108.08 MiB
+  minute  15   RSS    109.06 MiB
+  minute  16   RSS    110.05 MiB
+  minute  17   RSS    111.03 MiB
+  minute  18   RSS    112.02 MiB
+  minute  19   RSS    113.00 MiB
+  minute  20   RSS    113.98 MiB
+  minute  21   RSS    114.98 MiB
+  minute  22   RSS    114.98 MiB
+  minute  23   RSS    114.98 MiB
+  minute  24   RSS    114.98 MiB
+  minute  25   RSS    114.99 MiB
+  minute  26   RSS    114.99 MiB
+  minute  27   RSS    114.99 MiB
+  minute  28   RSS    114.99 MiB
+  minute  29   RSS    114.99 MiB
+  minute  30   RSS    114.99 MiB
+  minute  31   RSS    114.99 MiB
+  minute  32   RSS    114.99 MiB
+  minute  33   RSS    115.00 MiB
+  minute  34   RSS    115.00 MiB
+  minute  35   RSS    115.00 MiB
+  minute  36   RSS    115.00 MiB
+  minute  37   RSS    115.00 MiB
+  minute  38   RSS    115.00 MiB
+  minute  39   RSS    115.00 MiB
+  minute  40   RSS    115.00 MiB
+  minute  41   RSS    115.00 MiB
+  minute  42   RSS    115.00 MiB
+  minute  43   RSS    115.00 MiB
+  minute  44   RSS    115.00 MiB
+  minute  45   RSS    115.00 MiB
+  minute  46   RSS    115.00 MiB
+  minute  47   RSS    115.00 MiB
+  minute  48   RSS    115.00 MiB
+  minute  49   RSS    115.00 MiB
+  minute  50   RSS    115.00 MiB
+  minute  51   RSS    115.00 MiB
+  minute  52   RSS    115.00 MiB
+  minute  53   RSS    115.00 MiB
+  minute  54   RSS    115.00 MiB
+  minute  55   RSS    115.00 MiB
+  minute  56   RSS    115.00 MiB
+  minute  57   RSS    115.00 MiB
+  minute  58   RSS    115.00 MiB
+  minute  59   RSS    115.00 MiB
+  minute  60   RSS    115.00 MiB
+
+window [min 5..60]  low 92.10  high 115.00 MiB  peak-to-trough drift 24.87%
+min 5 -> 60:  92.10 -> 115.00 MiB  (+24.87%)
+
+FAIL — RSS drift 24.87% >= 5% (possible leak)
+exit=1 end=Sun Aug 30 12:27:11 AM IST 2026
