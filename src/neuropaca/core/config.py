@@ -39,6 +39,12 @@ class Config:
     poll_intervals: dict[str, float] = field(default_factory=lambda: {"system": 60.0})
     graph_save_interval_seconds: int = 300
     bitnet_max_tokens: int = 256
+    # B4 · Learning (L4, D-11). model_context_tokens = llama.cpp n_ctx (the
+    # extractive prompt is ~200 tokens, output <= 48 — 2048 is generous and keeps
+    # the KV-cache small). adaptation_buffer_size bounds BitNetPlasticity's
+    # (Signal, Insight) deque + the Jaccard-novelty comparison set.
+    model_context_tokens: int = 2048
+    adaptation_buffer_size: int = 64
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -101,6 +107,8 @@ class Config:
             "max_file_tokens",
             "snapshot_buffer_size",
             "correlation_window_seconds",
+            "model_context_tokens",
+            "adaptation_buffer_size",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")

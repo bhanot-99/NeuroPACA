@@ -15,6 +15,7 @@ from neuropaca.core.config import Config
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.diagnosis.correlator import SignalCorrelator
+from neuropaca.learning.plasticity import BitNetPlasticity
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
 from neuropaca.sensing.collectors.filesystem import FileSystemCollector
@@ -27,8 +28,6 @@ def build_modules(
     graph_memory: GraphMemory,
     bitnet_runtime: BitNetRuntime,
 ) -> list[BaseModule]:
-    del bitnet_runtime  # unused until B4
-
     # B2.5 (D-9): when the real Wayland ActivityCollector is on, XMetricCollector
     # stops emitting its CPU-derived IDLE_DETECTED / ACTIVITY_DETECTED stand-in.
     sensing = XMetricCollector(event_bus, config, emit_idle_from_cpu=not config.activity_enabled)
@@ -49,10 +48,14 @@ def build_modules(
         )
 
     diagnosis = SignalCorrelator(event_bus, config, graph_memory)
+    learning = BitNetPlasticity(event_bus, config, graph_memory, bitnet_runtime)
 
-    # Start order = list order: L2 Sensing before L3 Diagnosis (Architecture.md §10).
+    # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning
+    # (Architecture.md §10). L4 self-disables if llama-cpp-python / the model is
+    # absent (D-11) — it never blocks startup.
     modules: list[BaseModule] = [sensing]
     if config.activity_enabled:
         modules.append(ActivityCollector(event_bus, config))
     modules.append(diagnosis)
+    modules.append(learning)
     return modules

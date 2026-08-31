@@ -44,6 +44,12 @@ spike = [
 activity = [
     "pywayland==0.4.19",
 ]
+# B4 · Learning (L4, D-11). llama-cpp-python is the in-process BitNet b1.58 2B4T
+# runtime. Optional + lazy-imported: `LlamaCppBackend.load()` catches ImportError,
+# logs, and the daemon runs on with L4 inert (CI runners have no C toolchain).
+llama = [
+    "llama-cpp-python==0.3.35",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -110,6 +116,13 @@ ignore_missing_imports = true
 # pywayland ships partial/incomplete types and is an optional extra CI never
 # installs — treat it as fully untyped whether or not it is present (B2.5).
 module = ["pywayland.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# llama-cpp-python is an optional extra CI never installs (B4, D-11) and ships
+# no type information — fully untyped whether or not it is present.
+module = ["llama_cpp.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

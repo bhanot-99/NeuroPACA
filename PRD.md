@@ -60,7 +60,7 @@ Monitors CPU, RAM, disk, temperature, processes, network, and system logs every 
 distinct `RelationType`s between the same pair; see `Architecture.md §3.2`). 10 master domain nodes (Engineering, Research, Tools, System, Habits, Projects, Meetings, Comms, Mental Models, Learning) plus a central `YOU` routing hub. New data is classified into a domain first, then placed in the right cluster — the routing layer collapses an O(n) comparison. Edges strengthen by Hebbian co-occurrence (`weight += ~0.01` when events recur together). `relevance_score` decays when unused, spikes on heavy use.
 
 ### F4 · Local BitNet inference
-`BitNetRuntime` runs **BitNet b1.58 2B4T** in-process via **llama.cpp** — weights ∈ {−1, 0, +1}, 1.58 bits/param, CPU-native, no GPU. ~0.4 GB of weights, ~1.1 GB resident with runtime overhead, one inference at a time system-wide. Used by L3 (complex cases only), L4 (insight generation), L6 (idle thoughts), and L9 (`$` responses). Personal weight pruning is deferred — see [`pruning.md`](pruning.md).
+`BitNetRuntime` runs **BitNet b1.58 2B4T** in-process via **llama.cpp** — weights ∈ {−1, 0, +1}, 1.58 bits/param, CPU-native, no GPU. ~0.4 GB of weights, ~1.4 GB resident with runtime overhead (B0 spike; §9), one inference at a time system-wide. Used by L4 (extractive insight classification — D-11), L6 (idle thoughts), and L9 (`$` responses). L3 does **zero** inference (B3 decision). Personal weight pruning is deferred — see [`pruning.md`](pruning.md).
 
 ### F5 · Default Mode Network (idle cognition)
 When CPU drops below ~5 % (you walked away), the DMN pulls the top-K graph nodes and uses the local model to autonomously generate "idle thoughts" — candidate fixes, alternative approaches, follow-up queries — cached to `idle_cache.db`. On return, the system surfaces them once. Idle thoughts expire after 48 h.
@@ -108,7 +108,7 @@ During idle/sleep the DMN consolidates duplicate nodes, re-links orphans, recomp
 
 ## 9. Model footprint
 
-BitNet b1.58 2B4T is ~1.1 GB resident (~0.4 GB weights) — fits comfortably on the target machine with room for the daemon and a normal dev session. A conventional 2B model in float32 would be ≈ 8 GB. Further shrinking via personal pruning is deferred ([`pruning.md`](pruning.md)).
+BitNet b1.58 2B4T (GGUF, `tq2_0` quant) measures **~1.39 GB resident after load** and ~1.55 GB after a 30-minute run — ~0.4 GB of weights plus llama.cpp KV-cache and runtime overhead (B0 spike, 2026-08-30; D-11). On the 16 GB target machine that leaves ample room for the daemon and a normal dev session; a conventional 2B model in float32 would be ≈ 8 GB. Median throughput ~17 tok/s on 16 CPU threads, package temp 66–72 °C (no thermal throttle). The model is **lazy-loaded** — a first inference is not triggered until a signal passes L4 gating, so an idle session never pays the 1.4 GB tax. Further shrinking via personal pruning is deferred ([`pruning.md`](pruning.md)).
 
 ## 10. Competitive position
 

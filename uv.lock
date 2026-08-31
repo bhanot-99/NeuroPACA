@@ -308,12 +308,16 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+llama = [
+    { name = "llama-cpp-python" },
+]
 spike = [
     { name = "llama-cpp-python" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "llama-cpp-python", marker = "extra == 'llama'", specifier = "==0.3.35" },
     { name = "llama-cpp-python", marker = "extra == 'spike'", specifier = "==0.3.35" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.18.2" },
     { name = "networkx", specifier = "==3.4.2" },
@@ -325,7 +329,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.4" },
     { name = "watchdog", specifier = "==6.0.0" },
 ]
-provides-extras = ["dev", "spike", "activity"]
+provides-extras = ["dev", "spike", "activity", "llama"]
 
 [[package]]
 name = "nodeenv"

@@ -58,9 +58,28 @@ class BitNetRuntime:
     def is_busy(self) -> bool:
         return self._busy
 
+    @property
+    def backend_unavailable(self) -> bool:
+        """True once a load has been attempted and the backend could not come up
+        (no llama-cpp-python, missing model) — L4 gating stops trying (D-11)."""
+        return getattr(self._backend, "unavailable_reason", None) is not None
+
     # ------------------------------------------------------------------ lifecycle
     def load_model(self) -> None:
+        """BLOCKING — startup / shutdown / tests only. Coroutines call
+        `load_model_async` so the ~1 s model init never touches the loop."""
         self._backend.load()
+
+    async def load_model_async(self) -> bool:
+        """Lazy load, offloaded to the dedicated single-worker executor (rules.md
+        §1 — the shared `asyncio.to_thread` pool is reserved for other work).
+        Returns whether the model is loaded afterwards."""
+        if self._backend.is_loaded:
+            return True
+        loop = asyncio.get_running_loop()
+        async with self._inference_lock:
+            await loop.run_in_executor(self._executor, self._backend.load)
+        return self._backend.is_loaded
 
     def unload_model(self) -> None:
         self._backend.unload()

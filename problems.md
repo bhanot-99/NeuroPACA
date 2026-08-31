@@ -13,7 +13,9 @@ This file holds two things:
 
 ## Part 1 — Design risks
 
-### 1.1 The model we assume doesn't exist at that size · ✅ applied 2026-08-29
+### 1.1 The model we assume doesn't exist at that size · ✅ resolved — B0 measured 2026-08-30
+
+**B0 numbers (`dda0fb0`, `bitnet-2b4t-tq2_0.gguf`):** ~1.39 GB resident after load, ~1.55 GB after 30 min, ~17 tok/s on 16 threads, 66–72 °C. The docs' "~1.1 GB" was optimistic — corrected to ~1.4 GB in `PRD.md §9` / §F4 (D-11). Fits the 16 GB host with wide margin.
 
 **Problem.** The docs assume a "BitNet b1.58 7B model, ~1.4 GB." The only real, released, usable BitNet b1.58 model is the **2B** one (BitNet b1.58 2B4T, ~1.1 GB). Bigger BitNet models were research numbers in a paper, not weights you can download and run. Tooling (`bitnet.cpp`, llama.cpp BitNet support) is also young and a bit fiddly.
 
@@ -163,9 +165,15 @@ This file holds two things:
 
 ---
 
-### 1.13 The small model loses the thread when you feed it graph context · 🟡 core-system risk
+### 1.13 The small model loses the thread when you feed it graph context · 🟠 confirmed real (B0) — mitigated for L4 (D-11), open for L6/L9
 
 *(This is separate from 1.2 — that one is about pruning the model's weights and is deferred. This one is about prompting the model with graph facts, and it affects L3, L4, L6, and L9 in the core build.)*
+
+**B0 outcome (2026-08-30, `dda0fb0`).** The risk is real. The grammar-constrained ablation (`coherence-20260830T191626Z.json`, `tq2_0` quant, 20 fixtures per K) found citation_accuracy peaking at **0.69** (K=1) against a 0.80 target and falling to 0.25–0.34 at K≥3; **grounded_rate 0.00 at every K** — the model's sentence never named a cited node; **correct_abstain 0.00** — it never declined a weak input. Valid-parse held (0.75–1.0), so the *grammar mechanism* works; the *free-text reasoning* does not.
+
+**Mitigation — L4 (D-11): the extractive pivot.** Stop asking for a sentence. The insight grammar emits exactly `{"cited_node_id": <one of the K aliases | null>, "insight_category": "routine"|"anomaly"|"distraction"}`. The model does one classification + one selection, both enum-constrained — the two jobs it *can* do (valid-parse 0.95–1.0 at K≥3). The human-readable insight string is a **template** filled from the cited node's label + the signal type, never generated. `null` cited node = abstain = discard.
+
+**Still open — L6 idle thoughts, L9 `$?`.** Those need more than a category. The B0 recommendation stands: a ~3B Q4 model for the interactive `$?` path only (`BitNetRuntime` is backend-pluggable), 2B4T for everything background. Decide in B5.
 
 **Problem.** BitNet b1.58 2B4T is a 2-billion-parameter, 1.58-bit model. Feed it a loosely-connected set of graph nodes plus a raw signal and ask it to reason, and it drifts: generic answers, invented file paths, cites nodes that weren't in the prompt, or just rambles. Small quantised models are pattern-matchers, not analysts.
 
