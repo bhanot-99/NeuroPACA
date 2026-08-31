@@ -18,6 +18,9 @@
 # Generated perf/soak fixtures — ~4 MB, regenerate deterministically from
 # tests/fixtures/generate_10k_graph.py
 /tests/fixtures/*.json
+# ...but the tiny B3 recorded-telemetry traces ARE committed — they're the
+# "recorded fixture" the B3 exit criterion asks for (generate_b3_traces.py).
+!/tests/fixtures/trace_*.json
 
 # --- Python ---
 __pycache__/

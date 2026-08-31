@@ -1,0 +1,71 @@
+{
+  "name": "noise",
+  "description": "Fluctuating CPU that crosses both thresholds but never sustains either for 5 consecutive polls; no pattern fires.",
+  "poll_seconds": 60,
+  "snapshots": [
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:00:00+00:00",
+      "data": {
+        "cpu_percent": 95.2
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:01:00+00:00",
+      "data": {
+        "cpu_percent": 18.6
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:02:00+00:00",
+      "data": {
+        "cpu_percent": 92.4
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:03:00+00:00",
+      "data": {
+        "cpu_percent": 4.1
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:04:00+00:00",
+      "data": {
+        "cpu_percent": 96.8
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:05:00+00:00",
+      "data": {
+        "cpu_percent": 33.0
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:06:00+00:00",
+      "data": {
+        "cpu_percent": 91.1
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:07:00+00:00",
+      "data": {
+        "cpu_percent": 2.7
+      },
+      "anomaly_score": 0.0
+    }
+  ]
+}

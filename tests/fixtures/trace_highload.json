@@ -1,0 +1,80 @@
+{
+  "name": "highload",
+  "description": "CPU pinned > 90% for 5 polls while train.py / data_loader.py / model.py are written; HIGH_LOAD fires once, related nodes are those files.",
+  "poll_seconds": 60,
+  "snapshots": [
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:00:00+00:00",
+      "data": {
+        "cpu_percent": 96.4
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:01:00+00:00",
+      "data": {
+        "cpu_percent": 93.8
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "filesystem",
+      "timestamp": "2026-01-01T00:01:30+00:00",
+      "data": {
+        "changed_paths": [
+          "/home/u/proj/train.py",
+          "/home/u/proj/data_loader.py",
+          "/home/u/proj/train.py"
+        ],
+        "change_count": 3
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:02:00+00:00",
+      "data": {
+        "cpu_percent": 98.1
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:03:00+00:00",
+      "data": {
+        "cpu_percent": 91.5
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "filesystem",
+      "timestamp": "2026-01-01T00:03:30+00:00",
+      "data": {
+        "changed_paths": [
+          "/home/u/proj/train.py",
+          "/home/u/proj/model.py"
+        ],
+        "change_count": 2
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:04:00+00:00",
+      "data": {
+        "cpu_percent": 97.7
+      },
+      "anomaly_score": 0.0
+    },
+    {
+      "collector_name": "system",
+      "timestamp": "2026-01-01T00:05:00+00:00",
+      "data": {
+        "cpu_percent": 28.3
+      },
+      "anomaly_score": 0.0
+    }
+  ]
+}
