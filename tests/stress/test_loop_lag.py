@@ -6,7 +6,9 @@ woken more than 50 ms late. If B1-B3 already stalls the loop, B4's in-process
 ``infer_async`` would freeze it — so this must stay green before B4 lands.
 
 The full diagnostic (30 s, optional 10k-node graph) is the script itself:
-``uv run --extra spike python scripts/measure_loop_lag.py``.
+``uv run --extra spike python scripts/measure_loop_lag.py``. Since T4 was fixed
+(chunked ``recalculate_importance`` / ``save`` + ``gc.freeze``) the ``--big-graph``
+run also passes; ``test_t4_loop_budget.py`` is the fast CI gate for that path.
 """
 
 from __future__ import annotations

@@ -7,6 +7,11 @@ Rules that shape this file:
   the lock and call a lock-free `_*_unsafe` worker; compound work takes the lock
   once. `asyncio.Lock` is not reentrant — a public method calling another public
   method under the lock deadlocks forever (problems.md 1.10).
+- a whole-graph batch job (`recalculate_importance`, `save`) is NOT one atomic
+  call: it takes the lock per bounded chunk and `await asyncio.sleep(0)`s between
+  chunks so a 10k-node graph never stalls the event loop (rules.md §3,
+  problems.md T4). The chunks see a slightly shifting graph — fine for periodic
+  best-effort work.
 - the 11 routing hubs (`YOU` + 10 `domain:*`) are a protected set: `prune()`
   never removes them, and `find_related()` never traverses *through* them.
 - `save()` is atomic: temp file -> fsync -> `os.replace`.
@@ -17,6 +22,7 @@ Rules that shape this file:
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import math
 import os
@@ -83,6 +89,7 @@ class GraphMemory:
     @classmethod
     def _reset_for_tests(cls) -> None:
         cls._instance = None
+        gc.unfreeze()  # undo load()'s gc.freeze so test graphs stay collectable
 
     # ---------------------------------------------------------------- properties
     @property
@@ -142,9 +149,21 @@ class GraphMemory:
         async with self._lock:
             return self._prune_unsafe(older_than, min_importance)
 
+    _RECALC_CHUNK: ClassVar[int] = 250
+
     async def recalculate_importance(self) -> None:
-        async with self._lock:
-            self._recalculate_unsafe()
+        """Rescore every node. This is a long CPU job, so — per rules.md §3 — it
+        does NOT hold the lock around the batch loop: it takes the lock for one
+        bounded chunk at a time and yields between chunks so queued events (and,
+        from B4, in-process inference) get the event loop. A node added or
+        removed between chunks is simply picked up on the next pass."""
+        now = _utcnow()
+        node_ids = list(self._graph.nodes)  # sync snapshot of ids, no await
+        for start in range(0, len(node_ids), self._RECALC_CHUNK):
+            chunk = node_ids[start : start + self._RECALC_CHUNK]
+            async with self._lock:
+                self._recalculate_chunk_unsafe(chunk, now)
+            await asyncio.sleep(0)  # explicit yield to the event loop
 
     async def consolidate(self) -> None:
         async with self._lock:
@@ -202,15 +221,86 @@ class GraphMemory:
             if self._graph.number_of_nodes() == 0:
                 self._seed_hubs_unsafe()
             self._dirty = False
+        # Move the whole graph into GC's permanent generation: it is long-lived
+        # and large (10k+ node/edge attr dicts), and without this every gen-2
+        # collection triggered by unrelated churn — notably save()'s transient
+        # records — rescans it, stalling the loop ~25 ms (problems.md T4).
+        gc.collect()
+        gc.freeze()
+
+    _SAVE_CHUNK: ClassVar[int] = 500
 
     async def save(self) -> None:
-        # Build the snapshot under the lock (fast, pure); do the blocking write
-        # off the event loop (Architecture.md §14, rules.md §1).
-        async with self._lock:
-            text = json.dumps(self._serialise_unsafe(), indent=2, sort_keys=True)
-        await asyncio.to_thread(self._write_atomic, text)
+        """Serialise the graph in bounded chunks — take the lock, encode one
+        chunk of nodes/edges to JSON, release, yield — so the event loop never
+        stalls longer than a chunk even for a 10k-node graph (problems.md T4,
+        rules.md §3). `indent`/`sort_keys` force json's *pure-Python* encoder
+        (~200 ms for 10k nodes); per-object compact `dumps` uses the C encoder,
+        µs each. The atomic file write (GIL-releasing I/O) then runs in a worker
+        thread (Architecture.md §14, rules.md §1).
+
+        `_dirty` is cleared *before* streaming: a mutation mid-save flips it back
+        on, so the next tick re-persists — the on-disk file is always valid JSON,
+        at most one save behind."""
         self._dirty = False
+        text = await self._serialise_streamed()
+        await asyncio.to_thread(self._write_atomic, text)
         self._last_save = _utcnow()
+
+    async def _serialise_streamed(self) -> str:
+        parts: list[str] = ['{"schema_version": ', str(_SCHEMA_VERSION), ', "nodes": [']
+        node_ids = list(self._graph.nodes)  # sync id snapshot, no await
+        sep = ""
+        for start in range(0, len(node_ids), self._SAVE_CHUNK):
+            async with self._lock:
+                for node_id in node_ids[start : start + self._SAVE_CHUNK]:
+                    if node_id not in self._graph:
+                        continue
+                    parts.append(
+                        sep + json.dumps(self._node_record(node_id, self._graph.nodes[node_id]))
+                    )
+                    sep = ", "
+            await asyncio.sleep(0)
+
+        parts.append('], "edges": [')
+        edge_keys = list(self._graph.edges(keys=True))  # sync (u, v, relation) snapshot
+        sep = ""
+        for start in range(0, len(edge_keys), self._SAVE_CHUNK):
+            async with self._lock:
+                for u, v, key in edge_keys[start : start + self._SAVE_CHUNK]:
+                    if not self._graph.has_edge(u, v, key):
+                        continue
+                    parts.append(
+                        sep + json.dumps(self._edge_record(u, v, key, self._graph.edges[u, v, key]))
+                    )
+                    sep = ", "
+            await asyncio.sleep(0)
+
+        parts.append("]}")
+        return "".join(parts)
+
+    @staticmethod
+    def _node_record(node_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": node_id,
+            "node_type": str(data["node_type"]),
+            "label": str(data["label"]),
+            "created_at": _as_dt(data["created_at"]).isoformat(),
+            "last_accessed": _as_dt(data["last_accessed"]).isoformat(),
+            "access_count": int(data["access_count"]),
+            "relevance_score": float(data["relevance_score"]),
+            "priority": int(data["priority"]),
+        }
+
+    @staticmethod
+    def _edge_record(u: str, v: str, key: Any, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "source": u,
+            "target": v,
+            "relation": str(key),
+            "weight": float(data.get("weight", 0.0)),
+            "created_at": _as_dt(data.get("created_at", _utcnow())).isoformat(),
+        }
 
     def _write_atomic(self, text: str) -> None:
         # A unique temp name per call: `save()` runs the write in a worker thread
@@ -319,9 +409,12 @@ class GraphMemory:
             self._dirty = True
         return len(victims)
 
-    def _recalculate_unsafe(self) -> None:
-        now = _utcnow()
-        for node_id, data in self._graph.nodes(data=True):
+    def _recalculate_chunk_unsafe(self, node_ids: list[str], now: datetime) -> None:
+        changed = False
+        for node_id in node_ids:
+            if node_id not in self._graph:
+                continue  # removed since the id snapshot — skip, catch it next pass
+            data = self._graph.nodes[node_id]
             frequency = min(1.0, int(data.get("access_count", 0)) / 100.0)
             age_days = max(
                 0.0, (now - _as_dt(data.get("last_accessed", now))).total_seconds() / 86400.0
@@ -332,7 +425,9 @@ class GraphMemory:
             bridge_value = 0.0  # D-6 — no cross-domain signal until B2/B3
             raw = frequency * 3.0 + recency * 3.0 + connectivity * 2.0 + bridge_value * 2.0
             data["relevance_score"] = round(min(10.0, max(0.0, raw)), 3)
-        self._dirty = True
+            changed = True
+        if changed:
+            self._dirty = True
 
     def _seed_hubs_unsafe(self) -> None:
         self._add_node_unsafe("YOU", NodeType.CONCEPT, {"label": "YOU"})
@@ -342,32 +437,6 @@ class GraphMemory:
             )
 
     # ---------------------------------------------------------------- (de)serialise
-    def _serialise_unsafe(self) -> dict[str, Any]:
-        nodes = [
-            {
-                "id": node_id,
-                "node_type": str(data["node_type"]),
-                "label": data["label"],
-                "created_at": _as_dt(data["created_at"]).isoformat(),
-                "last_accessed": _as_dt(data["last_accessed"]).isoformat(),
-                "access_count": int(data["access_count"]),
-                "relevance_score": float(data["relevance_score"]),
-                "priority": int(data["priority"]),
-            }
-            for node_id, data in self._graph.nodes(data=True)
-        ]
-        edges = [
-            {
-                "source": u,
-                "target": v,
-                "relation": str(key),
-                "weight": float(data.get("weight", 0.0)),
-                "created_at": _as_dt(data.get("created_at", _utcnow())).isoformat(),
-            }
-            for u, v, key, data in self._graph.edges(keys=True, data=True)
-        ]
-        return {"schema_version": _SCHEMA_VERSION, "nodes": nodes, "edges": edges}
-
     def _deserialise(self, payload: dict[str, Any]) -> Any:
         graph = nx.MultiDiGraph()
         for raw in payload.get("nodes", []):
