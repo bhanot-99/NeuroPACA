@@ -147,6 +147,26 @@ async def test_recalculate_importance_keeps_scores_in_range(tmp_path) -> None:
     assert 0.0 <= gm.get_node("hot").relevance_score <= 10.0
 
 
+async def test_bridge_value_rewards_cross_domain_nodes(tmp_path) -> None:
+    """B2.5b (D-10): with node degree held equal, the node wired to two domain
+    hubs outscores the one wired to a single domain — `bridge_value` is live."""
+    gm = await _loaded_graph(tmp_path)
+    for node_id in ("app:one", "app:two"):
+        await gm.add_node(node_id, NodeType.APP, {"access_count": 10})
+    # both nodes have degree 2; only app:two reaches two domains
+    await gm.add_edge("app:one", "domain:engineering", RelationType.PART_OF)
+    await gm.add_edge("app:one", "YOU", RelationType.RELATED_TO)
+    await gm.add_edge("app:two", "domain:engineering", RelationType.PART_OF)
+    await gm.add_edge("app:two", "domain:research", RelationType.PART_OF)
+
+    await gm.recalculate_importance()
+
+    assert gm.get_node("app:two").relevance_score > gm.get_node("app:one").relevance_score
+    assert gm._bridge_value_unsafe("app:two") == 1.0
+    assert gm._bridge_value_unsafe("app:one") == 0.5
+    assert gm._bridge_value_unsafe("domain:engineering") == 0.0  # hubs never bridge
+
+
 async def test_upsert_creates_a_missing_node(tmp_path) -> None:
     gm = await _loaded_graph(tmp_path)
     node = await gm.upsert_node("file:/w/a.py", NodeType.FILE, {"label": "a.py"})

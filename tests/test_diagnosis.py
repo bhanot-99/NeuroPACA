@@ -339,6 +339,11 @@ def test_correlator_takes_no_inference_backend() -> None:
     assert "runtime" not in params
 
 
-def test_build_patterns_is_the_b3_registry() -> None:
+def test_build_patterns_is_the_registry() -> None:
     patterns = build_patterns(Config(inference_backend="fake"))
-    assert [type(p).__name__ for p in patterns] == ["HighLoadPattern", "IdlePattern"]
+    assert [type(p).__name__ for p in patterns] == [
+        "HighLoadPattern",
+        "IdlePattern",
+        "FocusSessionPattern",  # B2.5b (D-10)
+        "DistractionPattern",  # B2.5b (D-10)
+    ]

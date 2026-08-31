@@ -201,6 +201,7 @@ graph_save_interval_seconds : int
 bitnet_max_tokens           : int
 inference_backend           : str = "llama"    (B1 — "fake" in tests)
 correlation_window_seconds  : int = 1800       (B3 — L3 per-collector deque bound)
+app_map_path                : str = "data/app_map.default.toml"  (B2.5b — activity→domain rules)
 ```
 
 Concept variant also carries `n_threads`, `max_failures = 3`, `max_file_tokens = 4096`. Loaded once at startup, immutable thereafter. `from_file(path) -> Config`.
@@ -242,8 +243,9 @@ EventType                      NodeType        RelationType
   PRESSURE_THRESHOLD_REACHED     METRIC          MODIFIED
   IDLE_DETECTED                  INSIGHT         FOLLOWED_BY
   ACTIVITY_DETECTED              APP             CONTRADICTS
-  INSIGHT_GENERATED              SESSION
-  USER_MESSAGE                   GOAL          SignalType
+  APP_SWITCH                     SESSION
+  INSIGHT_GENERATED              GOAL
+  USER_MESSAGE                                 SignalType
   AGENT_SPAWNED                                  FOCUS_SESSION   FILE_ACTIVITY
   AGENT_COMPLETED                                DISTRACTION     APP_SWITCH
   SYSTEM_ERROR                                   HIGH_LOAD       USER_RETURN
@@ -328,17 +330,19 @@ MetricBaseline                                 signal_type              signal_t
    bounded window — confidence only)           reason : str             timestamp
 ```
 
-**Concrete pattern triggers.** B3 ships **`HighLoadPattern` + `IdlePattern` only**
-(B3 decision, approved 2026-08-30). `FocusSessionPattern` and `DistractionPattern`
-need the active window and `APP_SWITCH` events — deferred with `ActivityCollector`
-to **B2.5** (`problems.md` 1.7, phases.md).
+**Concrete pattern triggers.** B3 shipped `HighLoadPattern` + `IdlePattern`
+(approved 2026-08-30). B2.5b adds `FocusSessionPattern` + `DistractionPattern`,
+which read the **`"activity"` pseudo-collector** — synthetic `MetricSnapshot`s
+`SignalCorrelator` builds from `APP_SWITCH` events, one field being the
+`AppMap`-classified `domain` (D-10). `BasePattern.evaluate` is unchanged; the
+correlator gains one `APP_SWITCH` subscription.
 
-| Pattern | Trigger (absolute — blueprint numbers) | Deps present in B2? |
+| Pattern | Trigger (absolute — blueprint numbers) | Deps |
 | --- | --- | --- |
 | `HighLoadPattern` | `system.cpu_percent > 90` for ≥ `ceil(300 / system_poll)` consecutive snapshots | ✅ |
 | `IdlePattern` | `system.cpu_percent < 5` for ≥ `ceil(idle_threshold_seconds / system_poll)` consecutive snapshots; resets at `cpu ≥ 10` (shares `IDLE_CPU_PERCENT` / `ACTIVE_CPU_PERCENT` with L2's `_IdleWatcher`) | ✅ |
-| `FocusSessionPattern` | high CPU + coding app active > 20 min | ❌ deferred → B2.5 |
-| `DistractionPattern` | app switching > 5× in 2 min | ❌ deferred → B2.5 |
+| `FocusSessionPattern` | active app classified `domain:engineering`/`domain:research` for ≥ 20 min with no switch away, and mean `system.cpu_percent ≥ ACTIVE_CPU_PERCENT` over the span (blueprint's "high CPU" read as "not idle" — editor focus rarely pins a core) | ✅ B2.5b |
+| `DistractionPattern` | > 5 `APP_SWITCH` in a trailing 2 min; re-arms at ≤ 2 | ✅ B2.5b |
 
 - Rule-based, **zero inference in L3** (B3 exit criterion). The "LLM for complex
   cases" hook is a later addition, not B3.
@@ -365,15 +369,19 @@ to **B2.5** (`problems.md` 1.7, phases.md).
   {"pattern": name, "confidence": c})` — catalogued now, no subscriber until L9.
   All alias/id/string work happens before step 4; nothing is awaited that a
   subscriber must finish (rules.md §2).
-- **B3 `_update_graph` scope:** upserts `FILE` nodes for changed paths inside the
-  correlation window; no `domain:*` edges and `bridge_value` stays `0.0` —
-  domain classification and `app_map` are deferred with process-name sensing
-  (B3 decision; `problems.md` 1.6). `HighLoadPattern.related_node_ids` come
-  strictly from `filesystem` activity; `IdlePattern` writes none.
+- **`_update_graph` scope:** upserts `FILE` nodes for changed paths inside the
+  correlation window (`HighLoadPattern`); `IdlePattern` / `DistractionPattern`
+  write none. From B2.5b (D-10): every `APP_SWITCH` upserts an `app:<id>` node
+  and, when the `AppMap` classifies it, a `PART_OF` edge to its `domain:*` hub
+  (bounded by distinct-app count); `FocusSessionPattern` names that `app:<id>` as
+  its related node. `bridge_value` is live from B2.5b — a node's distinct
+  `domain:*` reach, `0.0 / 0.5 / 1.0` (`graph_memory._bridge_value_unsafe`).
 
 **`recent_snapshots` bound.** `deque(maxlen = ceil(correlation_window_seconds /
 poll_intervals[collector]) + 1)` per collector — with the defaults (1800 s window,
-60 s system poll) that is 31. Provably bounded, config-derived, unit-tested.
+60 s system poll) that is 31. Provably bounded, config-derived, unit-tested. The
+`"activity"` pseudo-collector has no real cadence, so it uses a nominal 2 s
+interval for the same formula (maxlen ≈ 901, D-10).
 
 ---
 
@@ -560,6 +568,7 @@ Confirm both against a full-width re-export of the diagram before building them.
 | `METRIC_COLLECTED` | L2 | L3 | `MetricSnapshot` |
 | `IDLE_DETECTED` | L2 | L6 | idle duration, last activity |
 | `ACTIVITY_DETECTED` | L2 | L6 | activity source |
+| `APP_SWITCH` | L2 (`ActivityCollector`) | L3 | `{app_id, title, previous_app_id}` |
 | `SIGNAL_CORRELATED` | L3 | **L4 and L5, independently** | `Signal` |
 | `PATTERN_DETECTED` | L3 | L9 (optional) | pattern name, confidence |
 | `INSIGHT_GENERATED` | L4 | L5, L9 | `Insight` |

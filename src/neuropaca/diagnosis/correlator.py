@@ -20,16 +20,22 @@ from datetime import datetime
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EventType
+from neuropaca.core.enums import EventType, NodeType, RelationType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, system_error_event
+from neuropaca.diagnosis.app_map import AppMap
 from neuropaca.diagnosis.patterns import BasePattern, build_patterns
 from neuropaca.diagnosis.signal import MetricBaseline, Signal, SignalDraft
 from neuropaca.sensing.snapshot import MetricSnapshot
 
 _log = logging.getLogger(__name__)
+
+# APP_SWITCH events have no fixed cadence; this nominal interval only bounds the
+# synthetic "activity" deque (maxlen = ceil(correlation_window / this) + 1, D-10).
+_ACTIVITY_NOMINAL_POLL = 2.0
+_ACTIVITY_COLLECTOR = "activity"
 
 
 def _numeric(value: object) -> float | None:
@@ -58,6 +64,10 @@ class SignalCorrelator(BaseModule):
         )
         self._window_seconds = config.correlation_window_seconds
         self._poll_intervals = dict(config.poll_intervals)
+        self._poll_intervals.setdefault(_ACTIVITY_COLLECTOR, _ACTIVITY_NOMINAL_POLL)
+        self._app_map_path = config.app_map_path
+        self._app_map = AppMap.empty()
+        self._known_apps: set[str] = set()
         self._windows: dict[str, deque[MetricSnapshot]] = {}
         self._baselines: dict[tuple[str, str], MetricBaseline] = {}
         self._signals_emitted = 0
@@ -66,7 +76,9 @@ class SignalCorrelator(BaseModule):
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
+        self._app_map = AppMap.from_file(self._app_map_path)
         self.event_bus.subscribe(EventType.METRIC_COLLECTED, self.on_metric_event)
+        self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
 
     async def start(self) -> None:
         self.is_running = True
@@ -76,14 +88,15 @@ class SignalCorrelator(BaseModule):
             return
         self.is_running = False
         self.event_bus.unsubscribe(EventType.METRIC_COLLECTED, self.on_metric_event)
+        self.event_bus.unsubscribe(EventType.APP_SWITCH, self.on_app_switch)
 
     def health(self) -> ModuleHealth:
         return ModuleHealth(
             name=self.name,
             ok=self.is_running,
             detail=(
-                f"{len(self._patterns)} patterns · {self._signals_emitted} signals · "
-                f"{self._errors} errors"
+                f"{len(self._patterns)} patterns · {self._app_map.rule_count} app-rules · "
+                f"{self._signals_emitted} signals · {self._errors} errors"
             ),
             last_event_at=self._last_signal_at,
         )
@@ -93,10 +106,12 @@ class SignalCorrelator(BaseModule):
         baseline = self._baselines.get((collector, metric))
         return baseline.zscore(value) if baseline is not None else 0.0
 
-    # --------------------------------------------------------- event handler
+    # --------------------------------------------------------- event handlers
     async def on_metric_event(self, event: Event) -> None:
         try:
-            await self._handle(event)
+            snapshot = event.payload.get("snapshot")
+            if isinstance(snapshot, MetricSnapshot):
+                await self._ingest(snapshot)
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._errors += 1
             _log.exception("diagnosis on_metric_event failed")
@@ -104,10 +119,35 @@ class SignalCorrelator(BaseModule):
                 system_error_event(module="diagnosis", exception=str(exc), severity="handler")
             )
 
-    async def _handle(self, event: Event) -> None:
-        snapshot = event.payload.get("snapshot")
-        if not isinstance(snapshot, MetricSnapshot):
-            return
+    async def on_app_switch(self, event: Event) -> None:
+        """`APP_SWITCH` -> a synthetic `"activity"` snapshot classified through
+        the `AppMap`, then the same ingest path as any collector reading (D-10)."""
+        try:
+            app_id = event.payload.get("app_id")
+            if not isinstance(app_id, str) or not app_id:
+                return
+            domain = self._app_map.classify(app_id) or ""
+            snapshot = MetricSnapshot(
+                collector_name=_ACTIVITY_COLLECTOR,
+                timestamp=event.timestamp,
+                data={
+                    "app_id": app_id,
+                    "previous_app_id": event.payload.get("previous_app_id"),
+                    "title": event.payload.get("title", ""),
+                    "domain": domain,
+                },
+            )
+            if domain:
+                await self._classify_into_graph(app_id, domain)
+            await self._ingest(snapshot)
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            self._errors += 1
+            _log.exception("diagnosis on_app_switch failed")
+            self.event_bus.publish(
+                system_error_event(module="diagnosis", exception=str(exc), severity="handler")
+            )
+
+    async def _ingest(self, snapshot: MetricSnapshot) -> None:
         name = snapshot.collector_name
         cap = self._max_samples(name)
 
@@ -131,6 +171,16 @@ class SignalCorrelator(BaseModule):
             signal = await self._update_graph(draft)
             # (5-7) publish
             self._publish(pattern, signal)
+
+    async def _classify_into_graph(self, app_id: str, domain_id: str) -> None:
+        """Ensure `app:<id>` exists and is wired to its domain hub. Bounded by
+        the number of distinct apps ever seen — `_known_apps` skips the repeat
+        edge write on every subsequent switch to the same app (rules.md §3)."""
+        node_id = f"app:{app_id}"
+        await self._graph.upsert_node(node_id, NodeType.APP, {"label": app_id})
+        if app_id not in self._known_apps:
+            await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
+            self._known_apps.add(app_id)
 
     # --------------------------------------------------------------- helpers
     def _max_samples(self, collector: str) -> int:

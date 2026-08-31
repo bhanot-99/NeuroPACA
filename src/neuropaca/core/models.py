@@ -44,8 +44,8 @@ class Node:
     `relevance_score` change over the node's life (Architecture.md §3.2, §3.5).
 
     `relevance_score` is a 0-10 composite recomputed on a schedule, never
-    per-event (rules.md §3). B1 computes it with `bridge_value` fixed at 0.0
-    (D-6) — cross-domain routing needs the domain layer from B2/B3.
+    per-event (rules.md §3). `bridge_value` (a node's distinct `domain:*` reach)
+    is live from B2.5b (D-10); it was fixed at 0.0 through B1-B3 (D-6).
     """
 
     id: str

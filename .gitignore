@@ -1,8 +1,10 @@
 # --- NeuroPACA ---
 # Runtime data — graph, idle cache, action log, logs (Architecture.md §15).
-# The daemon owns this directory; only the placeholder is tracked.
+# The daemon owns this directory; only the placeholder and the shipped default
+# rules files are tracked.
 /data/*
 !/data/.gitkeep
+!/data/app_map.default.toml
 *.log
 
 # Model weights and llama.cpp build artifacts (B0 spike)
