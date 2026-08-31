@@ -57,6 +57,7 @@ text = await self.bitnet_runtime.infer_async(prompt, 256)
 - `relevance_score` is recomputed on a schedule, never per-event.
 - Growth is bounded by design: routing layer + score decay + `prune_low_score` + raw-data purge. A code path that can add nodes without bound is wrong.
 - Every DMN graph job acquires, mutates, and releases the lock once per atomic call — never once around a whole batch loop.
+- A whole-graph batch job (`recalculate_importance`, `save`, future DMN replay) processes the graph in bounded chunks: acquire `_lock`, do one chunk (~250–500 nodes), release, `await asyncio.sleep(0)`. Never `json.dumps` a large graph with `indent`/`sort_keys` on the loop — that is json's pure-Python encoder (~200 ms for 10k nodes); use per-object compact `dumps` (C encoder) across chunks and thread-offload only the GIL-releasing file I/O. After `load()`, `gc.freeze()` the graph so save-churn does not trigger a full-graph gen-2 rescan. (problems.md T4)
 
 ## 4. BitNetRuntime
 

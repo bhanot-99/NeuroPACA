@@ -102,8 +102,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-ra --strict-markers -m 'not integration'"
+addopts = "-ra --strict-markers -m 'not integration and not stress'"
 asyncio_mode = "auto"
 markers = [
     "integration: touches real psutil / filesystem / a real model — run with `-m integration`",
+    "stress: peak-throttle load / latency suite (B4 prep) — slow, run with `-m stress`",
 ]
