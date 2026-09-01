@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
+from neuropaca.core.clock import SystemClock
 from neuropaca.core.config import Config
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.diagnosis.correlator import SignalCorrelator
+from neuropaca.interface.layer import InterfaceLayer
 from neuropaca.learning.plasticity import BitNetPlasticity
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
@@ -49,13 +51,23 @@ def build_modules(
 
     diagnosis = SignalCorrelator(event_bus, config, graph_memory)
     learning = BitNetPlasticity(event_bus, config, graph_memory, bitnet_runtime)
+    interface = InterfaceLayer(
+        event_bus,
+        config,
+        graph_memory,
+        bitnet_runtime,
+        clock=SystemClock(),
+        socket_path=config.interface_socket_path or None,
+    )
 
-    # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning
-    # (Architecture.md §10). L4 self-disables if llama-cpp-python / the model is
-    # absent (D-11) — it never blocks startup.
+    # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning -> L9
+    # Interface (Architecture.md §10). L4 self-disables without llama-cpp-python /
+    # the model (D-11); L9's interactive model is likewise optional (D-12) — both
+    # never block startup.
     modules: list[BaseModule] = [sensing]
     if config.activity_enabled:
         modules.append(ActivityCollector(event_bus, config))
     modules.append(diagnosis)
     modules.append(learning)
+    modules.append(interface)
     return modules

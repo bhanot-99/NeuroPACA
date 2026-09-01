@@ -253,7 +253,8 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    assert [m.name for m in modules] == ["sensing", "diagnosis", "learning"]  # L2 -> L3 -> L4
+    # L2 -> L3 -> L4 -> L9 (B5)
+    assert [m.name for m in modules] == ["sensing", "diagnosis", "learning", "interface"]
     assert isinstance(modules[0], XMetricCollector)
     assert [c.name for c in modules[0]._collectors] == ["system"]
 
@@ -267,7 +268,13 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     with_activity = build_modules(
         Config(inference_backend="fake", activity_enabled=True), bus, graph, runtime
     )
-    assert [m.name for m in with_activity] == ["sensing", "activity", "diagnosis", "learning"]
+    assert [m.name for m in with_activity] == [
+        "sensing",
+        "activity",
+        "diagnosis",
+        "learning",
+        "interface",
+    ]
     assert with_activity[0]._emit_idle_from_cpu is False
 
 
@@ -277,6 +284,7 @@ async def test_orchestrator_runs_sensing_via_build_modules(tmp_path) -> None:
         graph_db_path=str(tmp_path / "graph.json"),
         action_log_path=str(tmp_path / "actions.jsonl"),
         graph_save_interval_seconds=3600,
+        interface_socket_path=str(tmp_path / "np.sock"),
     )
     orch = NeuroPACAOrchestrator(config, module_builder=build_modules)
 

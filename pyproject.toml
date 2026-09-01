@@ -12,14 +12,20 @@ authors = [{ name = "Jatin Bhanot" }]
 #      (Architecture.md §3.2, D-5). Approved 2026-08-29.
 # B2 · Sensing — psutil (SystemMetricCollector), watchdog (FileSystemCollector).
 #      Approved 2026-08-29 (D-7).
+# B5 · Interface (L9) — rich for the CLI's terminal renderers (design.md).
+#      Approved 2026-09-01 (user-directed, B5 plan step 4).
 dependencies = [
     "networkx==3.4.2",
     "psutil==7.2.2",
     "watchdog==6.0.0",
+    "rich==13.9.4",
 ]
 
 [project.scripts]
-neuropaca = "neuropaca.daemon:main"
+# B5: `neuropaca` is now the CLI client; the daemon is `neuropacad` (the
+# systemd unit in B9 calls `neuropacad`).
+neuropaca = "neuropaca.interface.cli:main"
+neuropacad = "neuropaca.daemon:main"
 
 [project.optional-dependencies]
 # Tooling for the B0 foundation: ruff + mypy + pre-commit + pytest + CI (phases.md B0).

@@ -45,6 +45,24 @@ class Config:
     # (Signal, Insight) deque + the Jaccard-novelty comparison set.
     model_context_tokens: int = 2048
     adaptation_buffer_size: int = 64
+    # B5 · Interface (L9, A2/B4). max_context_tokens bounds the distilled
+    # retrieval context handed to the interactive model; `_build_context`
+    # truncates the joined node lines to `max_context_tokens * _CHARS_PER_TOKEN`
+    # characters — a cheap proxy that needs no tokenizer and keeps a confused
+    # small model from drowning in facts (problems.md 1.13).
+    max_context_tokens: int = 512
+    # B5 · dual-model routing (D-12). The always-on loop (L4/L6) uses the BitNet
+    # 2B4T model; the interactive `$` / `$?` path uses a larger Qwen2.5-3B-Instruct
+    # Q4 GGUF that can actually write a grounded sentence. Empty path => the
+    # interactive backend lazy-self-disables and `$?` falls back to the extractive
+    # template. Both models are resident concurrently at peak (PRD §9); a single
+    # `_inference_lock` still serialises every call system-wide (rules.md §4).
+    interactive_model_path: str = ""
+    interactive_model_context_tokens: int = 4096
+    # B5 · L9 IPC. Empty => `$XDG_RUNTIME_DIR/neuropaca.sock` (falls back to the
+    # system temp dir). Tests point this at a `tmp_path` so no test binds a
+    # socket outside its sandbox (rules.md §8).
+    interface_socket_path: str = ""
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -109,6 +127,8 @@ class Config:
             "correlation_window_seconds",
             "model_context_tokens",
             "adaptation_buffer_size",
+            "max_context_tokens",
+            "interactive_model_context_tokens",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")

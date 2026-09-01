@@ -1,12 +1,22 @@
 # phases.md — Build Roadmap
 
-**Status:** Draft
-
-Derived from the "Full System Workflow" in `neuropaca-v4.html` and the layer dependency chain in `Architecture.md`.
+**Status:** Draft · Derived from the "Full System Workflow" in `neuropaca-v4.html` and the layer dependency chain in `Architecture.md`.
 
 ---
 
 ## The runtime lifecycle (what the finished system does)
+
+```mermaid
+flowchart LR
+    P0["0 · Init<br/>(L10)"] --> P1["1 · Sensing<br/>(L2)"]
+    P1 --> P2["2 · Diagnosis<br/>(L3)"]
+    P2 --> P3["3 · Learning<br/>(L4, L6) — parallel"]
+    P2 --> P4["4 · Action<br/>(L5, L7)"]
+    P3 --> P4
+    P4 --> P5["5 · Comms<br/>(L9)"]
+    P4 -.->|action result → L4 score update| P3
+    P3 -.->|graph → next retrieval & idle cycle| P2
+```
 
 | Phase | Layer | What happens |
 | --- | --- | --- |
@@ -17,21 +27,62 @@ Derived from the "Full System Workflow" in `neuropaca-v4.html` and the layer dep
 | **4 · Action** | L5, L7 | Pressure accumulates; safe actions fire silently at low threshold, dangerous ones need synchronised spikes or a terminal prompt. Safety gate: sandbox, backup, rollback. |
 | **5 · Comms** | L9 | Filter, notify only when needed, format `$` responses, tray icon, daily report. |
 
-Feedback loop: action result → L4 score update → graph → next retrieval and next idle cycle reflect the outcome.
-Override channels: `$` / `$?` / `$!` (skips L3+L4) / `$$` (full backup + verify).
+- **Feedback loop:** action result → L4 score update → graph → next retrieval and next idle cycle reflect the outcome.
+- **Override channels:** `$` / `$?` / `$!` (skips L3+L4) / `$$` (full backup + verify).
 
 ---
 
 ## Build order
 
-Each step produces a runnable, demonstrable daemon. Build against the dependency chain, not by layer number.
+Each step produces a **runnable, demonstrable daemon**. Build against the dependency chain, not by layer number.
+
+```mermaid
+flowchart TD
+    B0["B0 · Foundation<br/>+ BitNet de-risking spike"] --> B1["B1 · Core Infra<br/>(L1 + minimal L10)"]
+    B1 --> B2["B2 · Sensing<br/>(L2 — system + filesystem)"]
+    B2 --> B25a["B2.5a · Idle<br/>(Wayland ext-idle-notify)"]
+    B25a --> B25b["B2.5b · Active window<br/>(cosmic toplevel + app_map + patterns)"]
+    B2 --> B3["B3 · Diagnosis<br/>(L3 — HighLoad + Idle patterns)"]
+    B25b --> B3
+    B3 --> B4["B4 · Learning<br/>(L4 — extractive pivot, D-11)"]
+    B4 --> B5["B5 · Interface (L9)"]
+    B5 --> B6["B6 · Idle Cognition (L6)"]
+    B6 --> B7["B7 · Drive & Action (L5 + L7)"]
+    B7 --> B8["B8 · Agents & structural plasticity (L8)"]
+    B8 --> B9["B9 · Hardening"]
+    B9 -.->|after dogfooding| D1["D1 · Personal model pruning<br/>DEFERRED (pruning.md)"]
+```
+
+### Status at a glance
+
+| Step | Scope | State |
+| --- | --- | --- |
+| B0 | Foundation + BitNet spike | ✅ done (`dda0fb0`); coherence FAILED → D-11 extractive pivot; RAM 1.39 GB accepted |
+| B1 | Core infra (L1 + minimal L10) | ✅ merged (PR #1); 60-min soak conditional pass (T2) |
+| B2 | Sensing (L2) | ✅ merged (PR #2); 24 h soak accepted on 11 h partial (T3) |
+| B2.5a | Idle (Wayland) | ✅ done; live-verified on cosmic-comp |
+| B2.5b | Active window + `app_map` + focus/distraction patterns | ✅ done (D-10); ⏳ active-window live-read on target box carried |
+| B3 | Diagnosis (L3) | ✅ merged (PR #3); exit signed off |
+| B4 | Learning (L4) | ✅ merged (PR #6); ⏳ full 1 h `soak_test_b4.py` on target box carried |
+| B5 | Interface (L9) | 🟡 built (`b5-interface-l9`) — unix-socket IPC + thin CLI + dual-model routing (D-12); ⏳ target-box: Qwen model swap-in + `$?` grounded-answer eval + interactive RAM measurement |
+| B6–B9 | Idle Cognition → Hardening | ⬜ not started |
+| D1 | Personal model pruning | ⏸ deferred to after B9 |
+
+---
 
 ### B0 · Foundation
 Repo skeleton per `Architecture.md §15`; `pyproject.toml`, `uv` lockfile, `ruff` + `mypy` + `pre-commit`, CI. `core/logging.py`, `core/errors.py`.
-**De-risking spike (highest risk):** benchmark BitNet b1.58 2B4T via llama.cpp on the target machine — RSS after load, tokens/sec, thermal behaviour over 30 min. Then the coherence test (`problems.md` 1.13, `rules.md §4.1`), run as a **controlled ablation over context size** (K = 1 / 3 / 5 / 8 distilled nodes): ~20 synthetic `(signal + K nodes)` fixtures per K, through a GBNF-constrained schema with `cited_nodes` locked to that prompt's aliases, greedy. Report valid-parse rate, citation-accuracy(K) as a curve, and correct-abstain rate on deliberately weak inputs. Set `_build_context()`'s production K at the knee. If citation accuracy can't reach ~80 % at any K → 3B Q4 fallback for `$?`. If it doesn't fit the RAM/latency budget → L4/L6/L9 all need a fallback.
+
+**De-risking spike (highest risk):** benchmark BitNet b1.58 2B4T via llama.cpp on the target machine — RSS after load, tokens/sec, thermal behaviour over 30 min. Then the coherence test (`problems.md` 1.13, `rules.md §4.1`), run as a **controlled ablation over context size** (K = 1 / 3 / 5 / 8 distilled nodes): ~20 synthetic `(signal + K nodes)` fixtures per K, through a GBNF-constrained schema with `cited_nodes` locked to that prompt's aliases, greedy. Report valid-parse rate, citation-accuracy(K) as a curve, and correct-abstain rate on deliberately weak inputs. Set `_build_context()`'s production K at the knee.
+
+| If… | Then… |
+| --- | --- |
+| citation accuracy can't reach ~80 % at any K | 3B Q4 fallback for `$?` |
+| it doesn't fit the RAM/latency budget | L4/L6/L9 all need a fallback |
 
 ### B1 · Core Infrastructure (L1 + minimal L10)
 `Event`/`EventType`, `EventBus` (bounded queue, subscriber isolation → `SYSTEM_ERROR`), `Node`/`Edge`/enums, `GraphMemory` (CRUD, `find_related`, atomic save, `asyncio.Lock`, score recalculation, `consolidate`, `prune`), `Config` + validation, `BaseModule` ABC, `SystemHealth`, `InferenceBackend` protocol + `BitNetRuntime` skeleton + `FakeInferenceBackend`, `NeuroPACAOrchestrator`, `Scheduler`, `daemon.py`.
+
 **Exit:** daemon starts, runs an idle event loop, holds a graph, `SIGTERM`s clean with a flat RSS over a 1 h soak. 10 k-node graph loads < 2 s, `find_related(depth=2)` < 50 ms. Concurrent writers serialise correctly.
 
 ### B2 · Sensing (L2)
@@ -51,23 +102,52 @@ Repo skeleton per `Architecture.md §15`; `pyproject.toml`, `uv` lockfile, `ruff
 
 ### B3 · Diagnosis (L3)
 `Signal` / `SignalDraft`, `BasePattern` (pure, synchronous, edge-triggered), `MetricBaseline` (rolling mean/stddev, confidence-scaling only), `SignalCorrelator` (per-collector `Dict[str, Deque[MetricSnapshot]]`, `_update_graph` via `upsert_node` before publish, publishes `SIGNAL_CORRELATED` + `MEMORY_UPDATED` + `PATTERN_DETECTED`), the **two** patterns `HighLoadPattern` (`cpu > 90` for ≥ 5 min) and `IdlePattern` (`cpu < 5` for ≥ `idle_threshold`), pattern contract suite. `GraphMemory.upsert_node` and `Config.correlation_window_seconds = 1800` land here (D-8). Absolute blueprint thresholds trigger; `MetricBaseline` only scales `confidence`. `FocusSession` / `Distraction` are **not** in B3 — see B2.5.
+
 **Exit:** `HighLoadPattern` and `IdlePattern` each fire against a recorded fixture and stay silent against a negative fixture; a synthetic 5th pattern registers with zero changes to `SignalCorrelator`; **zero inference calls in L3**; the per-collector deques are provably bounded; `_update_graph` never resets an existing node's `relevance_score`.
 
 ### B4 · Learning (L4) *(D-11 — extractive pivot)*
 Real `LlamaCppBackend` (lazy `import llama_cpp`, self-disables without the wheel / model — `[llama]` extra), `BitNetRuntime.load_model_async` (lazy, dedicated executor), `Insight` + `learning/prompts.py` (GBNF: `{cited_node_id: <alias|null>, insight_category: routine|anomaly|distraction}`), `BitNetPlasticity` (subscribe `SIGNAL_CORRELATED`; gate on `confidence < 0.7` / `is_busy` / no-nodes / **Jaccard > 0.8** vs the bounded `(Signal, Insight)` deque; one greedy grammar-constrained call; store as an `INSIGHT` node edged to its cited node; publish `INSIGHT_GENERATED`), `GraphMemory.reinforce_edge` for Hebbian `weight += 0.01` on existing co-occurrence edges (Scheduler keeps `recalculate_importance`).
-> B0 (`dda0fb0`): 2B4T free-text FAILED at every K (grounded_rate 0.00) → the model only classifies + selects, never writes. RAM 1.39 GB accepted (16 GB host).
-**Exit:** ✅ backend loads lazily / self-disables cleanly · ✅ no loop stall > 50 ms across a 10 s inference (`--infer-stress` + `test_l4_executor_isolation.py` — 10 s block + 10k-event L3 storm, max lag ~1.6 ms, real llama.cpp) · ✅ every stored insight `traces_to_evidence()` · ✅ `test_gating_storm.py` — 1 000 signals, >50 % shed via a real mix of confidence/is_busy/Jaccard, buffer clamps at 64 · ✅ `test_hebbian_plasticity.py` — 50-citation `_store_insight`, +0.01 on existing edges only, one lock, ~1.4 ms · ✅ `scripts/soak_test_b4.py` smoke: real model RSS **1477 MiB flat** over 1215 replay cycles, 1 insight (novelty collapses the rest). ⏳ the full 1 h `soak_test_b4.py` on the target box.
 
-### B5 · Interface (L9)
-`Message`/`InterfaceChannel`, `InterfaceLayer` (`on_user_input`, retrieval `_build_context`, `_generate_response`, `send_to_user`), RAM-only history + persistence-absence test, insight priority filter + daily cap + surface-once, unix-socket IPC, thin CLI client (`ask`, `health`), `rich` renderers (see `design.md`), shell hooks `$`/`$?`/`$!`/`$$`.
-**Exit:** `$ what's using my CPU` returns an answer citing real node labels; `conversation_history` provably absent from every file on disk; CLI responds < 100 ms for non-inference commands.
+> B0 (`dda0fb0`): 2B4T free-text FAILED at every K (grounded_rate 0.00) → the model only classifies + selects, never writes. RAM 1.39 GB accepted (16 GB host).
+
+**Exit:**
+
+| ✅/⏳ | Criterion |
+| --- | --- |
+| ✅ | backend loads lazily / self-disables cleanly |
+| ✅ | no loop stall > 50 ms across a 10 s inference (`--infer-stress` + `test_l4_executor_isolation.py` — 10 s block + 10k-event L3 storm, max lag ~1.6 ms, real llama.cpp) |
+| ✅ | every stored insight `traces_to_evidence()` |
+| ✅ | `test_gating_storm.py` — 1 000 signals, >50 % shed via a real mix of confidence/is_busy/Jaccard, buffer clamps at 64 |
+| ✅ | `test_hebbian_plasticity.py` — 50-citation `_store_insight`, +0.01 on existing edges only, one lock, ~1.4 ms |
+| ✅ | `scripts/soak_test_b4.py` smoke: real model RSS **1477 MiB flat** over 1215 replay cycles, 1 insight (novelty collapses the rest) |
+| ⏳ | the full 1 h `soak_test_b4.py` on the target box |
+
+### B5 · Interface (L9) — *built `b5-interface-l9`*
+`Message` + `MessageRole` (B8), `InterfaceLayer` (`on_user_input`, `_build_context`, `_generate_response`, `send_to_user`, `on_insight_generated`), RAM-only history + on-disk-absence test, insight priority filter + daily cap (local-midnight reset via `Clock.now()`) + surface-once (`Node.surfaced_at`, graph schema v2), **unix-socket IPC** (`asyncio.start_unix_server`, JSONL, `$XDG_RUNTIME_DIR/neuropaca.sock`), thin **CLI** (`neuropaca ask|diagnose|health|insights`; daemon renamed `neuropacad`), `rich` renderers, shell prefixes `$`/`$?` (routed) · `$!`/`$$` (reserved → B7).
+
+**A-blockers resolved:** A1 `GraphMemory.search_by_label` (O(N) substring + hub-slug, zero embeddings). A2/A3 `$?` GBNF answer schema + `parse_answer` grounding gate + `FakeInferenceBackend` schema-aware fake. A4 `rich` dep approved. A5 `$!`/`$$` reserved. A6 health bridge = `SYSTEM_HEALTH_REQUEST`/`SYSTEM_HEALTH_REPORT` (L9 never imports L10). B4 `max_context_tokens*4` char truncation. **D-12** dual-model routing (BitNet loop + Qwen2.5-3B Q4 interactive, one `_inference_lock`, ~3.4 GB peak — PRD §9).
+
+**Exit:**
+
+| ✅/⏳ | Criterion |
+| --- | --- |
+| ✅ | `$ what's using my CPU` returns an answer citing real node labels (`test_socket_query_answers_dollar_with_a_grounded_node_label`, `test_cli_end_to_end_against_a_live_socket`) |
+| ✅ | `conversation_history` provably absent from every file on disk (`test_conversation_history_is_ram_only_and_never_on_disk` — scans `tmp_path.rglob`) |
+| ✅ | every IPC log line `redact()`-ed (`test_ipc_payloads_are_redacted_in_logs`) |
+| ✅ | `$!` / `$$` refused until B7; health bridge round-trips over the bus; surface-once survives a restart |
+| ✅ | CLI < 100 ms for non-inference commands — **`scripts/validate_b5_latency.py` on the target box: 0.72 ms max over 100 `health` round-trips** |
+| ⏳ | real Qwen2.5-3B Q4 on the target box — `scripts/validate_b5_real_model.py` asserts GBNF parse + grounding + concurrent RSS < 3.5 GB. Blocked on the GGUF download; machinery validated with a BitNet stand-in (~2.84 GB concurrent for 2× 2B4T, ~3.4 GB estimated for BitNet+Qwen) |
+
+**Validation-driven fixes:** `$?` grammar `ws ::= " "?` (a weak model looped on whitespace and never closed the JSON); `gc.collect()` before the interactive model load (thin headroom under 3.5 GB).
 
 ### B6 · Idle Cognition (L6)
 `DefaultModeNetwork` — cancellable `idle_task`, instant cancel on activity, `consolidate_memory` / `link_orphan_nodes` / `prune_stale_nodes` / `generate_proactive_insights`, 48 h TTL, `save_to_disk`, one lock-cycle per merge.
+
 **Exit:** returning to the keyboard cancels the cycle < 1 s with no partial corruption; a cycle never exceeds its wall-clock and inference budget; `consolidate()` shrinks a duplicate-heavy fixture.
 
 ### B7 · Drive & Action (L5 + L7)
 `PressureEntry`, `PressureAccumulator` (two independent sources, `decay()` on a timer, low/high thresholds, `_publish_if_over_threshold`), `$ pressure` view. `BaseAction`, safety gate (sandbox, backup, rollback), JSONL audit, `NotificationAction`/`MemoryWriteAction`/`FileWriteAction`/`ApiCallAction` (disabled by default)/`RunCommandAction` (terminal confirmation), quarantine directory.
+
 **Exit:** a single signal never crosses the high threshold; pressure decays to < 1 % within 10 min of the last contribution; dangerous actions cannot execute without a recorded confirmation; audit log complete for every attempt; a review period in dry-run with zero false positives before any tier goes live.
 
 ### B8 · Agents & structural plasticity (L8)

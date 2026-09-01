@@ -6,13 +6,18 @@ Invariants (rules.md §0, §4):
   single-worker executor so the event loop never freezes
 - the backend is injected (rules.md §4) — this class never imports a concrete one
 
-B1 ships the skeleton: lock + executor + delegation are real; the real llama.cpp
-backend lands in B4.
+B5 (D-12) adds a **second, optional backend** for the interactive `$` / `$?`
+path: a larger Qwen2.5-3B Q4 model that can write a grounded sentence where the
+2B4T loop model cannot (`problems.md` 1.13). It is lazy-loaded on the first
+interactive request, resident concurrently with the loop model at peak
+(PRD §9), and — crucially — still serialised by the *same* `_inference_lock`:
+one inference at a time system-wide, whichever model.
 """
 
 from __future__ import annotations
 
 import asyncio
+import gc
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar
@@ -29,17 +34,26 @@ class BitNetRuntime:
 
     _instance: ClassVar[BitNetRuntime | None] = None
 
-    def __init__(self, backend: InferenceBackend | None = None) -> None:
+    def __init__(
+        self,
+        backend: InferenceBackend | None = None,
+        interactive_backend: InferenceBackend | None = None,
+    ) -> None:
         self._backend: InferenceBackend = backend or FakeInferenceBackend()
+        self._interactive_backend: InferenceBackend | None = interactive_backend
         self._inference_lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bitnet")
         self._busy = False
 
     # ------------------------------------------------------------------ singleton
     @classmethod
-    def get_instance(cls, backend: InferenceBackend | None = None) -> BitNetRuntime:
+    def get_instance(
+        cls,
+        backend: InferenceBackend | None = None,
+        interactive_backend: InferenceBackend | None = None,
+    ) -> BitNetRuntime:
         if cls._instance is None:
-            cls._instance = cls(backend)
+            cls._instance = cls(backend, interactive_backend)
         return cls._instance
 
     @classmethod
@@ -64,6 +78,21 @@ class BitNetRuntime:
         (no llama-cpp-python, missing model) — L4 gating stops trying (D-11)."""
         return getattr(self._backend, "unavailable_reason", None) is not None
 
+    # -- interactive (L9, D-12) ------------------------------------------------
+    @property
+    def interactive_configured(self) -> bool:
+        """An interactive backend was injected (a model path is set / fake)."""
+        return self._interactive_backend is not None
+
+    @property
+    def interactive_loaded(self) -> bool:
+        return self._interactive_backend is not None and self._interactive_backend.is_loaded
+
+    @property
+    def interactive_unavailable(self) -> bool:
+        """A load was attempted and failed — L9 stops trying and uses templates."""
+        return getattr(self._interactive_backend, "unavailable_reason", None) is not None
+
     # ------------------------------------------------------------------ lifecycle
     def load_model(self) -> None:
         """BLOCKING — startup / shutdown / tests only. Coroutines call
@@ -81,27 +110,66 @@ class BitNetRuntime:
             await loop.run_in_executor(self._executor, self._backend.load)
         return self._backend.is_loaded
 
+    async def load_interactive_model_async(self) -> bool:
+        """Lazy-load the interactive model on the first `$` / `$?` (B5, D-12).
+        Same executor + `_inference_lock` as the loop model — the two never load
+        or infer concurrently. Returns False (never raises) when no interactive
+        backend is configured or it self-disables."""
+        be = self._interactive_backend
+        if be is None:
+            return False
+        if be.is_loaded:
+            return True
+        loop = asyncio.get_running_loop()
+        async with self._inference_lock:
+            # Reclaim transient garbage before the ~2 GB Qwen allocation — the
+            # concurrent footprint (~3.4 GB, PRD §9) leaves little headroom under
+            # the B5 3.5 GB budget. Cheap: this path runs once per process.
+            gc.collect()
+            await loop.run_in_executor(self._executor, be.load)
+        return be.is_loaded
+
     def unload_model(self) -> None:
         self._backend.unload()
+        if self._interactive_backend is not None:
+            self._interactive_backend.unload()
 
     # ------------------------------------------------------------------ inference
     def infer(
-        self, prompt: str, max_tokens: int, temperature: float = 0.0, grammar: str | None = None
+        self,
+        prompt: str,
+        max_tokens: int,
+        temperature: float = 0.0,
+        grammar: str | None = None,
+        *,
+        interactive: bool = False,
     ) -> str:
         """BLOCKING. Never call this from a coroutine — use `infer_async` (rules.md §0.3)."""
-        return self._backend.infer(prompt, max_tokens, temperature, grammar)
+        return self._select(interactive).infer(prompt, max_tokens, temperature, grammar)
 
     async def infer_async(
-        self, prompt: str, max_tokens: int, temperature: float = 0.0, grammar: str | None = None
+        self,
+        prompt: str,
+        max_tokens: int,
+        temperature: float = 0.0,
+        grammar: str | None = None,
+        *,
+        interactive: bool = False,
     ) -> str:
+        be = self._select(interactive)
         loop = asyncio.get_running_loop()
         async with self._inference_lock:
             self._busy = True
             try:
-                call = partial(self._backend.infer, prompt, max_tokens, temperature, grammar)
+                call = partial(be.infer, prompt, max_tokens, temperature, grammar)
                 return str(await loop.run_in_executor(self._executor, call))
             finally:
                 self._busy = False
+
+    def _select(self, interactive: bool) -> InferenceBackend:
+        if interactive and self._interactive_backend is not None:
+            return self._interactive_backend
+        return self._backend
 
     # ------------------------------------------------------------------ context
     def build_context_from_nodes(self, nodes: list[Node]) -> str:
@@ -113,4 +181,7 @@ class BitNetRuntime:
         )
 
     def get_ram_usage_mb(self) -> float:
-        return self._backend.get_ram_usage_mb()
+        total = self._backend.get_ram_usage_mb()
+        if self._interactive_backend is not None:
+            total += self._interactive_backend.get_ram_usage_mb()
+        return total

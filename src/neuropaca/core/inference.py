@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -31,6 +32,29 @@ _log = logging.getLogger(__name__)
 # turns it into `None` (discard), so a missing backend degrades silently to
 # "L4 generates nothing" rather than crashing (D-11).
 _GRACEFUL_ABSTAIN = '{"cited_node_id": null, "insight_category": "routine"}'
+# The `$?` schema's abstain form — `parse_answer` -> None -> L9 falls back to the
+# extractive template (B5, A2).
+_GRACEFUL_ANSWER_ABSTAIN = '{"insight": null, "cited_nodes": [], "confidence": 0.0}'
+
+_ALIAS_ENUM_RE = re.compile(r'"\\?"(n[1-9][0-9]*)\\?"')
+_PROMPT_FACT_RE = re.compile(r"\[(n[1-9][0-9]*)\]\s+(.+?)\s+·")
+
+
+def _fake_answer(prompt: str, grammar: str) -> str:
+    """Deterministic `$?` answer for `FakeInferenceBackend` (B5, A3). Reads the
+    first alias the grammar allows and that alias's label out of the prompt's
+    facts block, then returns a sentence that *names that label* — so the
+    real `parse_answer` grounding gate passes with test-supplied nodes."""
+    aliases = _ALIAS_ENUM_RE.findall(grammar)
+    labels = dict(_PROMPT_FACT_RE.findall(prompt))
+    for alias in aliases:
+        if alias in labels:
+            label = labels[alias].strip()
+            return (
+                f'{{"insight": "{label} is the most likely cause.", '
+                f'"cited_nodes": ["{alias}"], "confidence": 0.9}}'
+            )
+    return _GRACEFUL_ANSWER_ABSTAIN
 
 
 @runtime_checkable
@@ -83,12 +107,12 @@ class FakeInferenceBackend:
     ) -> str:
         self.calls.append((prompt, max_tokens, temperature, grammar))
         if grammar is not None:
-            # Deterministic, and shaped for whichever grammar is in play: the
-            # D-11 extractive insight schema cites the first alias (`n1` is
-            # always present) and picks a category; anything else abstains.
-            if "cited_node_id" in grammar:
+            # Deterministic, and shaped for whichever grammar is in play.
+            if "cited_node_id" in grammar:  # D-11 extractive insight schema (L4)
                 return '{"cited_node_id": "n1", "insight_category": "anomaly"}'
-            return '{"cited_node_id": null, "insight_category": "routine"}'
+            if "cited_nodes" in grammar:  # $? answer schema (L9, B5)
+                return _fake_answer(prompt, grammar)
+            return _GRACEFUL_ABSTAIN
         digest = hashlib.sha256(f"{prompt}|{max_tokens}|{temperature}".encode()).hexdigest()
         return f"fake-response:{digest[:16]}"
 
@@ -204,3 +228,19 @@ def create_backend(config: Config) -> InferenceBackend:
             n_ctx=config.model_context_tokens,
         )
     raise InferenceError(f"unknown inference_backend: {config.inference_backend!r}")
+
+
+def create_interactive_backend(config: Config) -> InferenceBackend | None:
+    """The second, larger model for the L9 `$` / `$?` path (B5, D-12). Returns
+    `None` when no interactive model is configured — L9 then answers every
+    interactive query from the extractive template. `"fake"` gets its own
+    `FakeInferenceBackend` so dual-model *routing* is testable without a model."""
+    if config.inference_backend == "fake":
+        return FakeInferenceBackend()
+    if config.inference_backend == "llama" and config.interactive_model_path:
+        return LlamaCppBackend(
+            config.interactive_model_path,
+            n_threads=config.n_threads,
+            n_ctx=config.interactive_model_context_tokens,
+        )
+    return None

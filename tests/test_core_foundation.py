@@ -15,6 +15,7 @@ from neuropaca.core.config import Config
 from neuropaca.core.enums import (
     EventType,
     InterfaceChannel,
+    MessageRole,
     NodeType,
     RelationType,
     SignalType,
@@ -27,11 +28,12 @@ from neuropaca.core.models import Edge, Event, Node, system_error_event
 
 
 def test_enum_members_match_the_blueprint() -> None:
-    assert len(EventType) == 14  # +APP_SWITCH (B2.5b)
+    assert len(EventType) == 16  # +APP_SWITCH (B2.5b) +SYSTEM_HEALTH_{REQUEST,REPORT} (B5)
     assert len(NodeType) == 10
     assert len(RelationType) == 8
     assert len(SignalType) == 7
     assert len(InterfaceChannel) == 3
+    assert len(MessageRole) == 3  # B5
 
 
 def test_strenum_member_is_its_wire_string() -> None:
@@ -100,6 +102,11 @@ def test_llama_backend_requires_existing_model_path() -> None:
         ({"inference_backend": "fake", "pressure_threshold": -1.0}, "pressure_threshold"),
         ({"inference_backend": "fake", "max_concurrent_agents": -1}, "max_concurrent_agents"),
         ({"inference_backend": "fake", "poll_intervals": {"system": 0.0}}, "poll_intervals"),
+        ({"inference_backend": "fake", "max_context_tokens": 0}, "max_context_tokens"),
+        (
+            {"inference_backend": "fake", "interactive_model_context_tokens": -1},
+            "interactive_model_context_tokens",
+        ),
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs: dict[str, object], needle: str) -> None:
