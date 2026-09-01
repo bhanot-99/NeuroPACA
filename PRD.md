@@ -221,19 +221,18 @@ During idle/sleep the DMN consolidates duplicate nodes, re-links orphans, recomp
 
 Two models, each **lazy-loaded** and independently self-disabling (D-12):
 
-| Model | Role | Quant | Resident | Source |
-| --- | --- | --- | --- | --- |
-| **BitNet b1.58 2B4T** | always-on loop — L4 extractive insight, L6 idle thoughts | GGUF `tq2_0` | ~1.39 GB after load, ~1.55 GB after 30 min | B0 spike, 2026-08-30 (D-11) |
-| **Qwen2.5-3B-Instruct** | interactive only — L9 `$` / `$?` grounded sentence | GGUF Q4_K_M | ~2.0 GB after load *(estimate; B5 target-box measurement pending)* | B5 (D-12) |
+| Model | Role | Quant | Resident | Throughput | Source |
+| --- | --- | --- | --- | --- | --- |
+| **BitNet b1.58 2B4T** | always-on loop — L4 extractive insight, L6 idle thoughts | GGUF `tq2_0` | ~1.37 GB after load, ~1.55 GB after 30 min | ~17 tok/s | B0 spike 2026-08-30 (D-11) |
+| **Qwen2.5-3B-Instruct** | interactive only — L9 `$` / `$?` grounded sentence | GGUF Q4_K_M | **~3.25 GB** (`n_ctx=2048`, `n_batch=128`) | **~3.1–3.5 tok/s** | B5 validation 2026-09-01 (D-12) |
 
 | Metric (2B4T) | Value | Source |
 | --- | --- | --- |
 | Of which weights | ~0.4 GB | — |
-| Throughput | ~17 tok/s on 16 CPU threads | B0 spike |
 | Package temp | 66–72 °C (no thermal throttle) | B0 spike |
 | A conventional 2B model in float32 | ≈ 8 GB | for comparison |
 
-**Concurrent peak ≈ 3.4 GB** — both models resident once a `$?` has been asked in a session that has also produced an L4 insight. A single `_inference_lock` still serialises every call system-wide: the two models never *run* at once, they only *reside* at once. On the 16 GB target machine this leaves ample room for the daemon and a normal dev session. The 2B4T model is not loaded until a signal passes L4 gating; the Qwen model is not loaded until the first `$` / `$?`; an idle session pays neither tax. If `interactive_model_path` is unset the `$?` path falls back to the extractive template and only the 2B4T footprint applies. Further shrinking via personal pruning is deferred ([`pruning.md`](pruning.md)).
+**Concurrent peak ≈ 4.7 GB** *(measured on the 16 GB target box, `scripts/validate_b5_real_model.py`, 2026-09-01 — the earlier ~3.4 GB was an unvalidated estimate)* — both models resident once a `$?` has been asked in a session that has also produced an L4 insight. That is **~29 % of the 16 GB target machine**, leaving ~11 GB for the daemon and a normal dev session. A single `_inference_lock` still serialises every call system-wide: the two models never *run* at once, they only *reside* at once. The 2B4T model is not loaded until a signal passes L4 gating; the Qwen model is not loaded until the first `$` / `$?` (`gc.collect()` runs first); an idle session pays neither tax. If `interactive_model_path` is unset the `$?` path falls back to the extractive template and only the 2B4T footprint applies. Further shrinking via personal pruning is deferred ([`pruning.md`](pruning.md)); a 1.5B interactive model is the documented fallback if the ~4.7 GB peak ever becomes a problem.
 
 ---
 

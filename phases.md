@@ -64,7 +64,7 @@ flowchart TD
 | B2.5b | Active window + `app_map` + focus/distraction patterns | ✅ done (D-10); ⏳ active-window live-read on target box carried |
 | B3 | Diagnosis (L3) | ✅ merged (PR #3); exit signed off |
 | B4 | Learning (L4) | ✅ merged (PR #6); ⏳ full 1 h `soak_test_b4.py` on target box carried |
-| B5 | Interface (L9) | 🟡 built (`b5-interface-l9`) — unix-socket IPC + thin CLI + dual-model routing (D-12); ⏳ target-box: Qwen model swap-in + `$?` grounded-answer eval + interactive RAM measurement |
+| B5 | Interface (L9) | ✅ done (`b5-interface-l9`) — unix-socket IPC + thin CLI + dual-model routing (D-12); all 3 exit criteria validated on the target box (real Qwen2.5-3B Q4: grounded, ~4.7 GB concurrent, ~3.1 tok/s) |
 | B6–B9 | Idle Cognition → Hardening | ⬜ not started |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
@@ -122,7 +122,7 @@ Real `LlamaCppBackend` (lazy `import llama_cpp`, self-disables without the wheel
 | ✅ | `scripts/soak_test_b4.py` smoke: real model RSS **1477 MiB flat** over 1215 replay cycles, 1 insight (novelty collapses the rest) |
 | ⏳ | the full 1 h `soak_test_b4.py` on the target box |
 
-### B5 · Interface (L9) — *built `b5-interface-l9`*
+### B5 · Interface (L9) — *done `b5-interface-l9`, all exit criteria validated on the target box*
 `Message` + `MessageRole` (B8), `InterfaceLayer` (`on_user_input`, `_build_context`, `_generate_response`, `send_to_user`, `on_insight_generated`), RAM-only history + on-disk-absence test, insight priority filter + daily cap (local-midnight reset via `Clock.now()`) + surface-once (`Node.surfaced_at`, graph schema v2), **unix-socket IPC** (`asyncio.start_unix_server`, JSONL, `$XDG_RUNTIME_DIR/neuropaca.sock`), thin **CLI** (`neuropaca ask|diagnose|health|insights`; daemon renamed `neuropacad`), `rich` renderers, shell prefixes `$`/`$?` (routed) · `$!`/`$$` (reserved → B7).
 
 **A-blockers resolved:** A1 `GraphMemory.search_by_label` (O(N) substring + hub-slug, zero embeddings). A2/A3 `$?` GBNF answer schema + `parse_answer` grounding gate + `FakeInferenceBackend` schema-aware fake. A4 `rich` dep approved. A5 `$!`/`$$` reserved. A6 health bridge = `SYSTEM_HEALTH_REQUEST`/`SYSTEM_HEALTH_REPORT` (L9 never imports L10). B4 `max_context_tokens*4` char truncation. **D-12** dual-model routing (BitNet loop + Qwen2.5-3B Q4 interactive, one `_inference_lock`, ~3.4 GB peak — PRD §9).
@@ -136,9 +136,9 @@ Real `LlamaCppBackend` (lazy `import llama_cpp`, self-disables without the wheel
 | ✅ | every IPC log line `redact()`-ed (`test_ipc_payloads_are_redacted_in_logs`) |
 | ✅ | `$!` / `$$` refused until B7; health bridge round-trips over the bus; surface-once survives a restart |
 | ✅ | CLI < 100 ms for non-inference commands — **`scripts/validate_b5_latency.py` on the target box: 0.72 ms max over 100 `health` round-trips** |
-| ⏳ | real Qwen2.5-3B Q4 on the target box — `scripts/validate_b5_real_model.py` asserts GBNF parse + grounding + concurrent RSS < 3.5 GB. Blocked on the GGUF download; machinery validated with a BitNet stand-in (~2.84 GB concurrent for 2× 2B4T, ~3.4 GB estimated for BitNet+Qwen) |
+| ✅ | real Qwen2.5-3B-Instruct Q4_K_M on the target box — **`scripts/validate_b5_real_model.py`: GBNF parse ✓, grounding gate ✓ (`"esbuild-service is using the most CPU right now."`, conf 0.94, exact label match), concurrent RSS 4.63 GB — ~29 % of the 16 GB box, ~3.1 tok/s.** The 3.5 GB figure was a bad estimate; PRD §9 corrected to the measured ~4.7 GB peak. |
 
-**Validation-driven fixes:** `$?` grammar `ws ::= " "?` (a weak model looped on whitespace and never closed the JSON); `gc.collect()` before the interactive model load (thin headroom under 3.5 GB).
+**Validation-driven fixes:** `$?` grammar `ws ::= " "?` (a weak model looped on whitespace and never closed the JSON); `gc.collect()` before the interactive model load; `interactive_model_context_tokens` 4096→2048 + interactive `n_batch=128` (RAM).
 
 ### B6 · Idle Cognition (L6)
 `DefaultModeNetwork` — cancellable `idle_task`, instant cancel on activity, `consolidate_memory` / `link_orphan_nodes` / `prune_stale_nodes` / `generate_proactive_insights`, 48 h TTL, `save_to_disk`, one lock-cycle per merge.

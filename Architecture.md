@@ -192,9 +192,10 @@ score = normalize(
 **Dual model (B5, D-12).** A second, optional backend serves the interactive
 `$` / `$?` path — a Qwen2.5-3B Q4 GGUF that can write a grounded sentence where
 2B4T cannot (`problems.md` 1.13). `infer[_async](interactive=True)` routes to it;
-it lazy-loads on the first such call and is resident concurrently with the loop
-model (~3.4 GB peak, PRD §9). **The single `_inference_lock` still serialises
-every call system-wide** — the two models never run at once. Absent
+it lazy-loads on the first such call (a `gc.collect()` runs first) and is
+resident concurrently with the loop model (**~4.7 GB peak measured on the 16 GB
+box**, PRD §9). **The single `_inference_lock` still serialises every call
+system-wide** — the two models never run at once. Absent
 `interactive_model_path`, `$?` falls back to L9's extractive template.
 
 - Owns `model` + `tokenizer` **in-process via llama.cpp** — not an HTTP call to Ollama. See §11.
@@ -223,7 +224,7 @@ model_context_tokens        : int = 2048       (B4 — llama.cpp n_ctx)
 adaptation_buffer_size      : int = 64         (B4 — L4 (Signal, Insight) deque + novelty set)
 max_context_tokens          : int = 512        (B5 — L9 retrieval context, char-truncated at tokens*4)
 interactive_model_path      : str = ""         (B5 D-12 — Qwen GGUF for $ / $?; empty => template fallback)
-interactive_model_context_tokens : int = 4096  (B5 — interactive model n_ctx)
+interactive_model_context_tokens : int = 2048  (B5 — interactive model n_ctx; ~300-token prompt, keep it small for RAM)
 interface_socket_path       : str = ""         (B5 — empty => $XDG_RUNTIME_DIR/neuropaca.sock)
 ```
 

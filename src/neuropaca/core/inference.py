@@ -136,10 +136,15 @@ class LlamaCppBackend:
     caller (`BitNetRuntime`), never run on the event loop.
     """
 
-    def __init__(self, model_path: str, *, n_threads: int, n_ctx: int) -> None:
+    def __init__(self, model_path: str, *, n_threads: int, n_ctx: int, n_batch: int = 512) -> None:
         self._model_path = model_path
         self._n_threads = n_threads
         self._n_ctx = n_ctx
+        # The interactive model does single-shot completions of <= 96 tokens over
+        # a ~300-token prompt — it never needs the stock 512 prefill batch, and a
+        # small n_batch shrinks the per-token logits scratch (Qwen's 152k vocab
+        # makes that buffer ~300 MB at n_batch=512). B5 memory finding.
+        self._n_batch = n_batch
         self._llama: Any = None
         self._grammar_cls: Any = None
         self.unavailable_reason: str | None = None
@@ -167,6 +172,7 @@ class LlamaCppBackend:
             self._llama = Llama(
                 model_path=self._model_path,
                 n_ctx=self._n_ctx,
+                n_batch=self._n_batch,
                 n_threads=self._n_threads,
                 verbose=False,
             )
@@ -242,5 +248,6 @@ def create_interactive_backend(config: Config) -> InferenceBackend | None:
             config.interactive_model_path,
             n_threads=config.n_threads,
             n_ctx=config.interactive_model_context_tokens,
+            n_batch=128,  # B5 — single-shot $? completions; keeps the logits scratch small
         )
     return None

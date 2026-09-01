@@ -58,7 +58,10 @@ class Config:
     # template. Both models are resident concurrently at peak (PRD §9); a single
     # `_inference_lock` still serialises every call system-wide (rules.md §4).
     interactive_model_path: str = ""
-    interactive_model_context_tokens: int = 4096
+    # 2048 is already generous: the `$?` prompt (few-shot + <=5 nodes + question +
+    # a live-snapshot line) is ~300 tokens, the answer <= 96. A larger n_ctx only
+    # inflates the interactive model's resident footprint (B5 memory finding).
+    interactive_model_context_tokens: int = 2048
     # B5 · L9 IPC. Empty => `$XDG_RUNTIME_DIR/neuropaca.sock` (falls back to the
     # system temp dir). Tests point this at a `tmp_path` so no test binds a
     # socket outside its sandbox (rules.md §8).
