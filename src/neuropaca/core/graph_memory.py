@@ -38,7 +38,9 @@ from neuropaca.core.enums import NodeType, RelationType
 from neuropaca.core.errors import GraphMemoryError
 from neuropaca.core.models import Edge, Node
 
-_SCHEMA_VERSION = 1
+# v2 (B5): node records gain an optional `surfaced_at`. Forward-compatible — a v1
+# file loads unchanged (the key is simply absent -> None).
+_SCHEMA_VERSION = 2
 
 DOMAIN_SLUGS: tuple[str, ...] = (
     "engineering",
@@ -64,6 +66,12 @@ def _as_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value))
+
+
+def _as_dt_opt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    return _as_dt(value)
 
 
 class GraphMemory:
@@ -234,6 +242,43 @@ class GraphMemory:
         visited.discard(node_id)
         return [self._node_from_attrs(n, self._graph.nodes[n]) for n in visited if n in self._graph]
 
+    def search_by_label(self, query: str, limit: int = 10) -> list[Node]:
+        """L9 retrieval entry point (B5, A1). A deliberately dumb lexical match —
+        **zero embeddings, zero inference** (rules.md §4, problems.md 1.6 spirit):
+
+        - case-insensitive substring of `query` (whole, then each word ≥ 3 chars)
+          against every node's `label` — a strict O(N) scan;
+        - plus an *exact* word match against a routing hub's slug (``engineering``
+          -> ``domain:engineering``, ``you`` -> ``YOU``) so a domain question
+          seeds from the hub even when nothing else matches.
+
+        Results are ranked by `relevance_score` (desc), then label, and capped at
+        `limit`. `_build_context` walks `find_related()` out from these seeds."""
+        q = query.strip().lower()
+        if not q:
+            return []
+        words = {w for w in q.replace("/", " ").split() if len(w) >= 3}
+        needles = {q, *words}
+
+        hits: dict[str, Node] = {}
+        for word in words:
+            if word in DOMAIN_SLUGS and f"domain:{word}" in self._graph:
+                hits["domain:" + word] = self._node_from_attrs(
+                    "domain:" + word, self._graph.nodes["domain:" + word]
+                )
+        if "you" in words and "YOU" in self._graph:
+            hits["YOU"] = self._node_from_attrs("YOU", self._graph.nodes["YOU"])
+
+        for node_id, data in self._graph.nodes(data=True):
+            if node_id in hits:
+                continue
+            label = str(data.get("label", "")).lower()
+            if any(n in label for n in needles):
+                hits[node_id] = self._node_from_attrs(node_id, data)
+
+        ranked = sorted(hits.values(), key=lambda n: (-n.relevance_score, n.label))
+        return ranked[:limit]
+
     # --------------------------------------------------------------- persistence
     async def load(self) -> None:
         async with self._lock:
@@ -306,6 +351,7 @@ class GraphMemory:
 
     @staticmethod
     def _node_record(node_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        surfaced = _as_dt_opt(data.get("surfaced_at"))
         return {
             "id": node_id,
             "node_type": str(data["node_type"]),
@@ -315,6 +361,7 @@ class GraphMemory:
             "access_count": int(data["access_count"]),
             "relevance_score": float(data["relevance_score"]),
             "priority": int(data["priority"]),
+            "surfaced_at": surfaced.isoformat() if surfaced is not None else None,
         }
 
     @staticmethod
@@ -364,6 +411,7 @@ class GraphMemory:
             access_count=int(attributes.get("access_count", 0)),
             relevance_score=float(attributes.get("relevance_score", 0.0)),
             priority=int(attributes.get("priority", 0)),
+            surfaced_at=_as_dt_opt(attributes.get("surfaced_at")),
         )
         self._graph.add_node(node_id, **self._node_to_attrs(node))
         self._dirty = True
@@ -401,7 +449,7 @@ class GraphMemory:
         data = self._graph.nodes[node_id]
         for key, value in attributes.items():
             if key not in self._UPSERT_PROTECTED:
-                data[key] = value
+                data[key] = _as_dt_opt(value) if key == "surfaced_at" else value
         data["access_count"] = int(data.get("access_count", 0)) + 1
         data["last_accessed"] = _utcnow()
         self._dirty = True
@@ -498,6 +546,7 @@ class GraphMemory:
                 access_count=int(raw["access_count"]),
                 relevance_score=float(raw["relevance_score"]),
                 priority=int(raw["priority"]),
+                surfaced_at=_as_dt_opt(raw.get("surfaced_at")),  # absent in a v1 file
             )
             graph.add_node(node.id, **self._node_to_attrs(node))
         for raw in payload.get("edges", []):
@@ -521,6 +570,7 @@ class GraphMemory:
             "access_count": node.access_count,
             "relevance_score": node.relevance_score,
             "priority": node.priority,
+            "surfaced_at": node.surfaced_at,
         }
 
     @staticmethod
@@ -534,6 +584,7 @@ class GraphMemory:
             access_count=int(data["access_count"]),
             relevance_score=float(data["relevance_score"]),
             priority=int(data["priority"]),
+            surfaced_at=_as_dt_opt(data.get("surfaced_at")),
         )
 
     @staticmethod

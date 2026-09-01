@@ -2,16 +2,57 @@
 
 **Last updated:** 2026-08-29
 
-This file holds two things:
+This file holds three things:
 
-1. **Design risks** — the hard problems we already know about, before writing any code. Each one is written in plain language, with why it matters and a concrete way to beat it.
-2. **Testing log** — problems found later, during build-step testing. Empty for now.
+| Part | Content |
+| --- | --- |
+| **1 · Design risks** | The hard problems we already know about, before writing code. Each in plain language, with why it matters and a concrete way to beat it. |
+| **2 · Research framing** | Turning the build into a publishable project — the claim, the eval kit, what to add to the repo. |
+| **3 · Testing log** | Problems found later, during build-step testing. |
 
-**Legend:** 🔴 open · 🟡 in progress · ✅ resolved · ⏸ deferred
+**Legend:** 🔴 open · 🟡 in progress · 🟢 / ✅ resolved · 🟠 confirmed real · ⏸ deferred
 
 ---
 
-## Part 1 — Design risks
+## Part 1 — Design risks at a glance
+
+| # | Risk (short) | Status | Applies to |
+| --- | --- | --- | --- |
+| 1.1 | The model we assumed (7B BitNet) doesn't exist at that size | ✅ resolved — B0 measured 2026-08-30 | core |
+| 1.2 | The "graph node → model part" bridge is the weakest piece | ⏸ deferred | pruning only |
+| 1.3 | A tiny model has almost no room to cut | ⏸ deferred | pruning only |
+| 1.4 | Calling it a "Lottery Ticket" is a stretch | ⏸ deferred | pruning only |
+| 1.5 | We never say what the weekly training trains on | ✅ resolved by removal 2026-08-29 | core |
+| 1.6 | How do we sort activity into 10 topics? | 🟢 resolved (D-10, B2.5b) | core |
+| 1.7 | Reading the active window is OS-specific and hard | 🟢 resolved (D-9 idle, D-10 window) | core |
+| 1.8 | One user on one machine is not enough to prove anything | 🔴 open | core / research |
+| 1.9 | The Action and Agents layers are guesses | 🟡 in progress | core |
+| 1.10 | Concurrency traps | 🟡 in progress | core |
+| 1.11 | Too big for one person / takes too long | 🟡 in progress | core |
+| 1.12 | Privacy makes it hard to prove it works | 🟡 in progress | core / research |
+| 1.13 | The small model loses the thread on graph context | 🟠 confirmed (B0) — L4+L9 mitigated (D-11/D-12), L6 open | core |
+
+```mermaid
+flowchart LR
+    subgraph core["Core build risks (B0–B9)"]
+        R11["1.1 model size ✅"]
+        R16["1.6 domain classification 🟢"]
+        R17["1.7 active window 🟢"]
+        R113["1.13 model coherence 🟠 → L4 mitigated"]
+        R19["1.9 L7/L8 reconstructed 🟡"]
+        R110["1.10 concurrency 🟡"]
+        R18["1.8 single-user evidence 🔴"]
+    end
+    subgraph deferred["Pruning-only risks (phase D1)"]
+        R12["1.2 node→head bridge ⏸"]
+        R13["1.3 no room to cut ⏸"]
+        R14["1.4 Lottery Ticket overclaim ⏸"]
+    end
+    R113 --> R18
+    R18 --> RESEARCH["Part 2 — eval kit:<br/>synthetic traces · question set ·<br/>baselines · ablations"]
+```
+
+---
 
 ### 1.1 The model we assume doesn't exist at that size · ✅ resolved — B0 measured 2026-08-30
 
@@ -23,14 +64,13 @@ This file holds two things:
 
 **How to counter it.**
 - ✅ Use **BitNet b1.58 2B4T** everywhere. It's real, it's small, it runs on CPU. Applied to `PRD.md` and `Architecture.md` on 2026-08-29 (~1.1 GB resident, ~0.4 GB weights).
-- Still to do: in the first spike (B0), actually download it, run it via llama.cpp, and measure — memory used, speed (tokens/sec), and whether the answers make sense. If it's too slow or too dumb, we learn that in week one.
+- ✅ In the first spike (B0), actually download it, run it via llama.cpp, and measure — memory used, speed (tokens/sec), and whether the answers make sense.
 
 ---
 
 ### 1.2 The link between "graph node" and "model part" is the weakest piece · ⏸ deferred (pruning only)
 
 > This and 1.3–1.5 apply **only** to the deferred personal-model-pruning work (`pruning.md`). They are not blockers for B0–B9.
-
 
 **Problem.** The core idea is: a node's score decides which *attention heads* of the model get cut. The bridge is a table called `domain_to_heads` — "which parts of the model belong to Engineering vs Meetings vs Research." But in a small model, the parts are **not** cleanly split by topic. There is no clean "Meetings region" to cut. And to build that table you need example prompts per topic — which the graph doesn't have (it has `pytest`, `vscode`, not sentences).
 
@@ -94,8 +134,11 @@ This file holds two things:
 **Why it matters.** Two of the four behavioural patterns (`FOCUS_SESSION`, `DISTRACTION`) need the active window. Those are also the patterns that map to topics. No active window → half the behavioural vocabulary is gone.
 
 **Resolution (2026-08-31, D-9 · spike `spikes/b2_5_activity/`).** The APIs on the target box (Wayland/COSMIC) are Wayland protocols, not D-Bus/X11:
-- **Idle / "last keypress" — DONE (B2.5a).** `ext-idle-notify-v1` (`ext_idle_notifier_v1 v2`, bundled in `pywayland`) — edge events `idled` / `resumed`, `loop.add_reader` on the compositor fd, no thread. `ActivityCollector` ships in B2.5a and is live-verified. `org.freedesktop.ScreenSaver` (cosmic-idle) has no idle-query method; XWayland `_NET_ACTIVE_WINDOW` → `0x0`.
-- **Active window — DONE (B2.5b).** `zcosmic_toplevel_info_v1 v3` (`app_id` / `title` / `state=activated`), cosmic XML vendored + `pywayland.scanner` resolving the full dependency chain (`sensing/activity/_protocols/`). `WaylandWindowSource` → `APP_SWITCH`, live-verified (`app_id:"brave-browser"`). L3 consumes it: `AppMap` classification + `FocusSessionPattern` / `DistractionPattern` (D-10), fixture-verified.
+
+| Capability | Solution | State |
+| --- | --- | --- |
+| Idle / "last keypress" | `ext-idle-notify-v1` (`ext_idle_notifier_v1 v2`, bundled in `pywayland`) — edge events `idled` / `resumed`, `loop.add_reader` on the compositor fd, no thread. `org.freedesktop.ScreenSaver` (cosmic-idle) has no idle-query method; XWayland `_NET_ACTIVE_WINDOW` → `0x0`. | DONE (B2.5a), live-verified |
+| Active window | `zcosmic_toplevel_info_v1 v3` (`app_id` / `title` / `state=activated`), cosmic XML vendored + `pywayland.scanner` resolving the full dependency chain (`sensing/activity/_protocols/`). `WaylandWindowSource` → `APP_SWITCH`. L3 consumes it: `AppMap` classification + `FocusSessionPattern` / `DistractionPattern` (D-10), fixture-verified. | DONE (B2.5b), live-verified `app_id:"brave-browser"` |
 
 ---
 
@@ -106,11 +149,14 @@ This file holds two things:
 **Why it matters.** Without a way to measure and compare, it's a cool demo, not research.
 
 **How to counter it.** Build a real **evaluation kit** as a deliverable (see Part 2):
-- A **synthetic activity generator** — fake but realistic sensor traces for scripted scenarios (deep-focus day, distracted day, disk-fills-up). Reproducible, shareable, no private data.
-- A small **question set with reference answers** to score the assistant against.
-- **Baselines** to beat: the full uncut model, a randomly-cut model of the same size, a model cut by weight size, plain log search with no graph.
-- **Ablations**: turn each piece off one at a time and show the number drops.
-- If possible, 3–5 other people run it for a week for informal feedback.
+
+| Deliverable | What it is |
+| --- | --- |
+| Synthetic activity generator | Fake but realistic sensor traces for scripted scenarios (deep-focus day, distracted day, disk-fills-up). Reproducible, shareable, no private data. |
+| Question set + reference answers | A small set to score the assistant against. |
+| Baselines to beat | the full uncut model, a randomly-cut model of the same size, a model cut by weight size, plain log search with no graph. |
+| Ablations | turn each piece off one at a time and show the number drops. |
+| External runs | if possible, 3–5 other people run it for a week for informal feedback. |
 
 ---
 
@@ -165,15 +211,25 @@ This file holds two things:
 
 ---
 
-### 1.13 The small model loses the thread when you feed it graph context · 🟠 confirmed real (B0) — mitigated for L4 (D-11), open for L6/L9
+### 1.13 The small model loses the thread when you feed it graph context · 🟠 confirmed real (B0) — mitigated for L4 (D-11) and L9 (D-12), open for L6
 
 *(This is separate from 1.2 — that one is about pruning the model's weights and is deferred. This one is about prompting the model with graph facts, and it affects L3, L4, L6, and L9 in the core build.)*
 
-**B0 outcome (2026-08-30, `dda0fb0`).** The risk is real. The grammar-constrained ablation (`coherence-20260830T191626Z.json`, `tq2_0` quant, 20 fixtures per K) found citation_accuracy peaking at **0.69** (K=1) against a 0.80 target and falling to 0.25–0.34 at K≥3; **grounded_rate 0.00 at every K** — the model's sentence never named a cited node; **correct_abstain 0.00** — it never declined a weak input. Valid-parse held (0.75–1.0), so the *grammar mechanism* works; the *free-text reasoning* does not.
+**B0 outcome (2026-08-30, `dda0fb0`).** The risk is real. The grammar-constrained ablation (`coherence-20260830T191626Z.json`, `tq2_0` quant, 20 fixtures per K) found:
+
+| Metric | Result | Target |
+| --- | --- | --- |
+| citation_accuracy (K=1) | **0.69** | 0.80 |
+| citation_accuracy (K≥3) | 0.25–0.34 | 0.80 |
+| grounded_rate (every K) | **0.00** — the model's sentence never named a cited node | — |
+| correct_abstain | **0.00** — it never declined a weak input | — |
+| valid-parse | 0.75–1.0 — so the *grammar mechanism* works; the *free-text reasoning* does not | 1.0 |
 
 **Mitigation — L4 (D-11): the extractive pivot.** Stop asking for a sentence. The insight grammar emits exactly `{"cited_node_id": <one of the K aliases | null>, "insight_category": "routine"|"anomaly"|"distraction"}`. The model does one classification + one selection, both enum-constrained — the two jobs it *can* do (valid-parse 0.95–1.0 at K≥3). The human-readable insight string is a **template** filled from the cited node's label + the signal type, never generated. `null` cited node = abstain = discard.
 
-**Still open — L6 idle thoughts, L9 `$?`.** Those need more than a category. The B0 recommendation stands: a ~3B Q4 model for the interactive `$?` path only (`BitNetRuntime` is backend-pluggable), 2B4T for everything background. Decide in B5.
+**L9 `$?` — RESOLVED (D-12, B5, 2026-09-01, validated on the target box).** Dual-model routing: **Qwen2.5-3B-Instruct Q4_K_M** serves the interactive `$` / `$?` path (`BitNetRuntime` gained an optional second backend, one `_inference_lock`); 2B4T stays on the always-on loop. `$?` runs behind a per-call GBNF grammar (`{insight, cited_nodes, confidence}`, `ws ::= " "?`) and a hard `parse_answer` grounding gate — ungrounded → extractive template. **`scripts/validate_b5_real_model.py` on the 16 GB target box:** Qwen wrote `"esbuild-service is using the most CPU right now."` (conf 0.94, grounded, exact label) — coherent where 2B4T parrots the few-shot. Cost: ~3.1 tok/s, +3.25 GB resident (~4.7 GB concurrent — PRD §9).
+
+**Still open — L6 idle thoughts.** Those need more than a category and are not interactive, so the 3B model is not the answer there. Decide in B6 (likely: extractive follow-up-query generation, same shape as L4).
 
 **Problem.** BitNet b1.58 2B4T is a 2-billion-parameter, 1.58-bit model. Feed it a loosely-connected set of graph nodes plus a raw signal and ask it to reason, and it drifts: generic answers, invented file paths, cites nodes that weren't in the prompt, or just rambles. Small quantised models are pattern-matchers, not analysts.
 
@@ -239,13 +295,15 @@ The goal (per `memory.md`) is a publishable paper, where the benchmarks and the 
 
 ### 2.2 What to add to the repo
 
-1. **`research.md`** — the claims above, the exact way each will be measured, which venues to target, and the line between "first paper" (B0–B9 + evaluation) and "deferred / second paper" (D1 pruning).
-2. **`eval/` folder** — the synthetic activity generator, the question set with answers, baseline retrieval methods, and a script that runs the ablations and prints a results table.
-3. **Event tracing + replay** — behind a `--research-mode` flag, so experiments re-run exactly and traces can be shared. Kept separate from the real daemon.
-4. **`docs/alternatives.md`** — the running list of ideas tried and dropped, and why. (Ollama pruning is entry 1.)
-5. **`phases.md`** — add one line to every build step: "how we measure this step worked, and what we compare it against."
-6. ✅ **Model size fixed in the docs** — BitNet b1.58 2B4T, ~1.1 GB (done 2026-08-29).
-7. ✅ **Pruning moved out of the core roadmap** into `pruning.md` and phase D1 (done 2026-08-29).
+| # | Item | State |
+| --- | --- | --- |
+| 1 | `research.md` — the claims above, how each is measured, target venues, and the line between "first paper" and "deferred / second paper" | to do |
+| 2 | `eval/` folder — synthetic activity generator, question set with answers, baseline retrieval methods, a script that runs the ablations and prints a results table | to do |
+| 3 | Event tracing + replay behind a `--research-mode` flag, kept separate from the real daemon | to do |
+| 4 | `docs/alternatives.md` — the running list of ideas tried and dropped, and why (Ollama pruning is entry 1) | to do |
+| 5 | `phases.md` — add one line to every build step: "how we measure this step worked, and what we compare it against" | to do |
+| 6 | Model size fixed in the docs — BitNet b1.58 2B4T, ~1.1 GB (B0: ~1.4 GB) | ✅ done 2026-08-29 |
+| 7 | Pruning moved out of the core roadmap into `pruning.md` and phase D1 | ✅ done 2026-08-29 |
 
 ---
 

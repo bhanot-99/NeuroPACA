@@ -32,6 +32,11 @@ class EventType(StrEnum):
     AGENT_SPAWNED = auto()
     AGENT_COMPLETED = auto()
     SYSTEM_ERROR = auto()
+    # B5 · Interface (L9, A6). The health bridge: L9 publishes a REQUEST, L10 —
+    # which alone holds every module's health() — answers with a REPORT. Keeps
+    # the orchestrator out of the module import graph (rules.md §0).
+    SYSTEM_HEALTH_REQUEST = auto()
+    SYSTEM_HEALTH_REPORT = auto()
 
 
 class NodeType(StrEnum):
@@ -82,3 +87,14 @@ class InterfaceChannel(StrEnum):
     CLI = auto()
     WEB_SOCKET = auto()
     NOTIFICATION_ONLY = auto()
+
+
+class MessageRole(StrEnum):
+    """Who authored an L9 `Message` (Architecture.md §9, B8). The blueprint's
+    `Message.role: str` is replaced by this closed set — a bare string here is a
+    defect like anywhere else (rules.md §7). `conversation_history` is RAM-only
+    (rules.md §6), so these values never reach disk."""
+
+    USER = auto()
+    ASSISTANT = auto()
+    SYSTEM = auto()

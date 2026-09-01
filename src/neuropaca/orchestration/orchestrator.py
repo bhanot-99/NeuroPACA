@@ -19,15 +19,18 @@ import logging
 import signal
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 
 from neuropaca.core import logging as np_logging
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.config import Config
+from neuropaca.core.enums import EventType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import SystemHealth, current_rss_mb
-from neuropaca.core.inference import create_backend
+from neuropaca.core.inference import create_backend, create_interactive_backend
+from neuropaca.core.models import Event
 from neuropaca.orchestration.scheduler import Scheduler
 
 _log = logging.getLogger(__name__)
@@ -82,7 +85,10 @@ class NeuroPACAOrchestrator:
         np_logging.configure(self._config.log_level)
         self._event_bus = EventBus.get_instance()
         self._graph_memory = GraphMemory.get_instance(persistence_path=self._config.graph_db_path)
-        self._bitnet_runtime = BitNetRuntime.get_instance(create_backend(self._config))
+        self._bitnet_runtime = BitNetRuntime.get_instance(
+            create_backend(self._config),
+            create_interactive_backend(self._config),  # B5 · L9 $ / $? model (D-12)
+        )
         await self._graph_memory.load()
         self._scheduler = Scheduler(self._graph_memory, self._config)
         if self._module_builder is not None:
@@ -91,6 +97,8 @@ class NeuroPACAOrchestrator:
                     self._config, self._event_bus, self._graph_memory, self._bitnet_runtime
                 )
             )
+        # A6 · the L9 health bridge — L9 cannot import L10, so it asks over the bus.
+        self._event_bus.subscribe(EventType.SYSTEM_HEALTH_REQUEST, self._on_health_request)
         for module in self._modules:  # manually-registered first, then built
             await module.initialize()
         self._initialized = True
@@ -126,6 +134,9 @@ class NeuroPACAOrchestrator:
             return
         self._shutdown_done = True
         self._running = False
+
+        if self._event_bus is not None:
+            self._event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REQUEST, self._on_health_request)
 
         for module in reversed(self._modules):
             try:
@@ -193,6 +204,23 @@ class NeuroPACAOrchestrator:
             return SystemHealth(
                 ok=False, uptime_seconds=0.0, notes=(f"health_check failed: {exc!r}",)
             )
+
+    # ------------------------------------------------------------------ health bridge
+    async def _on_health_request(self, _event: Event) -> None:
+        """Answer L9's `SYSTEM_HEALTH_REQUEST` with a serialisable snapshot (A6).
+        Never raises — `health_check()` already swallows its own failures."""
+        try:
+            report = asdict(self.health_check())
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            _log.exception("health bridge failed")
+            report = {"ok": False, "notes": [f"health bridge failed: {exc!r}"]}
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.SYSTEM_HEALTH_REPORT,
+                source="orchestrator",
+                payload={"health": report},
+            )
+        )
 
     # ------------------------------------------------------------------ internal
     def _install_signal_handlers(self) -> None:

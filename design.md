@@ -2,17 +2,24 @@
 
 **Status:** Derived from `neuropaca-v4.html` (product) and `neuropaca-overview.html` (overview site).
 
-Two related looks: a **dark, terminal-native** identity for the product itself, and a **lighter** identity for the overview/marketing site. They share the accent language.
+Two related looks that share the accent language:
+
+| Identity | Where | Look |
+| --- | --- | --- |
+| **Product** | the daemon's `rich` terminal output | dark, terminal-native |
+| **Overview site** | documentation + public pages | lighter, glass cards |
 
 ---
 
 ## 1. Principles
 
-1. **The terminal is the product.** Most user contact is `rich` output in a terminal. Anything that can't survive at monospace on a dark background isn't part of the system.
-2. **Instrument, not dashboard.** Dense, precise, calm. No big hero numbers, no gradients-as-decoration.
-3. **Silence is the default.** Good design here is measured by how rarely the user is interrupted.
-4. **Colour carries meaning.** Every hue maps to a semantic. `relevance_score` and pressure are always shown, never a bare assertion.
-5. **Dark-first.** The user works in a dark terminal at night.
+| # | Principle | In practice |
+| --- | --- | --- |
+| 1 | **The terminal is the product.** | Anything that can't survive at monospace on a dark background isn't part of the system. |
+| 2 | **Instrument, not dashboard.** | Dense, precise, calm. No big hero numbers, no gradients-as-decoration. |
+| 3 | **Silence is the default.** | Good design here is measured by how rarely the user is interrupted. |
+| 4 | **Colour carries meaning.** | Every hue maps to a semantic. `relevance_score` and pressure are always shown, never a bare assertion. |
+| 5 | **Dark-first.** | The user works in a dark terminal at night. |
 
 ---
 
@@ -25,7 +32,7 @@ Two related looks: a **dark, terminal-native** identity for the product itself, 
 | Editorial | **Instrument Serif** (italic) | Hero statements and pull quotes only |
 | Overview site sans | Inter · Space Grotesk | The lighter overview/marketing pages only |
 
-Terminal alignment comes from column arithmetic, never glyph widths. Box-drawing characters are safe; ligature-dependent layouts are not.
+Terminal alignment comes from **column arithmetic, never glyph widths**. Box-drawing characters are safe; ligature-dependent layouts are not.
 
 ---
 
@@ -56,7 +63,7 @@ Terminal alignment comes from column arithmetic, never glyph widths. Box-drawing
 | `green` (terminal) | `#00ff88` | **reserved** — proof the daemon is alive (prompt / heartbeat) only |
 | `red` | `#f87171` | error, danger, abstract/interface, prune |
 
-`#00ff88` is used for exactly one thing. Using it anywhere else destroys the signal.
+> `#00ff88` is used for **exactly one thing**. Using it anywhere else destroys the signal.
 
 ### 3.3 Layer palette (from the class diagram)
 
@@ -82,13 +89,19 @@ Terminal alignment comes from column arithmetic, never glyph widths. Box-drawing
 | 4–7 | Keep | `accent` | ↔ |
 | 0–3 | Prune candidate — graph cleanup | `red` | ✂️ |
 
-**Pressure (0 → threshold):** `muted` below 40 % · `accent4` 40–99 % · `red` bold at/over threshold.
+**Pressure (0 → threshold):**
+
+| Range | Colour |
+| --- | --- |
+| below 40 % | `muted` |
+| 40–99 % | `accent4` |
+| at/over threshold | `red` bold |
 
 **Signal types:** `FOCUS_SESSION` green · `DISTRACTION` pink · `HIGH_LOAD` orange · `IDLE` muted.
 
 ### 3.5 Overview site (light) — from `neuropaca-overview.html`
 
-`bg` `#eef2fb` · `text` `#1a1d2e` · `text2` `#4b5280` · `blue` `#4f6ef7` · `violet` `#8b5cf6` · `green` `#10b981` · `amber` `#f59e0b`. Glass cards, 20 px radius. This palette is for documentation and the public site only — never product UI.
+`bg` `#eef2fb` · `text` `#1a1d2e` · `text2` `#4b5280` · `blue` `#4f6ef7` · `violet` `#8b5cf6` · `green` `#10b981` · `amber` `#f59e0b`. Glass cards, 20 px radius. **This palette is for documentation and the public site only — never product UI.**
 
 ---
 
@@ -113,12 +126,14 @@ ASCII / Unicode only — must render in any terminal.
 
 ## 5. Voice & microcopy
 
-- **Specific over generic.** "webpack has been at 94 % for 41 minutes" beats "high CPU detected."
-- **Cite the evidence.** Every claim names the nodes or metrics behind it.
-- **Express uncertainty honestly.** "Probably" is correct when confidence is 0.4.
-- **No anthropomorphic filler.** No "Oops!", no apologies for existing, no exclamation marks.
-- **Say what will happen before it happens.** Action prompts state the effect, the target, and whether it is reversible.
-- **Admit when there's nothing to say.** "No patterns yet — I've been running 3 days." is the correct early answer.
+| Rule | |
+| --- | --- |
+| **Specific over generic.** | "webpack has been at 94 % for 41 minutes" beats "high CPU detected." |
+| **Cite the evidence.** | Every claim names the nodes or metrics behind it. |
+| **Express uncertainty honestly.** | "Probably" is correct when confidence is 0.4. |
+| **No anthropomorphic filler.** | No "Oops!", no apologies for existing, no exclamation marks. |
+| **Say what will happen before it happens.** | Action prompts state the effect, the target, and whether it is reversible. |
+| **Admit when there's nothing to say.** | "No patterns yet — I've been running 3 days." is the correct early answer. |
 
 Example system response:
 
@@ -129,7 +144,7 @@ Example system response:
   confidence 0.82
 ```
 
-Provenance is mandatory — a response without it is a bug.
+> **Provenance is mandatory — a response without it is a bug.**
 
 ---
 
@@ -137,10 +152,13 @@ Provenance is mandatory — a response without it is a bug.
 
 CPU inference takes seconds. Design for it.
 
-- < 200 ms: no indicator
-- 200 ms – 1 s: static `◆ thinking…`
-- \> 1 s: spinner **with elapsed seconds** — `◆ thinking… 3.2s`
-- Never a fake progress bar for work whose duration is unknown.
+```mermaid
+flowchart TD
+    W{how long is the work?} -->|"< 200 ms"| A[no indicator]
+    W -->|"200 ms – 1 s"| B["static ◆ thinking…"]
+    W -->|"> 1 s"| C["spinner WITH elapsed seconds<br/>◆ thinking… 3.2s"]
+    W -->|unknown duration| D["never a fake progress bar"]
+```
 
 ---
 
