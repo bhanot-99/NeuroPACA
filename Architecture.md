@@ -681,7 +681,9 @@ flowchart TD
 
 ## 11b. L7 Action & L8 Agents *(reconstructed)*
 
-> ⚠️ **The class diagram is cut off at the right edge; L7 and L8 have no class boxes.** Their existence is confirmed by: the concrete-actions note (*Notification · FileWrite · RunCommand · ApiCall · Memory*), `EventType` members `ACTION_TRIGGERED` / `AGENT_SPAWNED` / `AGENT_COMPLETED`, and `Config` fields `action_log_path` / `max_concurrent_agents`. **Confirm both against a full-width re-export of the diagram before building them.**
+> ⚠️ **The class diagram is cut off at the right edge; L7 and L8 have no class boxes.** Their existence is confirmed by: the concrete-actions note (*Notification · FileWrite · RunCommand · ApiCall · Memory*), `EventType` members `ACTION_TRIGGERED` / `AGENT_SPAWNED` / `AGENT_COMPLETED`, and `Config` fields `action_log_path` / `max_concurrent_agents`.
+>
+> **Resolved (D-14 for L7, D-15 for L8).** The source diagram is permanently truncated — no re-export exists or will. Both reconstructions are now **authoritative by ruling**, not pending verification: L7 as built in B7, L8 as specified below. `problems.md` 1.9 is closed on that basis.
 
 **L7 · Action.** `BaseAction` contract (`validate()`, `dry_run()`, `execute()`, `rollback()`). Concrete actions: `NotificationAction`, `FileWriteAction`, `RunCommandAction`, `ApiCallAction`, `MemoryWriteAction`. Every effect runs behind a safety-check gate — sandboxed execution, backup before write, rollback available. Dangerous actions require terminal confirmation regardless of pressure. `ApiCallAction` is the only component permitted an outbound socket, disabled by default. Every attempt is appended to `action_log_path` as JSONL. Emits `ACTION_TRIGGERED`.
 
@@ -696,6 +698,12 @@ flowchart TD
 - **B7 registers no autonomous dangerous action.** The low tier writes a silent `EVENT_LOG` node (`MemoryWriteAction`); the high tier raises a `NotificationAction` — the system asks rather than acts (§7). A concrete dangerous action lands behind this same gate in a later phase.
 
 **L8 · Agents.** `AgentSupervisor` spawns bounded multi-step tasks capped by `Config.max_concurrent_agents`, each with a wall-clock and inference budget. Also the home of **structural plasticity** — `spawn_node()` / `kill_node()` on the EventBus, spawning temporary sub-clusters on load spikes and killing them (apoptosis) after `idle_ttl = 14d` of no firing. Emits `AGENT_SPAWNED` / `AGENT_COMPLETED`.
+
+**Authoritative reconstruction (D-15, 2026-09-01).** Accepted in place of the missing diagram; B8 builds to this.
+
+- **`AgentSupervisor` (`BaseModule`, L8)** subscribes `PRESSURE_THRESHOLD_REACHED` — the *same* signal L7 consumes, read for a different purpose: L7 asks "what single effect does this justify?", L8 asks "does this justify a bounded, multi-step investigation?". Agents are `asyncio.Task`s capped by `Config.max_concurrent_agents` (default 2); over the cap the spawn is refused and logged, never queued unboundedly. Publishes `AGENT_SPAWNED` / `AGENT_COMPLETED`.
+- **Structural plasticity** is L8's alone: it owns `spawn_node()` and `kill_node()`, creating short-lived sub-clusters during high-load spikes and reaping them through **apoptosis** — a temporary node untouched past `idle_ttl = 14 d` is killed via the `GraphMemory` API (the existing `prune_stale_nodes` / `delete_node` bounded-transaction workers, never a bespoke mutation path).
+- The B7 boundaries carry over unchanged: an agent that wants an *effect* proposes a `BaseAction` through `SafetyGate` like everything else. L8 gets no privileged path to the filesystem, to a process, or past a confirmation.
 
 ---
 

@@ -1,0 +1,54 @@
+# B7 · Exit Criterion 5 — the dry-run review period (phases.md B7, D-14).
+#
+# The configuration the 24 h dogfooding soak runs under. It is deliberately the
+# most *permissive* action configuration that is still effect-free:
+#
+#   action_dry_run       = true              -> nothing can happen
+#   action_enabled_tiers = ["safe","dangerous"]  -> but everything is proposed
+#
+# That combination is the point of the review period: both tiers propose, the
+# gate stops at dry_run(), and `data/actions.jsonl` records what the daemon
+# *would* have done so it can be judged before any tier goes live.
+#
+#   NEUROPACA_CONFIG=neuropaca.soak.toml neuropacad
+#   python scripts/validate_b7_dryrun.py --log data/actions.jsonl
+#
+# Not committed as the default config — `neuropaca.toml` (B9, systemd) will ship
+# with dry-run on and only the safe tier enabled.
+
+model_path = "models/bitnet-2b4t-tq2_0.gguf"
+interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
+inference_backend = "llama"
+
+graph_db_path = "data/graph.json"
+action_log_path = "data/actions.jsonl"
+quarantine_path = "data/quarantine"
+log_level = "INFO"
+
+# L2 · sensing. The real Wayland ActivityCollector (B2.5a/b) is on, so the soak
+# exercises FocusSessionPattern / DistractionPattern — the patterns that
+# actually drive pressure during a working day.
+activity_enabled = true
+top_process_count = 5
+poll_intervals = { system = 60.0, filesystem = 60.0 }
+
+# Both the L2 filesystem-sensing scope and the L7 write allowlist (D-14).
+# Deliberately just this repo: real edit activity, and the only root that could
+# ever be written to is one under version control.
+watch_paths = ["/home/bhanot/NeuroPaca"]
+
+# L5 · drive. Defaults — the whole point is to observe the shipped gradient.
+pressure_low_threshold = 1.0
+pressure_high_threshold = 3.0
+pressure_decay_half_life_seconds = 60
+pressure_decay_interval_seconds = 10
+
+# L7 · action. Dry-run ON with BOTH tiers enabled: propose everything, do nothing.
+action_dry_run = true
+action_enabled_tiers = ["safe", "dangerous"]
+action_confirmation_timeout_seconds = 60
+quarantine_ttl_hours = 168
+
+# rules.md §5.5 — reserved switches, no class behind them (D-14).
+api_call_enabled = false
+api_allowlist = []
