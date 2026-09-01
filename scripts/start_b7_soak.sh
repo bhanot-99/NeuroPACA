@@ -67,7 +67,7 @@ echo "  finalises : ${FINISH} (systemd --user timer '${UNIT}')"
 echo
 echo "  status    : neuropaca health"
 echo "  proposals : tail -f ${LOG}"
-echo "  cancel    : pkill -f neuropacad && systemctl --user stop ${UNIT}.timer"
+echo "  cancel    : ./scripts/stop_b7_soak.sh"
 echo
 echo "NOTE: shutting the laptop down kills both — the transient timer does not"
 echo "      survive a reboot. Re-run this script after booting."
