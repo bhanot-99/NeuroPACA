@@ -539,6 +539,8 @@ flowchart TD
 - Idle thoughts expire after 48 h.
 - **Do graph work in bounded transactions under the lock, one atomic call at a time**, so a cancellation mid-cycle never leaves the graph half-mutated.
 
+> **B6 build (D-13).** `idle/dmn.py`. Idle thoughts live **in the graph** as `NodeType.IDLE_THOUGHT` nodes (`idle:<uuid12>`, edged `RELATED_TO` their cited nodes) — there is no separate `idle_cache.db`; the 48 h TTL is `GraphMemory.prune_stale_nodes(ttl)`. **Imagination is strictly extractive** (`problems.md` 1.13): the loop model fills `{"subject": alias, "object": alias|null, "query_template": <enum>}` and the question is rendered from a template (`learning/prompts.py PROACTIVE_TEMPLATES`), never generated; a thought publishes on `INSIGHT_GENERATED` with `Insight(category="proactive")` and L9 surfaces it once (B5 `surfaced_at`). **Strict budgets:** the whole cycle runs under `asyncio.timeout(dmn_cycle_wall_clock_seconds)` (overrun logged, not fatal); imagination makes ≤ `dmn_max_inferences_per_cycle` calls and bails on `BitNetRuntime.is_busy`. Reminiscence = `GraphMemory.consolidate()` (merge exact `node_type`+`label` duplicates: oldest `created_at`, summed `access_count`, averaged `relevance_score`, rewired edges, hubs skipped) + `link_orphan_nodes()` (degree-0 → `RELATED_TO` `YOU`) + `prune_stale_nodes()`. The Scheduler still owns `recalculate_importance` — the DMN never recalculates.
+
 ---
 
 ## 9. L9 · Interface (V)

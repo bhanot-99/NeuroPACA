@@ -198,11 +198,58 @@ class GraphMemory:
                 self._recalculate_chunk_unsafe(chunk, now)
             await asyncio.sleep(0)  # explicit yield to the event loop
 
-    async def consolidate(self) -> None:
+    # B6 · Idle Cognition (L6, D-13). The DMN's "reminiscence" — housekeeping the
+    # graph while you are away. Each of the three is a whole-graph best-effort
+    # job, so — like `recalculate_importance` — it takes the lock **once per
+    # atomic mutation** and yields between, never once around a batch loop
+    # (rules.md §3). A mid-cycle `asyncio.CancelledError` (activity resumed) then
+    # lands cleanly between two mutations, never inside one.
+
+    async def consolidate(self) -> int:
+        """Merge exact-duplicate nodes. A duplicate is **identical `node_type`
+        AND case-insensitive `label`** (D-13). The older `created_at` survives;
+        `access_count` sums, `relevance_score` averages, every edge rewires to the
+        survivor. The 11 routing hubs are never touched.
+
+        One `_lock` cycle per merge, re-scanning between: the graph may shift
+        under a long run and cancellation is always safe. Returns merges done."""
+        merged = 0
+        while True:
+            async with self._lock:
+                pair = self._find_one_duplicate_pair_unsafe()
+                if pair is None:
+                    break
+                self._merge_nodes_unsafe(*pair)
+                merged += 1
+            await asyncio.sleep(0)
+        return merged
+
+    async def link_orphan_nodes(self) -> int:
+        """Give every non-hub node with total degree 0 a `RELATED_TO` edge to
+        `YOU`, so ordinary score decay can then manage it rather than it floating
+        forever unreachable (D-13). One `_lock` cycle per link. Returns links
+        made."""
+        linked = 0
+        while True:
+            async with self._lock:
+                orphan = self._next_orphan_unsafe()
+                if orphan is None:
+                    break
+                self._add_edge_unsafe(orphan, "YOU", RelationType.RELATED_TO, 0.0)
+                linked += 1
+            await asyncio.sleep(0)
+        return linked
+
+    async def prune_stale_nodes(self, ttl: timedelta) -> int:
+        """Drop a non-hub node when its `relevance_score` has decayed to ~0, or
+        it has aged past `ttl` (D-13). An `INSIGHT` / `IDLE_THOUGHT` node past
+        `ttl` goes regardless of score — that is the 48 h idle-thought cache
+        lifetime (Architecture.md §8). A node younger than `ttl` on **both**
+        `created_at` and `last_accessed` is left alone: the Scheduler owns
+        `recalculate_importance`, so a fresh node still sitting at the default
+        score 0.0 must not be mistaken for a decayed one. One `_lock` cycle."""
         async with self._lock:
-            # B1 has no duplicate-detection heuristic yet (that is B6); the lock
-            # discipline and the entry point are what B1 establishes.
-            return None
+            return self._prune_stale_unsafe(ttl)
 
     # ------------------------------------------------------------------ queries
     def get_node(self, node_id: str) -> Node | None:
@@ -488,6 +535,107 @@ class GraphMemory:
             score = float(data.get("relevance_score", 0.0))
             last = _as_dt(data.get("last_accessed", now))
             if score < min_importance and (now - last) > older_than:
+                victims.append(node_id)
+        for node_id in victims:
+            self._graph.remove_node(node_id)
+        if victims:
+            self._dirty = True
+        return len(victims)
+
+    # ------------------------------------------------------------ B6 · L6 workers
+    _STALE_SCORE_EPS: ClassVar[float] = 1e-9
+    _THOUGHT_TYPES: ClassVar[frozenset[NodeType]] = frozenset(
+        {NodeType.INSIGHT, NodeType.IDLE_THOUGHT}
+    )
+
+    def _find_one_duplicate_pair_unsafe(self) -> tuple[str, str] | None:
+        """First `(survivor, victim)` where two non-hub nodes share `node_type`
+        and case-folded `label`. Survivor = older `created_at` (tiebreak: id)."""
+        seen: dict[tuple[str, str], str] = {}
+        for node_id, data in self._graph.nodes(data=True):
+            if node_id in HUB_NODE_IDS:
+                continue
+            key = (str(data.get("node_type", "")), str(data.get("label", "")).strip().casefold())
+            prior = seen.get(key)
+            if prior is None:
+                seen[key] = node_id
+                continue
+            prior_created = _as_dt(self._graph.nodes[prior].get("created_at", _utcnow()))
+            this_created = _as_dt(data.get("created_at", _utcnow()))
+            if (this_created, node_id) < (prior_created, prior):
+                return (node_id, prior)  # this one is older -> it survives
+            return (prior, node_id)
+        return None
+
+    def _merge_nodes_unsafe(self, survivor_id: str, victim_id: str) -> None:
+        """Fold `victim` into `survivor` (D-13 merge math), then delete `victim`.
+        Both must exist and neither may be a routing hub — the caller guarantees
+        it, this asserts it cheaply."""
+        if survivor_id in HUB_NODE_IDS or victim_id in HUB_NODE_IDS:
+            return
+        if survivor_id not in self._graph or victim_id not in self._graph:
+            return
+        s = self._graph.nodes[survivor_id]
+        v = self._graph.nodes[victim_id]
+
+        s["created_at"] = min(_as_dt(s["created_at"]), _as_dt(v["created_at"]))
+        s["last_accessed"] = max(_as_dt(s["last_accessed"]), _as_dt(v["last_accessed"]))
+        s["access_count"] = int(s.get("access_count", 0)) + int(v.get("access_count", 0))
+        s["relevance_score"] = round(
+            (float(s.get("relevance_score", 0.0)) + float(v.get("relevance_score", 0.0))) / 2.0, 3
+        )
+        s["priority"] = max(int(s.get("priority", 0)), int(v.get("priority", 0)))
+        if s.get("surfaced_at") is None and v.get("surfaced_at") is not None:
+            s["surfaced_at"] = _as_dt_opt(v.get("surfaced_at"))
+
+        # Rewire every edge on the victim to the survivor, dropping any edge
+        # between the two (it would become a self-loop) and folding a weight into
+        # an edge the survivor already carries for that (neighbour, relation).
+        for u, _v, key, data in list(self._graph.in_edges(victim_id, keys=True, data=True)):
+            if u == survivor_id:
+                continue
+            self._rewire_edge_unsafe(u, survivor_id, key, float(data.get("weight", 0.0)))
+        for _u, w, key, data in list(self._graph.out_edges(victim_id, keys=True, data=True)):
+            if w == survivor_id:
+                continue
+            self._rewire_edge_unsafe(survivor_id, w, key, float(data.get("weight", 0.0)))
+
+        self._graph.remove_node(victim_id)
+        self._dirty = True
+
+    def _rewire_edge_unsafe(self, source: str, target: str, key: Any, weight: float) -> None:
+        if self._graph.has_edge(source, target, key):
+            data = self._graph.edges[source, target, key]
+            data["weight"] = float(data.get("weight", 0.0)) + weight
+            return
+        self._graph.add_edge(source, target, key=key, weight=weight, created_at=_utcnow())
+
+    def _next_orphan_unsafe(self) -> str | None:
+        for node_id in self._graph.nodes:
+            if node_id in HUB_NODE_IDS:
+                continue
+            if int(self._graph.degree(node_id)) == 0:
+                return str(node_id)
+        return None
+
+    def _prune_stale_unsafe(self, ttl: timedelta) -> int:
+        now = _utcnow()
+        victims: list[str] = []
+        for node_id, data in self._graph.nodes(data=True):
+            if node_id in HUB_NODE_IDS:
+                continue
+            created = _as_dt(data.get("created_at", now))
+            last = _as_dt(data.get("last_accessed", now))
+            age_since_touch = now - last
+            if (now - created) <= ttl and age_since_touch <= ttl:
+                continue  # too fresh to judge — scoring may not have run yet
+            node_type = NodeType(data["node_type"])
+            if node_type in self._THOUGHT_TYPES:
+                if (now - created) > ttl:
+                    victims.append(node_id)
+                continue
+            score = float(data.get("relevance_score", 0.0))
+            if score <= self._STALE_SCORE_EPS or age_since_touch > ttl:
                 victims.append(node_id)
         for node_id in victims:
             self._graph.remove_node(node_id)

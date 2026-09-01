@@ -66,6 +66,18 @@ class Config:
     # system temp dir). Tests point this at a `tmp_path` so no test binds a
     # socket outside its sandbox (rules.md §8).
     interface_socket_path: str = ""
+    # B6 · Idle Cognition (L6, D-13). Strict budgets on one DMN idle cycle:
+    #   - dmn_cycle_wall_clock_seconds — `asyncio.timeout` ceiling for a whole
+    #     cycle (reminiscence + imagination); an overrun is logged, not fatal.
+    #   - dmn_max_inferences_per_cycle — at most this many idle-thought model
+    #     calls per cycle; the DMN also bails the moment `BitNetRuntime.is_busy`.
+    #   - dmn_idle_thought_ttl_hours — an `idle:` / `insight:` node past this age
+    #     is pruned (the 48 h idle-thought cache lifetime, Architecture.md §8).
+    #   - dmn_top_k — graph nodes pulled (by relevance_score) to seed imagination.
+    dmn_cycle_wall_clock_seconds: int = 60
+    dmn_max_inferences_per_cycle: int = 3
+    dmn_idle_thought_ttl_hours: int = 48
+    dmn_top_k: int = 5
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -132,6 +144,10 @@ class Config:
             "adaptation_buffer_size",
             "max_context_tokens",
             "interactive_model_context_tokens",
+            "dmn_cycle_wall_clock_seconds",
+            "dmn_max_inferences_per_cycle",
+            "dmn_idle_thought_ttl_hours",
+            "dmn_top_k",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")

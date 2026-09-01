@@ -57,6 +57,26 @@ def _fake_answer(prompt: str, grammar: str) -> str:
     return _GRACEFUL_ANSWER_ABSTAIN
 
 
+def _fake_proactive(prompt: str, grammar: str) -> str:
+    """Deterministic proactive idle-thought for `FakeInferenceBackend` (D-13).
+    Picks the first one or two aliases the grammar allows that also appear in the
+    prompt's facts, and returns a schema-valid selection `parse_proactive` will
+    accept with test-supplied nodes."""
+    aliases = _ALIAS_ENUM_RE.findall(grammar)
+    labels = dict(_PROMPT_FACT_RE.findall(prompt))
+    present = [a for a in aliases if a in labels]
+    if len(present) >= 2:
+        return (
+            f'{{"subject": "{present[0]}", "object": "{present[1]}", '
+            f'"query_template": "how_does_x_affect_y"}}'
+        )
+    if len(present) == 1:
+        return (
+            f'{{"subject": "{present[0]}", "object": null, "query_template": "what_changed_in_x"}}'
+        )
+    return '{"subject": "n1", "object": null, "query_template": "what_changed_in_x"}'
+
+
 @runtime_checkable
 class InferenceBackend(Protocol):
     """What `BitNetRuntime` drives. One inference at a time is enforced above
@@ -110,6 +130,8 @@ class FakeInferenceBackend:
             # Deterministic, and shaped for whichever grammar is in play.
             if "cited_node_id" in grammar:  # D-11 extractive insight schema (L4)
                 return '{"cited_node_id": "n1", "insight_category": "anomaly"}'
+            if "query_template" in grammar:  # D-13 proactive idle-thought schema (L6)
+                return _fake_proactive(prompt, grammar)
             if "cited_nodes" in grammar:  # $? answer schema (L9, B5)
                 return _fake_answer(prompt, grammar)
             return _GRACEFUL_ABSTAIN

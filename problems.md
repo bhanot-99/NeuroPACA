@@ -30,7 +30,7 @@ This file holds three things:
 | 1.10 | Concurrency traps | 🟡 in progress | core |
 | 1.11 | Too big for one person / takes too long | 🟡 in progress | core |
 | 1.12 | Privacy makes it hard to prove it works | 🟡 in progress | core / research |
-| 1.13 | The small model loses the thread on graph context | 🟠 confirmed (B0) — L4+L9 mitigated (D-11/D-12), L6 open | core |
+| 1.13 | The small model loses the thread on graph context | 🟢 mitigated everywhere — L4 D-11, L9 D-12, L6 D-13 (all extractive / bounded) | core |
 
 ```mermaid
 flowchart LR
@@ -211,7 +211,7 @@ flowchart LR
 
 ---
 
-### 1.13 The small model loses the thread when you feed it graph context · 🟠 confirmed real (B0) — mitigated for L4 (D-11) and L9 (D-12), open for L6
+### 1.13 The small model loses the thread when you feed it graph context · 🟢 confirmed real (B0) — mitigated for L4 (D-11), L9 (D-12), and L6 (D-13)
 
 *(This is separate from 1.2 — that one is about pruning the model's weights and is deferred. This one is about prompting the model with graph facts, and it affects L3, L4, L6, and L9 in the core build.)*
 
@@ -229,7 +229,7 @@ flowchart LR
 
 **L9 `$?` — RESOLVED (D-12, B5, 2026-09-01, validated on the target box).** Dual-model routing: **Qwen2.5-3B-Instruct Q4_K_M** serves the interactive `$` / `$?` path (`BitNetRuntime` gained an optional second backend, one `_inference_lock`); 2B4T stays on the always-on loop. `$?` runs behind a per-call GBNF grammar (`{insight, cited_nodes, confidence}`, `ws ::= " "?`) and a hard `parse_answer` grounding gate — ungrounded → extractive template. **`scripts/validate_b5_real_model.py` on the 16 GB target box:** Qwen wrote `"esbuild-service is using the most CPU right now."` (conf 0.94, grounded, exact label) — coherent where 2B4T parrots the few-shot. Cost: ~3.1 tok/s, +3.25 GB resident (~4.7 GB concurrent — PRD §9).
 
-**Still open — L6 idle thoughts.** Those need more than a category and are not interactive, so the 3B model is not the answer there. Decide in B6 (likely: extractive follow-up-query generation, same shape as L4).
+**Mitigation — L6 idle thoughts (D-13, B6).** Resolved by going fully extractive, same shape as D-11 — *not* the interactive Qwen model (L6 is background, on the always-on loop). The DMN's "imagination" asks the loop model for `{"subject": alias, "object": alias|null, "query_template": <closed enum>}`; the follow-up question is rendered from a Python template (`PROACTIVE_TEMPLATES`), never generated. A relational template without a distinct object is discarded. Stored as an `IDLE_THOUGHT` node, surfaced once by L9. The model only selects — the two jobs the B0 ablation showed it *can* do.
 
 **Problem.** BitNet b1.58 2B4T is a 2-billion-parameter, 1.58-bit model. Feed it a loosely-connected set of graph nodes plus a raw signal and ask it to reason, and it drifts: generic answers, invented file paths, cites nodes that weren't in the prompt, or just rambles. Small quantised models are pattern-matchers, not analysts.
 

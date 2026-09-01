@@ -52,6 +52,10 @@ class NodeType(StrEnum):
     APP = auto()
     SESSION = auto()
     GOAL = auto()
+    # B6 · L6 (D-13). A cached "idle thought" — an extractive follow-up question
+    # the DMN generated during idle, grounded in real nodes. `idle:<uuid>`; edged
+    # `RELATED_TO` its cited nodes; surfaced once by L9; pruned after the 48 h TTL.
+    IDLE_THOUGHT = auto()
 
 
 class RelationType(StrEnum):

@@ -17,8 +17,11 @@ from datetime import UTC, datetime
 
 from neuropaca.core.enums import SignalType
 
-# The full closed set the grammar's `insight_category` enum allows (D-11).
-INSIGHT_CATEGORIES: tuple[str, ...] = ("routine", "anomaly", "distraction")
+# The full closed set an insight's category may take. `routine` / `anomaly` /
+# `distraction` are the D-11 L4 grammar's `insight_category` enum; `proactive`
+# (D-13) is L6's — an idle-thought follow-up question, not a signal category, so
+# it never appears in the L4 grammar, only on an `Insight` the DMN builds.
+INSIGHT_CATEGORIES: tuple[str, ...] = ("routine", "anomaly", "distraction", "proactive")
 
 
 def _utcnow() -> datetime:
@@ -40,7 +43,10 @@ class Insight:
     source_signal: SignalType
     confidence: float
     snapshot_count: int
-    node_id: str = ""  # the `insight:<uuid>` graph node id, filled on store
+    node_id: str = ""  # the `insight:<uuid>` / `idle:<uuid>` graph node id, filled on store
+    # B6 (D-13): the rendered idle-thought question, e.g. "How does X affect Y?".
+    # Empty for L4 insights, whose `summary` stays a category template.
+    detail: str = ""
     created_at: datetime = field(default_factory=_utcnow)
 
     def __post_init__(self) -> None:
@@ -49,10 +55,21 @@ class Insight:
 
     @property
     def summary(self) -> str:
-        """The template-built human line — no model text (D-11)."""
+        """The human-readable line. For an L6 proactive thought this is the
+        extractively-assembled question (`detail`); for an L4 insight it is a
+        category template — no model free text in either case (D-11, D-13)."""
+        if self.detail:
+            return self.detail
         cited = self.cited_node_ids[0] if self.cited_node_ids else "?"
         return f"{self.category}: {self.source_signal} implicates {cited}"
 
     def traces_to_evidence(self) -> bool:
-        """B4 exit gate — a stored insight must reach a snapshot and a node."""
-        return self.snapshot_count >= 1 and len(self.cited_node_ids) >= 1
+        """Every stored insight must reach real evidence. An L4 insight needs a
+        source snapshot and a cited node (B4 exit gate); an L6 proactive thought
+        is grounded by construction — it cites live graph nodes, not a signal —
+        so a cited node alone is enough (D-13)."""
+        if not self.cited_node_ids:
+            return False
+        if self.category == "proactive":
+            return True
+        return self.snapshot_count >= 1

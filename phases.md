@@ -65,7 +65,8 @@ flowchart TD
 | B3 | Diagnosis (L3) | ✅ merged (PR #3); exit signed off |
 | B4 | Learning (L4) | ✅ merged (PR #6); ⏳ full 1 h `soak_test_b4.py` on target box carried |
 | B5 | Interface (L9) | ✅ done (`b5-interface-l9`) — unix-socket IPC + thin CLI + dual-model routing (D-12); all 3 exit criteria validated on the target box (real Qwen2.5-3B Q4: grounded, ~4.7 GB concurrent, ~3.1 tok/s) |
-| B6–B9 | Idle Cognition → Hardening | ⬜ not started |
+| B6 | Idle Cognition (L6) | 🟡 built + **all 3 exit criteria validated on the target box** (`b6-idle-cognition-l6`, D-13) — `DefaultModeNetwork` + `GraphMemory` consolidate/link-orphan/prune-stale + extractive proactive idle-thought grammar (`{subject, object, query_template}`) + L9 `proactive` surfacing; `core/context.py` shared serialiser (A8). 229 pytest + 22 stress/integration green. ⏳ exit review → merge |
+| B7–B9 | Drive & Action → Hardening | ⬜ not started |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
 ---
@@ -140,10 +141,16 @@ Real `LlamaCppBackend` (lazy `import llama_cpp`, self-disables without the wheel
 
 **Validation-driven fixes:** `$?` grammar `ws ::= " "?` (a weak model looped on whitespace and never closed the JSON); `gc.collect()` before the interactive model load; `interactive_model_context_tokens` 4096→2048 + interactive `n_batch=128` (RAM).
 
-### B6 · Idle Cognition (L6)
-`DefaultModeNetwork` — cancellable `idle_task`, instant cancel on activity, `consolidate_memory` / `link_orphan_nodes` / `prune_stale_nodes` / `generate_proactive_insights`, 48 h TTL, `save_to_disk`, one lock-cycle per merge.
+### B6 · Idle Cognition (L6) — *built + target-box validated (`b6-idle-cognition-l6`, D-13); exit review → merge pending*
+`DefaultModeNetwork` (`idle/dmn.py`, `BaseModule` `"idle"`, start order L4→**L6**→L9) — cancellable `idle_task` started on `IDLE_DETECTED`, cancelled within one tick on `ACTIVITY_DETECTED`; the whole cycle runs under `asyncio.timeout(dmn_cycle_wall_clock_seconds)`. **Reminiscence:** `GraphMemory.consolidate()` (duplicate = identical `node_type` ∧ case-fold `label`; older `created_at` survives, `access_count` sums, `relevance_score` averages, edges rewire, 11 hubs skipped — one `_lock` cycle per merge), `link_orphan_nodes()` (degree-0 → `RELATED_TO` `YOU`), `prune_stale_nodes(ttl)` (score→0 or past TTL; fresh nodes spared; the Scheduler keeps `recalculate_importance`). **Imagination:** top-K nodes by score → ≤ `dmn_max_inferences_per_cycle` **strictly extractive** calls to the loop model (`{subject, object|null, query_template}`, `learning/prompts.py`) → `IDLE_THOUGHT` node + `INSIGHT_GENERATED{category:"proactive"}`. 48 h TTL via `dmn_idle_thought_ttl_hours`. L9 surfaces `proactive` once through the B5 `surfaced_at` path. **D-13** resolves `problems.md` 1.13 for L6 (extractive, not the Qwen model), A8 (`core/context.py` shared serialiser).
 
-**Exit:** returning to the keyboard cancels the cycle < 1 s with no partial corruption; a cycle never exceeds its wall-clock and inference budget; `consolidate()` shrinks a duplicate-heavy fixture.
+**Exit:**
+
+| ✅/⏳ | Criterion |
+| --- | --- |
+| ✅ | returning to the keyboard cancels the cycle with no partial corruption (`test_activity_cancels_..._without_corruption`, `test_stop_cancels_an_in_flight_cycle`). **Target box (`scripts/validate_b6_cancel.py`): 0.1 ms** to fully unwind a cycle running mid-consolidate (12 000 dups / 22 011 nodes), `_lock` released, zero dangling edges, hubs intact, second `consolidate()` finished the remaining 11 894 merges cleanly. |
+| ✅ | a cycle never exceeds its wall-clock budget (`asyncio.timeout`) or its inference budget. **Target box (`scripts/validate_b6_budgets.py`): TimeoutError at 10.00 s, capped at 2 idle thoughts** (3rd inference cut), `_errors=0`, daemon healthy. Unit: `test_cycle_abandons_cleanly_..._budget`, `test_cycle_respects_the_inference_budget`. |
+| ✅ | `consolidate()` shrinks a duplicate-heavy fixture (`test_consolidate_shrinks_a_duplicate_heavy_fixture`, `test_merge_math_keeps_oldest_created_at_and_rewires_edges`). **Target box (`scripts/validate_b6_consolidate.py`): 500 merges in 2 510 ms** over ~10.5k nodes, `node_count` −500 exact, summed `access_count` + averaged `relevance_score` correct, every duplicate edge rewired. |
 
 ### B7 · Drive & Action (L5 + L7)
 `PressureEntry`, `PressureAccumulator` (two independent sources, `decay()` on a timer, low/high thresholds, `_publish_if_over_threshold`), `$ pressure` view. `BaseAction`, safety gate (sandbox, backup, rollback), JSONL audit, `NotificationAction`/`MemoryWriteAction`/`FileWriteAction`/`ApiCallAction` (disabled by default)/`RunCommandAction` (terminal confirmation), quarantine directory.
