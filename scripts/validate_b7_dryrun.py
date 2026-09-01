@@ -36,6 +36,12 @@ from safe-tier ones, each with the reason string L5 carried, so you can. What it
 
 Exit 0 = the log is mechanically sound and long enough. Exit 1 = a violation.
 Reading the listed proposals and declaring zero false positives is yours.
+
+`--require-zero-high-tier` exists for the unattended `scripts/finalize_b7.sh`
+path: a high-tier proposal is precisely the thing a human must judge, so a run
+that finds one **fails** rather than passing a judgement nobody made. Zero
+high-tier proposals means there is nothing to judge, and the criterion is
+mechanically satisfied.
 """
 
 from __future__ import annotations
@@ -77,6 +83,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", default=_DEFAULT_LOG)
     parser.add_argument("--days", type=int, default=0, help="only the last N days (0 = all)")
+    parser.add_argument(
+        "--require-zero-high-tier",
+        action="store_true",
+        help=(
+            "fail if ANY high-tier proposal was made. The zero-false-positive rule is a "
+            "human judgement; this turns it into a mechanical one by refusing to pass a "
+            "log that contains something needing judgement. Used by the unattended "
+            "scripts/finalize_b7.sh path."
+        ),
+    )
     parser.add_argument(
         "--require-hours",
         type=float,
@@ -147,6 +163,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  … and {len(low) - 50} more (all in {args.log})")
 
     fails: list[str] = []
+    if args.require_zero_high_tier and high:
+        fails.append(
+            f"{len(high)} high-tier proposal(s) need a human verdict — an unattended run "
+            "cannot declare them false-positive-free. Judge the list above, then re-run "
+            "without --require-zero-high-tier to sign off"
+        )
     if args.require_hours and span_hours < args.require_hours:
         fails.append(
             f"window is {span_hours:.1f} h, criterion needs >= {args.require_hours:.0f} h "
