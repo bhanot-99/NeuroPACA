@@ -24,7 +24,7 @@ import re
 from collections.abc import Sequence
 
 from neuropaca.core.enums import SignalType
-from neuropaca.core.models import Node
+from neuropaca.core.models import GroundedAnswer, Node
 from neuropaca.learning.insight import INSIGHT_CATEGORIES, Insight
 
 _ALIAS_RE = re.compile(r"^n[1-9][0-9]*$")
@@ -144,4 +144,144 @@ def parse_insight(
         source_signal=source_signal,
         confidence=confidence,
         snapshot_count=snapshot_count,
+    )
+
+
+# ============================================================================
+# L9 · the interactive `$` / `$?` answer (B5, A2).
+#
+# `problems.md` 1.13: 2B4T cannot write a grounded sentence, so the interactive
+# path routes to a larger Qwen2.5-3B Q4 model (D-12). It *is* asked for free
+# text — one sentence — but still fully bounded: the `cited_nodes` field is an
+# enum of this prompt's aliases, `null` abstains, and `parse_answer` is a hard
+# gate (rules.md §4.1) that discards any answer whose sentence does not
+# substantively name a cited node's label. No grounded answer -> L9 falls back
+# to the extractive template, never a raw model string.
+#
+#   {"insight": "<one sentence>" | null,
+#    "cited_nodes": ["n1", ...],           // >= 1, all from THIS prompt
+#    "confidence": 0.0-1.0}
+# ============================================================================
+
+# A single logical line per rule (the llama.cpp GBNF parser ends a rule at a
+# top-level newline; a multi-line body segfaults the sampler — see above).
+#
+# `ws` is a *single optional space*, not `[ \t\n]*` (B5 validation finding,
+# 2026-09-01): a weak model, given free whitespace between tokens, fell into a
+# space-emitting loop and burned its token budget before closing the `}`. The
+# output shape is fully defined here — flexible whitespace buys nothing and costs
+# coherence. The compact form matches the few-shot exactly.
+_ANSWER_GRAMMAR_TEMPLATE = (
+    'root ::= "{" ws "\\"insight\\":" ws (sentence | "null") ws "," ws '
+    '"\\"cited_nodes\\":" ws "[" ws aliaslist ws "]" ws "," ws '
+    '"\\"confidence\\":" ws number ws "}"\n'
+    'sentence ::= "\\"" schar schar* "\\""\n'
+    'schar ::= [^"\\\\] | "\\\\" ["\\\\nt/]\n'
+    'aliaslist ::= alias (ws "," ws alias)*\n'
+    "alias ::= __ALIASES__\n"
+    'number ::= "1.0" | "1" | "0" | "0." [0-9] [0-9]?\n'
+    'ws ::= " "?\n'
+)
+
+# Free text for the interactive path — one sentence, hard-capped so a drifting
+# model cannot ramble (rules.md §4.1). ~80 tokens covers a full sentence + the
+# JSON envelope.
+ANSWER_MAX_TOKENS = 96
+
+_ANSWER_FEW_SHOT = (
+    "Facts:\n"
+    "  [n1] webpack · APP · score 8.1\n"
+    "  [n2] ~/src/app · FILE · score 7.4\n"
+    "Question: what is using my CPU?\n"
+    "Answer one sentence grounded in the facts, naming the fact(s) you used. "
+    "If the facts do not support an answer, use null.\n"
+    'Answer: {"insight": "webpack is the heaviest CPU consumer right now.", '
+    '"cited_nodes": ["n1"], "confidence": 0.86}\n\n'
+)
+
+
+def build_answer_grammar(aliases: Sequence[str]) -> str:
+    """Splice this prompt's alias enum into the `$?` skeleton. `aliases` must be
+    exactly the aliases present in the prompt (`rules.md §4.1`)."""
+    if not aliases:
+        raise ValueError("at least one alias is required")
+    for alias in aliases:
+        if not _ALIAS_RE.match(alias):
+            raise ValueError(f"not a local alias: {alias!r}")
+    if len(set(aliases)) != len(aliases):
+        raise ValueError(f"duplicate aliases: {list(aliases)!r}")
+    enum = " | ".join(f'"\\"{alias}\\""' for alias in aliases)
+    return _ANSWER_GRAMMAR_TEMPLATE.replace("__ALIASES__", enum)
+
+
+def build_answer_prompt(
+    question: str,
+    aliased: Sequence[tuple[str, Node]],
+    *,
+    live_snapshot: str | None = None,
+) -> str:
+    """One synthetic few-shot, then the distilled graph facts, an optional live
+    system snapshot line (the `$?` diagnose path only), then the question last
+    (`problems.md` 1.13)."""
+    snap = f"Live: {live_snapshot}\n" if live_snapshot else ""
+    return (
+        _ANSWER_FEW_SHOT
+        + "Facts:\n"
+        + _context_block(aliased)
+        + "\n"
+        + snap
+        + f"Question: {question.strip()}\n"
+        + "Answer one sentence grounded in the facts, naming the fact(s) you used. "
+        + "If the facts do not support an answer, use null.\n"
+        + "Answer: "
+    )
+
+
+def parse_answer(
+    raw: str,
+    alias_to_id: dict[str, str],
+    alias_to_label: dict[str, str],
+) -> GroundedAnswer | None:
+    """The hard validation gate for `$?` (`rules.md §4.1` item 6):
+
+    1. parses against the schema (first JSON object);
+    2. `insight` is a non-empty string (``null`` -> abstain -> `None`);
+    3. `cited_nodes` is non-empty and every alias was in the prompt;
+    4. `confidence` is a real number in [0, 1];
+    5. **grounding** — the sentence contains a case-insensitive substring of at
+       least one cited node's label. Citation without grounding is discarded.
+    """
+    obj = _first_json_object(raw)
+    if obj is None:
+        return None
+    insight = obj.get("insight")
+    cited = obj.get("cited_nodes")
+    confidence = obj.get("confidence")
+
+    if insight is None:  # explicit abstain
+        return None
+    if not isinstance(insight, str) or not insight.strip():
+        return None
+    if not isinstance(cited, list) or not cited:
+        return None
+    if any(not isinstance(a, str) or a not in alias_to_id for a in cited):
+        return None
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return None
+    if not 0.0 <= float(confidence) <= 1.0:
+        return None
+
+    text_l = insight.lower()
+    grounded = any(
+        alias_to_label.get(a, "\x00").lower() in text_l
+        or any(tok in text_l for tok in alias_to_label.get(a, "").lower().split() if len(tok) >= 4)
+        for a in cited
+    )
+    if not grounded:
+        return None
+
+    return GroundedAnswer(
+        text=insight.strip(),
+        cited_node_ids=tuple(dict.fromkeys(alias_to_id[a] for a in cited)),
+        confidence=float(confidence),
     )

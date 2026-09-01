@@ -56,6 +56,9 @@ class Node:
     access_count: int = 0
     relevance_score: float = 0.0
     priority: int = 0
+    # B5 · set by L9 the first time an INSIGHT node is surfaced to the user
+    # (surface-once). None on every other node type. Persisted (schema v2).
+    surfaced_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -72,6 +75,22 @@ class Edge:
     relation: RelationType
     weight: float = 0.0
     created_at: datetime = field(default_factory=_utcnow)
+
+
+@dataclass(frozen=True, slots=True)
+class GroundedAnswer:
+    """A parsed, validated `$?` response (B5, A2). The interactive model fills a
+    GBNF schema (`learning/prompts.py`); `parse_answer` is the hard gate — a
+    stored answer's `text` substantively references at least one cited node's
+    label (rules.md §4.1). `null` insight / a failed gate yields `None`, and L9
+    falls back to the extractive template.
+
+    Moves from `learning.prompts.parse_answer` to `InterfaceLayer` in RAM only —
+    never persisted (`conversation_history` is RAM-only, rules.md §6)."""
+
+    text: str
+    cited_node_ids: tuple[str, ...]
+    confidence: float
 
 
 def system_error_event(

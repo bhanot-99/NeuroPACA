@@ -2,19 +2,41 @@
 
 ### Neuromorphic Personal Autonomous Computing Agent
 
-> A local AI that learns your machine, builds a behavioural graph of how you work, and gives grounded answers from a small local model — with zero cloud dependency. *(A later phase grows a sparse model around your actual work — see `pruning.md`.)*
+> A local AI that learns your machine, builds a behavioural graph of how you work, and gives grounded answers from a small local model — with **zero cloud dependency**.
+> *(A later, deferred phase grows a sparse model around your actual work — see [`pruning.md`](pruning.md).)*
 
-**Status:** B0 — Foundation. Repo skeleton, tooling, and the BitNet de-risking spike harness are in place; the spike has not yet been run on the target machine.
-**Version:** v4
-**Author:** Jatin Bhanot · Chitkara University · 2026
+| | |
+| --- | --- |
+| **Status** | B5 · Interface (L9) built (`b5-interface-l9`). B0–B4 + B2.5 merged. See [`memory.md`](memory.md) for the live state. |
+| **Version** | v4 |
+| **Author** | Jatin Bhanot · Chitkara University · 2026 |
+| **Runs on** | One laptop, CPU-only, single user, single graph. No GPU, no accounts, no telemetry. |
+| **Goal** | A publishable research paper — benchmarks and rejected alternatives are deliverables. |
 
 ---
 
 ## What is NeuroPACA?
 
-NeuroPACA passively watches OS-level signals (CPU, RAM, disk, temperature, processes, system logs) every 60 seconds, turns them into named behavioural patterns, and stores them in a personal knowledge graph. Every node carries one `relevance_score` that governs **what the graph keeps, what it replays during idle time, and how it ranks context for your questions**. A later, deferred phase uses that same score to prune a local model toward your work (`pruning.md`).
+NeuroPACA passively watches **cold OS-level numbers** (CPU, RAM, disk, temperature, processes, system logs) every 60 seconds, turns them into named behavioural patterns, and stores them in a personal knowledge graph.
 
-Nothing leaves the machine. It does not record your screen or keystrokes — only cold system numbers.
+```mermaid
+flowchart LR
+    OS["Your machine<br/>(CPU, RAM, disk, temp,<br/>processes, logs)"] -->|every 60s| SENSE[L2 · Sensing]
+    SENSE -->|MetricSnapshot| DIAG[L3 · Diagnosis<br/>rule-based patterns]
+    DIAG -->|Signal| GRAPH[(Personal graph<br/>every node has one<br/>relevance_score)]
+    DIAG -->|Signal| LEARN[L4 · Learning<br/>extractive insight]
+    LEARN --> GRAPH
+    GRAPH --> IDLE[L6 · Idle Cognition<br/>replay + housekeeping<br/>when you walk away]
+    IDLE --> GRAPH
+    GRAPH --> ASK["L9 · Interface<br/>$ what's using my CPU?"]
+    ASK -->|grounded answer,<br/>cites real nodes| USER([You, in the terminal])
+```
+
+**One score, several jobs.** Every node carries one `relevance_score` (0–10) that governs **what the graph keeps**, **what it replays during idle time**, and **how it ranks context for your questions**. A later, deferred phase uses that same score to prune a local model toward your work ([`pruning.md`](pruning.md)).
+
+**Privacy is the product.** Nothing leaves the machine. It does not record your screen or keystrokes — only cold system numbers. Raw sensor data is buffered briefly, then purged; only the extracted graph knowledge persists.
+
+---
 
 ## Building
 
@@ -28,11 +50,28 @@ uv run mypy
 uv run pytest -q
 ```
 
-Source lives in `src/neuropaca/`, one package per architectural layer. The
-current phase and next action are always in [`memory.md`](memory.md). The B0
-BitNet de-risking spike (run on the target machine) is
-[`spikes/b0_bitnet/`](spikes/b0_bitnet/README.md) — it is throwaway code and is
-never imported by the daemon.
+## Running it
+
+```bash
+neuropacad                         # the daemon (reads $NEUROPACA_CONFIG or ./neuropaca.toml)
+
+neuropaca ask "what's using my CPU"   # $  — grounded answer from your graph
+neuropaca diagnose "why is the disk full"  # $? — + a live system snapshot
+neuropaca health                     # daemon + module health
+neuropaca insights                   # surfaced insights (anomaly / distraction)
+```
+
+The CLI is a thin client over a Unix socket (`$XDG_RUNTIME_DIR/neuropaca.sock`);
+`$!` / `$$` are reserved until the Action layer (B7).
+
+| Path | What it holds |
+| --- | --- |
+| `src/neuropaca/` | One package per architectural layer (`core/`, `sensing/`, `diagnosis/`, `learning/`, …) |
+| [`memory.md`](memory.md) | The current phase and next action — **always read this first** |
+| `spikes/b0_bitnet/` | The B0 BitNet de-risking spike — throwaway code, never imported by the daemon |
+| `data/` | gitignored — `graph.json`, `idle_cache.db`, `actions.jsonl`, logs |
+
+---
 
 ## Source of truth
 
@@ -40,11 +79,35 @@ The concept documents this build is derived from:
 
 | File | What it is |
 | --- | --- |
-| `1000071408.png` | The v4 class diagram — the authoritative blueprint |
+| `1000071408.png` | The v4 class diagram — **the authoritative blueprint** |
 | `neuropaca-v4.html` | The full concept: architecture, memory design, workflow, sparse-model reasoning |
 | `neuropaca-overview.html` | Condensed overview + the BitNet/llama.cpp tech-fix note |
 
-The Markdown documents below are derived from those three:
+> **Precedence:** where a doc and a source conflict, the source wins. Where the diagram and the concept HTML conflict, the diagram wins. (Decision D-1.)
+
+### The Markdown docs (this folder)
+
+```mermaid
+flowchart TD
+    README["README.md<br/>you are here"]
+    PRD["PRD.md<br/>scope · the thesis ·<br/>features · non-goals · privacy"]
+    ARCH["Architecture.md<br/>10 layers · class shapes ·<br/>4 invariants · event catalogue"]
+    RULES["rules.md<br/>binding engineering rules +<br/>AI-agent boundaries"]
+    PHASES["phases.md<br/>runtime lifecycle +<br/>build order B0–B9"]
+    DESIGN["design.md<br/>terminal-first visual identity"]
+    MEMORY["memory.md<br/>living project state tracker"]
+    PROBLEMS["problems.md<br/>risks register + testing log"]
+    PRUNING["pruning.md<br/>personal model pruning —<br/>DEFERRED, end of roadmap"]
+
+    README --> PRD
+    PRD -->|what to build| ARCH
+    ARCH -->|how it's shaped| RULES
+    ARCH --> PHASES
+    PHASES -->|build order| DESIGN
+    PHASES --> MEMORY
+    MEMORY --> PROBLEMS
+    PROBLEMS -.->|negative result is a deliverable| PRUNING
+```
 
 | Document | Purpose |
 | --- | --- |

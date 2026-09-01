@@ -1,20 +1,30 @@
 # pruning.md — Personal Model Pruning (DEFERRED)
 
-**Status:** Deferred to the **end** of the roadmap. Not part of build steps B0–B9. Nothing in the core system depends on it.
+**Status:** Deferred to the **end** of the roadmap. Not part of build steps B0–B9. **Nothing in the core system depends on it.**
 
-This is NeuroPACA's original and most ambitious idea — and its biggest research risk. It is fenced off here so the rest of the project can be built, shipped, and dogfooded without it. We return to it only after the core loop (sensing → graph → grounded answers → idle cognition → action gradients) is proven useful.
+> This is NeuroPACA's original and most ambitious idea — and its biggest research risk. It is fenced off here so the rest of the project can be built, shipped, and dogfooded without it. We return to it only after the core loop (sensing → graph → grounded answers → idle cognition → action gradients) is proven useful.
+
+```mermaid
+flowchart LR
+    B0B9["B0–B9 core system<br/>+ evaluation kit"] --> DOG["weeks of real usage —<br/>core proven useful?"]
+    DOG -->|yes| SPIKE["D1 · cheap spike in experiments/pruning/<br/>hand-built domain_to_heads for 3 domains"]
+    SPIKE -->|promising| PIPE["full pipeline → src/neuropaca/sparsity/<br/>(offline only, never imported by the daemon)"]
+    SPIKE -->|negative| PAPER["documented negative result<br/>= a publishable deliverable (claim E)"]
+```
 
 ---
 
 ## 1. The idea — the fourth job of `relevance_score`
 
-Every graph node carries one `relevance_score` (see `PRD.md §3`). In the core system it does three jobs: graph **retention** (`prune_low_score`), memory **replay** priority (the DMN), and **retrieval ranking** (context building for `$`).
+Every graph node carries one `relevance_score` (see `PRD.md §3`). In the core system it does **three** jobs: graph **retention** (`prune_low_score`), memory **replay** priority (the DMN), and **retrieval ranking** (context building for `$`).
 
-The deferred fourth job: **the same score decides which attention heads of the local model get cut.**
+The deferred **fourth** job: **the same score decides which attention heads of the local model get cut.**
 
-- `score ≥ 7` → protect that domain's heads
-- `score ≤ 3` → flag them for removal
-- `4–7` → keep, compressible
+| `relevance_score` | Action on that domain's heads |
+| --- | --- |
+| ≥ 7 | **protect** |
+| 4–7 | keep, compressible |
+| ≤ 3 | **flag for removal** |
 
 The result would be a sparse subnetwork shaped around the two or three domains you actually work in — a "personal" model, smaller than the base.
 
@@ -22,10 +32,12 @@ The result would be a sparse subnetwork shaped around the two or three domains y
 
 ## 2. Why it's deferred (not deleted)
 
-1. **BitNet b1.58 2B4T already fits a laptop** (~1.1 GB resident). Pruning was a fix for "the model is too big." That problem no longer exists — so pruning is an optimisation, not a requirement.
-2. **It's the riskiest part of the whole project.** See §5. It may simply not work at 2B.
-3. **Doing it last is the right order.** By the end there will be weeks of real usage data to prune against, and the core system will have proven its worth first.
-4. **The tradeoff:** we won't know whether the central thesis ("behaviour can shape a model") holds until the end. **Mitigation:** nothing else depends on it, so a negative result costs nothing structural — and a documented negative result is itself a publishable deliverable (`problems.md` Part 2, claim E).
+| # | Reason |
+| --- | --- |
+| 1 | **BitNet b1.58 2B4T already fits a laptop** (~1.1 GB resident). Pruning was a fix for "the model is too big." That problem no longer exists — so pruning is an optimisation, not a requirement. |
+| 2 | **It's the riskiest part of the whole project.** See §5. It may simply not work at 2B. |
+| 3 | **Doing it last is the right order.** By the end there will be weeks of real usage data to prune against, and the core system will have proven its worth first. |
+| 4 | **The tradeoff:** we won't know whether the central thesis ("behaviour can shape a model") holds until the end. **Mitigation:** nothing else depends on it, so a negative result costs nothing structural — and a documented negative result is itself a publishable deliverable (`problems.md` Part 2, claim E). |
 
 ---
 
@@ -36,6 +48,12 @@ The result would be a sparse subnetwork shaped around the two or three domains y
 Weights ∈ {−1, 0, +1}, 1.58 bits/param. Matrix multiplications become additions/subtractions — no floating point at inference. ~0.4 GB of weights, ~1.1 GB resident. Run in-process via **llama.cpp** (which exposes model internals), not Ollama.
 
 ### 3.2 The bridge — `domain_to_heads`
+
+```mermaid
+flowchart LR
+    GN["graph nodes<br/>(semantic concepts:<br/>pytest, vscode, …)"] -->|"static lookup table<br/>domain → [(layer, head_id), …]<br/>built ONCE at setup by probing"| MH["model components<br/>(attention heads)"]
+    MH --> MASK["prune mask<br/>(DB read + table lookup —<br/>no inference at prune time)"]
+```
 
 Graph nodes are semantic concepts; model components are attention heads — different spaces. A static lookup table maps `domain → [(layer, head_id), …]`, built **once at setup** by probing the model with representative inputs per domain. After that, generating a prune mask is a DB read + table lookup — no inference at prune time.
 
@@ -48,9 +66,13 @@ for node in graph.all_nodes():
 
 ### 3.3 The tech-fix — llama.cpp, not Ollama
 
-The original design routed pruning through **Ollama** at inference time. That is architecturally impossible: Ollama loads the model as a frozen binary — there is no "skip head 5" parameter, and modifying weights in memory + re-serialising + reloading takes seconds, not milliseconds.
+| | Ollama (original, impossible) | llama.cpp (the fix) |
+| --- | --- | --- |
+| How the model loads | frozen binary — no "skip head 5" parameter | `load_gguf_with_mask` applies the head mask **once at model load** |
+| Cost of changing the mask | modify weights in memory + re-serialise + reload = **seconds** | none at inference — the sparse subnetwork runs natively |
+| When the mask regenerates | — | only when scores change significantly (idle time, by the DMN) |
 
-The fix: build the head mask from graph scores and apply it **once at model load** (`load_gguf_with_mask`). The sparse subnetwork then runs natively at inference — no reload, no latency penalty. The mask is regenerated only when scores change significantly (idle time). This is why `BitNetRuntime` owns `model` + `tokenizer` in-process (`Architecture.md §11`).
+This is why `BitNetRuntime` owns `model` + `tokenizer` in-process (`Architecture.md §11`).
 
 ### 3.4 Framing — usage-driven structured pruning, not "Lottery Ticket"
 
@@ -84,14 +106,17 @@ If Q1/Q2 come back negative: the paper reports it as a result ("behavioural scor
 
 ## 6. Build steps (when we get here — after B9)
 
-1. **Cheap spike first.** Released 2B4T + a hand-built `domain_to_heads` table for 3 domains. Zero some heads, measure quality vs sparsity on a held-out personal prompt set. Live in `experiments/pruning/`.
-2. If the spike is promising: `domain_to_heads` probing pipeline (once, at setup).
-3. `relevance_score` → prune-mask generator.
-4. `load_gguf_with_mask` — mask applied once at model load; `BitNetRuntime.load_model()` gains a mask parameter.
-5. DMN regenerates the mask when scores shift significantly.
-6. A/B quality harness: sparse vs base vs random-head-cut vs magnitude-pruned, on personal prompts.
-7. One-command rollback; mandatory backup of the previous model.
-8. Promote from `experiments/pruning/` to `src/neuropaca/sparsity/` — **never imported by the daemon**, offline only.
+```mermaid
+flowchart TD
+    S1["1 · Cheap spike in experiments/pruning/<br/>2B4T + hand-built domain_to_heads (3 domains),<br/>zero some heads, measure quality vs sparsity"] -->|promising| S2["2 · domain_to_heads probing pipeline (once, at setup)"]
+    S1 -->|not promising| STOP["stop — documented negative result"]
+    S2 --> S3["3 · relevance_score → prune-mask generator"]
+    S3 --> S4["4 · load_gguf_with_mask — mask applied once at load;<br/>load_model() gains a mask param"]
+    S4 --> S5["5 · DMN regenerates the mask when scores shift"]
+    S5 --> S6["6 · A/B quality harness:<br/>sparse vs base vs random-head-cut vs magnitude-pruned"]
+    S6 --> S7["7 · one-command rollback + mandatory model backup"]
+    S7 --> S8["8 · promote experiments/pruning/ → src/neuropaca/sparsity/<br/>(never imported by the daemon, offline only)"]
+```
 
 **Exit:** the sparse model is measurably smaller with no measurable quality loss on personal prompts, and rollback restores the previous model exactly. Feature is off by default.
 
@@ -101,11 +126,13 @@ If Q1/Q2 come back negative: the paper reports it as a result ("behavioural scor
 
 Nothing needs to change in B0–B9 to keep this door open:
 
-- `relevance_score` and `domain` already exist on every node.
-- `domain_to_heads` is built once at setup, independent of the daemon.
-- The prune mask is regenerated during idle time by the DMN.
-- Only `BitNetRuntime.load_model()` gains an optional `mask` argument.
-- `sparsity/` never appears in the running daemon's import graph.
+| Already in place | So that later… |
+| --- | --- |
+| `relevance_score` and `domain` exist on every node | the prune-mask generator has its input |
+| `domain_to_heads` is built once at setup, independent of the daemon | no daemon change to build the bridge |
+| the prune mask is regenerated during idle time by the DMN | no new scheduler surface |
+| only `BitNetRuntime.load_model()` gains an optional `mask` argument | one signature, one place |
+| `sparsity/` never appears in the running daemon's import graph | the core stays clean whether or not pruning ships |
 
 ---
 

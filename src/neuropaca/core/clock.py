@@ -3,19 +3,27 @@
 Every module with a poll loop, a decay timer, or an idle threshold takes a
 `Clock` rather than calling `time` / `asyncio.sleep` directly, so tests advance
 time deterministically instead of sleeping (rules.md §8). B2 is the first user;
-B5 (pressure decay) and B6 (DMN timing) reuse it.
+B5 (L9 daily surfacing cap) and B6 (DMN timing) reuse it.
+
+`monotonic()` is for durations; `now()` (B5) is wall-clock — the L9 insight cap
+resets at local midnight, which only a real calendar time can express.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
 class Clock(Protocol):
     def monotonic(self) -> float: ...
+
+    def now(self) -> datetime:
+        """Timezone-aware wall-clock time. Never naive."""
+        ...
 
     async def sleep(self, seconds: float) -> None: ...
 
@@ -26,20 +34,28 @@ class SystemClock:
     def monotonic(self) -> float:
         return time.monotonic()
 
+    def now(self) -> datetime:
+        return datetime.now().astimezone()
+
     async def sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
 
 
 class FakeClock:
     """Deterministic clock for tests. Time only moves when `advance()` is called;
-    a coroutine awaiting `sleep()` wakes when time reaches its deadline."""
+    a coroutine awaiting `sleep()` wakes when time reaches its deadline. `now()`
+    tracks the same advances against a fixed wall-clock origin."""
 
-    def __init__(self, start: float = 0.0) -> None:
+    def __init__(self, start: float = 0.0, *, wall: datetime | None = None) -> None:
         self._now = start
+        self._wall = wall if wall is not None else datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         self._sleepers: list[tuple[float, asyncio.Future[None]]] = []
 
     def monotonic(self) -> float:
         return self._now
+
+    def now(self) -> datetime:
+        return self._wall
 
     async def sleep(self, seconds: float) -> None:
         if seconds <= 0:
@@ -60,6 +76,7 @@ class FakeClock:
         for _ in range(5):
             await asyncio.sleep(0)
         self._now += seconds
+        self._wall += timedelta(seconds=seconds)
         due = [(d, f) for d, f in self._sleepers if d <= self._now]
         self._sleepers = [(d, f) for d, f in self._sleepers if d > self._now]
         for _deadline, future in due:

@@ -1,20 +1,27 @@
 # rules.md — Engineering Rules & AI Boundaries
 
-**Status:** Binding
-**Applies to:** every human and every AI agent writing code in this repository.
+**Status:** Binding · **Applies to:** every human and every AI agent writing code in this repository.
 
-`PRD.md` says what to build, `Architecture.md` says how it's shaped, this file says what is and isn't allowed. When they conflict, `Architecture.md` wins and this file gets a PR.
+> `PRD.md` says **what** to build, `Architecture.md` says **how** it's shaped, this file says **what is and isn't allowed**. When they conflict, `Architecture.md` wins and this file gets a PR.
+
+```mermaid
+flowchart LR
+    PRD["PRD.md<br/>WHAT"] --> ARCH["Architecture.md<br/>HOW (shape)"] --> RULES["rules.md<br/>ALLOWED?"]
+    RULES -.->|conflict → Architecture wins,<br/>this file gets a PR| ARCH
+```
 
 ---
 
 ## 0. The four invariants (from the blueprint)
 
-Violating any of these is a defect that blocks merge.
+**Violating any of these is a defect that blocks merge.**
 
-1. **Services are held, not inherited.** `EventBus`, `GraphMemory`, `BitNetRuntime` are singletons. Modules receive them as references and never subclass them.
-2. **`GraphMemory` uses `asyncio.Lock`, never `threading.Lock`** in loop-resident code.
-3. **Never call `BitNetRuntime.infer()` from a coroutine.** Use `infer_async()` (which wraps it in `run_in_executor`).
-4. **`SignalCorrelator` produces `SIGNAL_CORRELATED`; `PressureAccumulator` and `BitNetPlasticity` consume it — never calling each other.** Everything routes through the `EventBus`.
+| # | Invariant |
+| --- | --- |
+| 1 | **Services are held, not inherited.** `EventBus`, `GraphMemory`, `BitNetRuntime` are singletons. Modules receive them as references and never subclass them. |
+| 2 | **`GraphMemory` uses `asyncio.Lock`, never `threading.Lock`** in loop-resident code. |
+| 3 | **Never call `BitNetRuntime.infer()` from a coroutine.** Use `infer_async()` (which wraps it in `run_in_executor`). |
+| 4 | **`SignalCorrelator` produces `SIGNAL_CORRELATED`; `PressureAccumulator` and `BitNetPlasticity` consume it — never calling each other.** Everything routes through the `EventBus`. |
 
 **Plus:** no module imports another module. If you want a direct call, you want a new event.
 
@@ -64,7 +71,7 @@ text = await self.bitnet_runtime.infer_async(prompt, 256)
 - One inference at a time, system-wide. Do not optimise around `_inference_lock`.
 - Every call has a token budget and a wall-clock timeout.
 - Check `is_busy` before enqueueing optional work (DMN, proactive insights). Dropping optional inference is correct.
-- Model output is untrusted input. Parse defensively — never `eval`, never execute, never pass it into a shell, never interpolate it into a file path.
+- **Model output is untrusted input.** Parse defensively — never `eval`, never execute, never pass it into a shell, never interpolate it into a file path.
 - Prompts come from `learning/prompts.py`. Context is built **only** by `build_context_from_nodes()` — one serialiser, one format, everywhere.
 - Every generated insight must cite `related_node_ids`, and its text must substantively reference the cited nodes' labels — citation without grounding is discarded, not stored.
 - Backends implement the `InferenceBackend` protocol. Module code never imports a backend directly.
@@ -74,25 +81,40 @@ text = await self.bitnet_runtime.infer_async(prompt, 256)
 
 The model is 2B params at 1.58 bits. It loses coherence fast on open-ended prompts over graph context (`problems.md` 1.13). Every call obeys this:
 
-- **Every structured call runs against a task-specific GBNF grammar** (llama.cpp constrained decoding). There is one grammar per task, versioned alongside its prompt in `learning/prompts.py`. No free-form "analyse the system" prompts.
-- **Citations are constrained to the exact node IDs in the prompt.** The `cited_nodes` field is a grammar enum built from the nodes passed in *this* call. Use **local aliases** (`n1`…`n5`) in the prompt and the enum, not raw node IDs — no GBNF escaping, map aliases back after parsing.
-- **The grammar is compiled per call, before the lock.** Keep the schema skeleton as a static template in `learning/prompts.py`; splice in only the `cited_nodes` alias enum. Build the GBNF string, *then* acquire `_inference_lock`, *then* infer — grammar assembly is pure string work and must not hold the executor.
-- **Every schema has an `abstain` path** (`null` / `"insufficient evidence"`). Forcing an answer out of a small model is how you get hallucinations.
-- **Distilled input only.** `build_context_from_nodes()` emits one terse line per node (`alias · label · type · score · 1–2 attrs`) — never a raw `MetricSnapshot`, never a raw subgraph dump. Top-K ranked by `relevance_score`, deduped by domain; K is a config value set from the B0 ablation, not a guess.
-- **Decoding.** Enums / routing / `cited_nodes` / `confidence`: always greedy (temperature ≈ 0). Free-text fields: greedy in the background loop (L4's novelty check absorbs repetition); ~0.4 permitted for interactive `$` / `$?` only.
-- **Post-generation validation is a hard gate**, not advisory: parse against the schema → every `cited_node` exists in the prompt → the free text references at least one cited node's `label`. Fail → discard (background loop) or one tighter retry (`$?` only).
-- **One synthetic few-shot example** per prompt, matching the grammar exactly. Synthetic/fictional data only — prompts must stay shippable.
-- **Fallbacks — only if the B0 spike shows constrained 2B4T isn't enough:** micro-decompose `$?` into ≤ 2 sequential grammar-constrained prompts (never the background loop); or use a ~3B Q4 model for `$?` only (`BitNetRuntime` is backend-pluggable).
+```mermaid
+flowchart TD
+    P["build prompt from learning/prompts.py<br/>+ distilled context (≤5 nodes, top-K by score)"] --> G["splice cited_nodes alias enum<br/>into the static GBNF template<br/>(pure string work — BEFORE the lock)"]
+    G --> LK["acquire _inference_lock"]
+    LK --> I["infer — greedy for enums/citations/confidence,<br/>≤0.4 free-text for interactive $ / $? only"]
+    I --> V{"HARD validation gate:<br/>parse vs schema · every cited_node in prompt ·<br/>free text references ≥1 cited label"}
+    V -->|pass| STORE[use it]
+    V -->|fail — background loop| DISCARD[discard]
+    V -->|fail — $? only| RETRY[one tighter retry]
+```
+
+| Rule | Detail |
+| --- | --- |
+| Task-specific GBNF grammar per call | One grammar per task, versioned alongside its prompt in `learning/prompts.py`. No free-form "analyse the system" prompts. |
+| Citations constrained to prompt node IDs | The `cited_nodes` field is a grammar enum built from *this* call's nodes. Use **local aliases** (`n1`…`n5`) in the prompt and enum, not raw node IDs — no GBNF escaping; map aliases back after parsing. |
+| Grammar compiled per call, before the lock | Keep the schema skeleton as a static template; splice in only the `cited_nodes` alias enum. Build the GBNF string, *then* acquire `_inference_lock`, *then* infer. |
+| Every schema has an `abstain` path | `null` / `"insufficient evidence"`. Forcing an answer out of a small model is how you get hallucinations. |
+| Distilled input only | `build_context_from_nodes()` emits one terse line per node (`alias · label · type · score · 1–2 attrs`) — never a raw `MetricSnapshot`, never a raw subgraph dump. Top-K ranked by `relevance_score`, deduped by domain; K is a config value set from the B0 ablation, not a guess. |
+| Decoding | Enums / routing / `cited_nodes` / `confidence`: always greedy (temp ≈ 0). Free-text fields: greedy in the background loop (L4's novelty check absorbs repetition); ~0.4 permitted for interactive `$` / `$?` only. |
+| Post-generation validation is a hard gate | parse against the schema → every `cited_node` exists in the prompt → the free text references at least one cited node's `label`. Fail → discard (background loop) or one tighter retry (`$?` only). |
+| One synthetic few-shot example | Per prompt, matching the grammar exactly. Synthetic/fictional data only — prompts must stay shippable. |
+| Fallbacks — only if the B0 spike shows constrained 2B4T isn't enough | micro-decompose `$?` into ≤ 2 sequential grammar-constrained prompts (never the background loop); or use a ~3B Q4 model for `$?` only (`BitNetRuntime` is backend-pluggable). |
 
 ## 5. Action layer safety
 
-1. Every action runs behind the safety gate: sandbox, backup before any write, rollback available.
-2. Dangerous actions (`RunCommandAction`, killing processes, deletion) require terminal confirmation at execution time. No pressure level and no config flag removes this.
-3. A single signal never fires a high-threshold action — those need synchronised Sensing + Diagnosis + Learning spikes.
-4. Never build a shell command by interpolating model output or graph content. `subprocess.run([...], shell=False)`, always.
-5. `ApiCallAction` is disabled by default with an empty allowlist — the only component permitted an outbound socket.
-6. Every action attempt writes one JSONL line to `action_log_path` before and after.
-7. No action deletes user data — move to quarantine with a TTL.
+| # | Rule |
+| --- | --- |
+| 1 | Every action runs behind the safety gate: sandbox, backup before any write, rollback available. |
+| 2 | Dangerous actions (`RunCommandAction`, killing processes, deletion) require terminal confirmation at execution time. **No pressure level and no config flag removes this.** |
+| 3 | A single signal never fires a high-threshold action — those need synchronised Sensing + Diagnosis + Learning spikes. |
+| 4 | Never build a shell command by interpolating model output or graph content. `subprocess.run([...], shell=False)`, always. |
+| 5 | `ApiCallAction` is disabled by default with an empty allowlist — the only component permitted an outbound socket. |
+| 6 | Every action attempt writes one JSONL line to `action_log_path` before and after. |
+| 7 | No action deletes user data — move to quarantine with a TTL. |
 
 ## 6. Privacy
 
@@ -121,6 +143,17 @@ The model is 2B params at 1.58 bits. It loses coherence fast on open-ended promp
 - Tests assert on behaviour and events, not internal call sequences.
 
 ## 9. AI-agent boundaries
+
+```mermaid
+flowchart TD
+    START([an AI agent wants to make a change]) --> READ["read memory.md first,<br/>work only on the current phase in phases.md"]
+    READ --> Q1{"does it add/upgrade/remove a dependency,<br/>change a public signature, edit PRD/Architecture/rules,<br/>change the graph schema or an enum, enable a<br/>dangerous action, restructure dirs, or commit/push/PR?"}
+    Q1 -->|yes| STOP1[STOP — needs explicit human approval]
+    Q1 -->|no| Q2{"do two docs conflict · is the blueprint silent on<br/>something structural · would it touch >3 modules ·<br/>have you tried the same fix twice and it still fails?"}
+    Q2 -->|yes| STOP2[STOP and ask]
+    Q2 -->|no| GO["proceed: follow exact class/method names from Architecture.md,<br/>write the test with the code, report honestly"]
+    GO --> LAST["update memory.md last"]
+```
 
 **Always:** read `memory.md` first and update it last; work only on the current phase in `phases.md`; follow the exact class/method names from `Architecture.md`; write the test with the code; report honestly (a failing test is reported with its output).
 

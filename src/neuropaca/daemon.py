@@ -1,6 +1,9 @@
-"""The daemon entry point (`neuropaca` console script; Architecture.md §10).
+"""The daemon entry point (`neuropacad` console script; Architecture.md §10).
 
-    NEUROPACA_CONFIG=/etc/neuropaca.toml neuropaca
+`neuropaca` (no `d`) is the CLI client (B5, `interface/cli.py`); this is the
+long-running daemon the B9 systemd unit launches.
+
+    NEUROPACA_CONFIG=/etc/neuropaca.toml neuropacad
 
 Loads and validates `Config`, then hands off to `NeuroPACAOrchestrator.run()`,
 which starts the event loop and blocks until `SIGTERM` / `SIGINT`.
