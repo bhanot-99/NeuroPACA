@@ -8,9 +8,13 @@ answer comes from the running daemon.
     neuropaca ask "what is using my CPU"      # $  — natural-language question
     neuropaca diagnose "why is the disk full" # $? — question + live snapshot
     neuropaca "$ how many meetings today"     # raw prefix form
-    neuropaca "$! kill webpack"               # refused until B7
+    neuropaca "$! kill webpack"               # $! — emergency command (L7)
+    neuropaca "$$ systemctl --user restart x" # $$ — same, with a state backup
     neuropaca health                          # daemon health (non-inference)
     neuropaca insights                        # drain surfaced insights
+    neuropaca notifications                   # drain what L7 wants to tell you
+    neuropaca confirmations                   # dangerous actions awaiting you
+    neuropaca confirm <id> [--deny]           # answer one of them
 
 Socket: ``--socket PATH`` > ``$NEUROPACA_SOCKET`` > ``$XDG_RUNTIME_DIR/neuropaca.sock``.
 Non-inference commands (`health`, `insights`, a refused prefix) never touch the
@@ -29,8 +33,9 @@ from typing import Any
 from neuropaca.interface.layer import default_socket_path
 
 _USAGE = (
-    "usage: neuropaca (ask|diagnose|health|insights) [text]\n"
-    '       neuropaca "$ <question>" | "$? <question>"\n'
+    "usage: neuropaca (ask|diagnose|health|insights|notifications|confirmations) [text]\n"
+    "       neuropaca confirm <request-id> [--deny]\n"
+    '       neuropaca "$ <question>" | "$? <question>" | "$! <command>" | "$$ <command>"\n'
 )
 _PREFIXES = ("$?", "$!", "$$", "$")  # longest-first so `$?` wins over `$`
 _CONNECT_TIMEOUT = 3.0
@@ -44,6 +49,7 @@ class _CliError(Exception):
 def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
     """Return (request, socket_override)."""
     socket_override: str | None = None
+    deny = False
     args: list[str] = []
     it = iter(argv)
     for tok in it:
@@ -51,6 +57,8 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
             socket_override = next(it, None)
             if socket_override is None:
                 raise _CliError("--socket needs a path")
+        elif tok == "--deny":
+            deny = True
         elif tok in ("-h", "--help"):
             raise _CliError(_USAGE)
         else:
@@ -64,6 +72,19 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
         return {"op": "health"}, socket_override
     if head == "insights":
         return {"op": "insights"}, socket_override
+    if head == "notifications":
+        return {"op": "notifications"}, socket_override
+    if head == "confirmations":
+        return {"op": "confirmations"}, socket_override
+    if head == "confirm":
+        if len(rest) != 1:
+            raise _CliError("'confirm' needs exactly one request id (add --deny to refuse)")
+        # Approval is the explicit, typed act rules.md §5.2 asks for: you name the
+        # request id, in your own terminal, while L7 is blocked waiting for it.
+        return (
+            {"op": "confirm", "request_id": rest[0], "approved": not deny},
+            socket_override,
+        )
     if head in ("ask", "diagnose"):
         text = " ".join(rest).strip()
         if not text:
@@ -147,6 +168,49 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             console.print(f"[magenta]◆[/magenta] {ins.get('text', '')}")
             meta = f"{ins.get('category')} · confidence {ins.get('confidence')}"
             console.print(f"  [dim]{meta}[/dim]")
+        return 0
+
+    if op == "notifications":
+        notifications = resp.get("notifications", [])
+        if not notifications:
+            console.print("[dim]nothing from the action layer[/dim]")
+            return 0
+        for note in notifications:
+            mark = "[yellow]▲[/yellow]" if note.get("dry_run") else "[cyan]▶[/cyan]"
+            console.print(f"{mark} {note.get('text', '')}")
+            tail = note.get("reason", "")
+            if note.get("dry_run"):
+                tail = f"{tail} · dry-run (nothing was executed)" if tail else "dry-run"
+            if tail:
+                console.print(f"  [dim]{tail}[/dim]")
+        return 0
+
+    if op == "confirmations":
+        confirmations = resp.get("confirmations", [])
+        if not confirmations:
+            console.print("[dim]nothing is waiting for you[/dim]")
+            return 0
+        for pending in confirmations:
+            console.print(
+                f"[red]⚠[/red] {pending.get('action', '?')} "
+                f"[dim]({pending.get('tier', '?')})[/dim] — {pending.get('summary', '')}"
+            )
+            console.print(f"  [dim]{pending.get('reason', '')}[/dim]")
+            console.print(
+                f"  [dim]approve:[/dim] neuropaca confirm {pending.get('request_id', '')}"
+                f"   [dim]refuse:[/dim] neuropaca confirm "
+                f"{pending.get('request_id', '')} --deny"
+            )
+        return 0
+
+    if op == "confirm":
+        verdict = "[green]approved[/green]" if resp.get("approved") else "[yellow]denied[/yellow]"
+        console.print(f"{verdict} {resp.get('action', '')} ({resp.get('request_id', '')})")
+        return 0
+
+    if resp.get("queued"):
+        console.print(f"[cyan]▶[/cyan] {resp.get('prefix', '')} handed to the action layer")
+        console.print(f"  [dim]{resp.get('note', '')}[/dim]")
         return 0
 
     # a query answer

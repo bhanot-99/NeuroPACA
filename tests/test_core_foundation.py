@@ -28,7 +28,9 @@ from neuropaca.core.models import Edge, Event, Node, system_error_event
 
 
 def test_enum_members_match_the_blueprint() -> None:
-    assert len(EventType) == 16  # +APP_SWITCH (B2.5b) +SYSTEM_HEALTH_{REQUEST,REPORT} (B5)
+    # +APP_SWITCH (B2.5b) +SYSTEM_HEALTH_{REQUEST,REPORT} (B5)
+    # +ACTION_CONFIRMATION_{REQUEST,RESPONSE} (B7, D-14)
+    assert len(EventType) == 18
     assert len(NodeType) == 11  # +IDLE_THOUGHT (B6, D-13)
     assert len(RelationType) == 8
     assert len(SignalType) == 7
@@ -99,7 +101,22 @@ def test_llama_backend_requires_existing_model_path() -> None:
         ({"inference_backend": "ollama"}, "inference_backend"),
         ({"inference_backend": "fake", "log_level": "LOUD"}, "log_level"),
         ({"inference_backend": "fake", "idle_threshold_seconds": 0}, "idle_threshold_seconds"),
-        ({"inference_backend": "fake", "pressure_threshold": -1.0}, "pressure_threshold"),
+        ({"inference_backend": "fake", "pressure_low_threshold": -1.0}, "pressure_low_threshold"),
+        (
+            # B7: the high tier must sit strictly above the low one, or "a single
+            # signal never crosses the high threshold" is unenforceable.
+            {"inference_backend": "fake", "pressure_high_threshold": 0.5},
+            "pressure_high_threshold",
+        ),
+        (
+            {"inference_backend": "fake", "action_enabled_tiers": ["safe", "nuclear"]},
+            "action_enabled_tiers",
+        ),
+        ({"inference_backend": "fake", "api_call_enabled": True}, "api_allowlist"),
+        (
+            {"inference_backend": "fake", "pressure_decay_half_life_seconds": 0},
+            "pressure_decay_half_life_seconds",
+        ),
         ({"inference_backend": "fake", "max_concurrent_agents": -1}, "max_concurrent_agents"),
         ({"inference_backend": "fake", "poll_intervals": {"system": 0.0}}, "poll_intervals"),
         ({"inference_backend": "fake", "max_context_tokens": 0}, "max_context_tokens"),

@@ -26,7 +26,7 @@ This file holds three things:
 | 1.6 | How do we sort activity into 10 topics? | 🟢 resolved (D-10, B2.5b) | core |
 | 1.7 | Reading the active window is OS-specific and hard | 🟢 resolved (D-9 idle, D-10 window) | core |
 | 1.8 | One user on one machine is not enough to prove anything | 🔴 open | core / research |
-| 1.9 | The Action and Agents layers are guesses | 🟡 in progress | core |
+| 1.9 | The Action and Agents layers are guesses | 🟡 L7 built to the reconstruction (D-14); L8 still open | core |
 | 1.10 | Concurrency traps | 🟡 in progress | core |
 | 1.11 | Too big for one person / takes too long | 🟡 in progress | core |
 | 1.12 | Privacy makes it hard to prove it works | 🟡 in progress | core / research |
@@ -39,7 +39,7 @@ flowchart LR
         R16["1.6 domain classification 🟢"]
         R17["1.7 active window 🟢"]
         R113["1.13 model coherence 🟠 → L4 mitigated"]
-        R19["1.9 L7/L8 reconstructed 🟡"]
+        R19["1.9 L7 built (D-14) · L8 open 🟡"]
         R110["1.10 concurrency 🟡"]
         R18["1.8 single-user evidence 🔴"]
     end
@@ -170,6 +170,8 @@ flowchart LR
 - Get a **full-width re-export** of the diagram from the source before building L7 or L8.
 - Until then, mark everything about L7/L8 in the docs as "reconstructed — verify" (already done in `Architecture.md §11b`).
 - Build the safe parts of L7 first (notifications, memory writes). Leave file-writes and command-running for last, behind the strictest gate.
+
+**Ruling (D-14, 2026-09-01).** No re-export materialised and B7 could not wait on one, so the §11b reconstruction was **accepted as authoritative for L7** and built to. The mitigation above was followed in full: the two safe actions (`NotificationAction`, `MemoryWriteAction`) are the only ones that can fire autonomously; `FileWriteAction` and `RunCommandAction` are `dangerous`, ship behind `action_enabled_tiers` (default `["safe"]`) *and* `action_dry_run = True`, and cannot execute without a recorded human confirmation. `ApiCallAction` — the one component that would open a socket — **was not built at all**; only its reserved config switches exist. **L8 is untouched and this stays 🟡:** `AgentSupervisor`, `spawn_node()` / `kill_node()`, and apoptosis are still guesses, and B8 should not start without the re-export.
 
 ---
 

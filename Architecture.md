@@ -501,6 +501,8 @@ flowchart LR
 - Every `PressureEntry` carries a `reason`. **An action that cannot explain itself must not fire.**
 - Emits `PRESSURE_THRESHOLD_REACHED`.
 
+**As built (B7, D-14).** The blueprint's L2 arrow is retired: `MetricSnapshot.anomaly_score` is fixed at 0.0 (D-7 B5), so Sensing has no spike magnitude to contribute. `PressureAccumulator` subscribes to **exactly two** sources — `SIGNAL_CORRELATED` (L3) and `INSIGHT_GENERATED` (L4, `event.source == "learning"`; an L6 idle thought is the system talking to itself and does not corroborate). The high tier therefore needs L3 **and** L4, each above confidence 0.75, inside two half-lives of each other — a **set** test, so no magnitude of one source can open it. Decay is exponential on `pressure_decay_half_life_seconds` (60 s = 50 %/min = 0.098 % at ten minutes), applied both lazily on read and on the L5-owned `Clock` timer, which also evicts faded entries and re-arms the per-node threshold latch (hysteresis: one crossing, one event). The blueprint's `pressure_map: Dict[str, float]` survives as a decayed read-only projection; the interior additionally carries `reason`, `sources`, and timestamps. Crossing the high threshold makes a dangerous action *permissible* — it never executes one.
+
 ---
 
 ## 8. L6 · Idle Cognition — Default Mode Network
@@ -589,8 +591,18 @@ flowchart LR
   (`rules.md §4.1`); one tighter retry for `$?`; any failure → extractive
   template, never a raw model string. `$?` also injects a one-line live system
   snapshot (L9 keeps the latest `METRIC_COLLECTED`).
-- `$!` / `$$` are **parsed and reserved** — they need L7 (B7) and return
-  `not available until B7`.
+- `$!` / `$$` are **live from B7 (D-14)**: L9 parses them, publishes
+  `USER_MESSAGE`, and returns `queued` immediately — it never executes anything.
+  L7 owns their meaning: both are `RunCommandAction`s at the **dangerous** tier,
+  so both need a recorded confirmation; `$!` forces the tier (the human's
+  instruction replaces accumulated pressure) and skips L3/L4, `$$` additionally
+  quarantines the daemon's own state before running.
+- **Confirmation relay (B7):** L9 holds `ACTION_CONFIRMATION_REQUEST`s
+  (`confirmations`), publishes the human's verdict as
+  `ACTION_CONFIRMATION_RESPONSE` (`confirm`), and retires a prompt as soon as L7
+  stops waiting (the completion event carries the `confirmation_id`). It also
+  delivers L7's notification **intents** (`notifications`) — L7 never touches the
+  desktop.
 - **Health bridge (A6):** L9 cannot import L10, so `health` publishes
   `SYSTEM_HEALTH_REQUEST` and awaits `SYSTEM_HEALTH_REPORT` (2 s timeout).
 - **Insight surfacing:** `on_insight_generated` filters by confidence ≥ 0.75 and
@@ -641,7 +653,7 @@ flowchart TD
         A4 --> A5["construct all 8 modules<br/>with injected references"]
         A5 --> A6["initialize() each"]
         A6 --> A7["start() in dependency order:<br/>L2 → L3 → L4 → L5 → L7 → L6 → L9"]
-        A7 --> A8["start background timers:<br/>graph save · pressure decay · score recalc"]
+        A7 --> A8["start background timers:<br/>graph save · score recalc (L10 Scheduler)<br/>pressure decay (owned by L5, B7)"]
     end
     subgraph shutdown["Shutdown (SIGTERM)"]
         B1[stop collectors] --> B2["cancel idle_task"]
@@ -672,6 +684,16 @@ flowchart TD
 > ⚠️ **The class diagram is cut off at the right edge; L7 and L8 have no class boxes.** Their existence is confirmed by: the concrete-actions note (*Notification · FileWrite · RunCommand · ApiCall · Memory*), `EventType` members `ACTION_TRIGGERED` / `AGENT_SPAWNED` / `AGENT_COMPLETED`, and `Config` fields `action_log_path` / `max_concurrent_agents`. **Confirm both against a full-width re-export of the diagram before building them.**
 
 **L7 · Action.** `BaseAction` contract (`validate()`, `dry_run()`, `execute()`, `rollback()`). Concrete actions: `NotificationAction`, `FileWriteAction`, `RunCommandAction`, `ApiCallAction`, `MemoryWriteAction`. Every effect runs behind a safety-check gate — sandboxed execution, backup before write, rollback available. Dangerous actions require terminal confirmation regardless of pressure. `ApiCallAction` is the only component permitted an outbound socket, disabled by default. Every attempt is appended to `action_log_path` as JSONL. Emits `ACTION_TRIGGERED`.
+
+**As built (B7, D-14).** The reconstruction above was accepted as authoritative for L7 and built to; L8 remains unbuilt and unverified (`problems.md` 1.9).
+
+- `ActionTier` is `safe` | `dangerous`, and it is L7-local (not a `core/enums.py` schema type). Tiers ship gated by `action_enabled_tiers`, default `["safe"]`, with `action_dry_run = True` — a fresh install cannot cause an effect.
+- `SafetyGate.run()` is the **only** path to `execute()`: tier check → audit `attempt` → `validate()` → (dry-run stops here) → confirmation for `dangerous` → quarantine every declared backup target → `execute()` → `rollback()` on failure → audit `result` → `ACTION_TRIGGERED`. **An unwritable audit log refuses the action** — `rules.md §5.6` is a precondition, not a report.
+- **Confirmation is a bus handshake** (`ACTION_CONFIRMATION_REQUEST` / `_RESPONSE`), because `neuropacad` is headless. Denial, an unknown id, and silence past `action_confirmation_timeout_seconds` are the same outcome: refusal. There is no approve-all and no pre-approval — one prompt per attempt.
+- **Sandbox** (`action/sandbox.py`): a write path is fully resolved (symlinks included) then proved to be under an allowed root — `watch_paths`, so an empty default means nothing is writable at all. Commands run via `asyncio.create_subprocess_exec(*argv)` with `env={}`, no stdin, their own session (a timeout kills the process group), and a hard budget. No shell exists anywhere in the layer, so there is nothing to inject into (`rules.md §5.4`).
+- **Quarantine** (`quarantine_path`, `quarantine_ttl_hours`): prior bytes are copied out with a self-describing sidecar before any overwrite and swept only after the TTL. Nothing is deleted in place (`rules.md §5.7`).
+- **`ApiCallAction` is deliberately not built.** `api_call_enabled` / `api_allowlist` are reserved switches with no class behind them, so the daemon has no code path to an outbound socket at all. Enabling the flag without an allowlist is a `ConfigError`.
+- **B7 registers no autonomous dangerous action.** The low tier writes a silent `EVENT_LOG` node (`MemoryWriteAction`); the high tier raises a `NotificationAction` — the system asks rather than acts (§7). A concrete dangerous action lands behind this same gate in a later phase.
 
 **L8 · Agents.** `AgentSupervisor` spawns bounded multi-step tasks capped by `Config.max_concurrent_agents`, each with a wall-clock and inference budget. Also the home of **structural plasticity** — `spawn_node()` / `kill_node()` on the EventBus, spawning temporary sub-clusters on load spikes and killing them (apoptosis) after `idle_ttl = 14d` of no firing. Emits `AGENT_SPAWNED` / `AGENT_COMPLETED`.
 
@@ -734,10 +756,12 @@ flowchart LR
 | `SIGNAL_CORRELATED` | L3 | **L4 and L5, independently** | `Signal` |
 | `PATTERN_DETECTED` | L3 | L9 (optional) | pattern name, confidence |
 | `INSIGHT_GENERATED` | L4 | L5, L9 | `Insight` |
-| `PRESSURE_THRESHOLD_REACHED` | L5 | L7 | `PressureEntry` |
-| `ACTION_TRIGGERED` | L7 | L9, L4 | action, result |
+| `PRESSURE_THRESHOLD_REACHED` | L5 | L7 | `{entry: PressureEntry, tier: "low" \| "high"}` |
+| `ACTION_TRIGGERED` | L7 | L9, L4 | `{result, intent, trigger, action, tier, ok, dry_run, detail, request_id, confirmation_id}` |
+| `ACTION_CONFIRMATION_REQUEST` | L7 | L9 | `{request_id, action, tier, summary, reason, requested_at}` (B7, D-14) |
+| `ACTION_CONFIRMATION_RESPONSE` | L9 | L7 | `{request_id, approved}` (B7 — silence past the timeout = refusal) |
 | `MEMORY_UPDATED` | the mutating module (L3 / L6 / L9) | L9 (optional) | `{node_ids: List[str], operation: str}` |
-| `USER_MESSAGE` | L9 | L4 (optional — no subscriber yet) | `{text, prefix}` |
+| `USER_MESSAGE` | L9 | **L7** (`$!` / `$$` only, B7) | `{text, prefix}` |
 | `AGENT_SPAWNED` / `AGENT_COMPLETED` | L8 | — | agent id, goal, outcome |
 | `SYSTEM_ERROR` | any | L9, L10 | module, exception, severity |
 | `SYSTEM_HEALTH_REQUEST` | L9 | L10 | `{}` (B5 — L9 cannot import L10, A6) |
@@ -783,9 +807,9 @@ neuropaca/
 │   ├── sensing/      # L2 — collector_module, base_collector, collectors/
 │   ├── diagnosis/    # L3 — correlator, base_pattern, patterns/, signal, insight
 │   ├── learning/     # L4 — plasticity, prompts.py  (all prompt strings live here)
-│   ├── drive/        # L5 — pressure_accumulator, pressure_entry
+│   ├── drive/        # L5 — pressure (PressureAccumulator + PressureEntry)
 │   ├── idle/         # L6 — dmn, consolidation
-│   ├── action/       # L7 — base_action, actions/, audit
+│   ├── action/       # L7 — base, gate, sandbox, confirm, quarantine, audit, actions, executor
 │   ├── agents/       # L8 — supervisor, structural plasticity
 │   ├── interface/    # L9 — layer, message, channels/, formatting (see design.md)
 │   └── orchestration/# L10 — orchestrator, scheduler

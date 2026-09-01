@@ -19,6 +19,11 @@ from pathlib import Path
 from neuropaca.core.errors import ConfigError
 
 _VALID_BACKENDS = frozenset({"llama", "fake"})
+# B7 (D-14). The L7 action tiers. Mirrored by `action.base.ActionTier` — the enum
+# lives in the layer that owns the behaviour, but `Config` cannot import L7 (that
+# would invert the layering), so the closed set of *names* is spelled here, the
+# same way `_VALID_BACKENDS` is. `action/base.py` asserts the two agree.
+VALID_ACTION_TIERS = frozenset({"safe", "dangerous"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +38,22 @@ class Config:
     graph_db_path: str = "data/graph.json"
     action_log_path: str = "data/actions.jsonl"
     idle_threshold_seconds: int = 300
-    pressure_threshold: float = 1.0
+    # B7 · Drive (L5, D-14). The blueprint's single `pressure_threshold` is split
+    # into the two gradient tiers of Architecture.md §7:
+    #   - low  — one Diagnosis spike is enough; a *safe* action fires silently.
+    #   - high — a *dangerous* action becomes permissible, and only with L3 and
+    #     L4 corroborating inside the same window. Crossing it never executes
+    #     anything on its own: the L7 gate still demands a confirmation.
+    # `pressure_high_threshold > pressure_low_threshold` is validated below.
+    pressure_low_threshold: float = 1.0
+    pressure_high_threshold: float = 3.0
+    # Exponential decay, expressed as a half-life so the constant is the thing
+    # the exit criterion talks about: 60 s => exactly 50 %/min, and 10 min of
+    # silence leaves 0.5**10 = 0.098 % — inside the "< 1 % within 10 min" bound.
+    # `decay()` is applied on a timer AND lazily on read, so the value is exact
+    # at any instant regardless of tick alignment.
+    pressure_decay_half_life_seconds: int = 60
+    pressure_decay_interval_seconds: int = 10
     max_concurrent_agents: int = 2
     log_level: str = "INFO"
     poll_intervals: dict[str, float] = field(default_factory=lambda: {"system": 60.0})
@@ -78,6 +98,26 @@ class Config:
     dmn_max_inferences_per_cycle: int = 3
     dmn_idle_thought_ttl_hours: int = 48
     dmn_top_k: int = 5
+    # B7 · Action (L7, D-14). `action_dry_run` defaults **True**: the daemon
+    # ships in the dry-run review period the B7 exit criteria require ("a review
+    # period in dry-run with zero false positives before any tier goes live"),
+    # so a fresh install cannot cause an effect. `action_enabled_tiers` gates
+    # which tiers may run at all; "dangerous" additionally always needs a
+    # recorded confirmation (rules.md §5.2 — no flag removes that).
+    action_dry_run: bool = True
+    action_enabled_tiers: list[str] = field(default_factory=lambda: ["safe"])
+    # Nothing is ever deleted or overwritten in place (rules.md §5.7): the prior
+    # bytes go to `quarantine_path` with a TTL and are swept only after it.
+    quarantine_path: str = "data/quarantine"
+    quarantine_ttl_hours: int = 168  # 7 days
+    # `ApiCallAction` is the only component that would be allowed an outbound
+    # socket (rules.md §5.5). B7 ships **no** such action — these two fields are
+    # the reserved switches, and enabling the flag without an explicit allowlist
+    # is a config error, never a silently-open socket.
+    api_call_enabled: bool = False
+    api_allowlist: list[str] = field(default_factory=list)
+    # How long a paused dangerous action waits for the human. Expiry = refusal.
+    action_confirmation_timeout_seconds: int = 60
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -148,12 +188,31 @@ class Config:
             "dmn_max_inferences_per_cycle",
             "dmn_idle_thought_ttl_hours",
             "dmn_top_k",
+            "pressure_decay_half_life_seconds",
+            "pressure_decay_interval_seconds",
+            "quarantine_ttl_hours",
+            "action_confirmation_timeout_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
 
-        if self.pressure_threshold <= 0:
-            errs.append(f"pressure_threshold must be > 0, got {self.pressure_threshold}")
+        if self.pressure_low_threshold <= 0:
+            errs.append(f"pressure_low_threshold must be > 0, got {self.pressure_low_threshold}")
+        if self.pressure_high_threshold <= self.pressure_low_threshold:
+            errs.append(
+                "pressure_high_threshold must be > pressure_low_threshold, got "
+                f"{self.pressure_high_threshold} <= {self.pressure_low_threshold}"
+            )
+        unknown_tiers = sorted(set(self.action_enabled_tiers) - VALID_ACTION_TIERS)
+        if unknown_tiers:
+            errs.append(
+                f"action_enabled_tiers must be a subset of {sorted(VALID_ACTION_TIERS)}, "
+                f"got unknown {unknown_tiers}"
+            )
+        if not self.quarantine_path:
+            errs.append("quarantine_path must not be empty — nothing may be deleted in place")
+        if self.api_call_enabled and not self.api_allowlist:
+            errs.append("api_call_enabled requires a non-empty api_allowlist (rules.md §5.5)")
         if self.max_concurrent_agents < 0:
             errs.append(f"max_concurrent_agents must be >= 0, got {self.max_concurrent_agents}")
         if self.top_process_count < 0:

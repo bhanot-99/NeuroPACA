@@ -59,10 +59,23 @@ neuropaca ask "what's using my CPU"   # $  — grounded answer from your graph
 neuropaca diagnose "why is the disk full"  # $? — + a live system snapshot
 neuropaca health                     # daemon + module health
 neuropaca insights                   # surfaced insights (anomaly / distraction)
+
+neuropaca "$! pkill -f webpack"      # $! — run a command (needs confirmation)
+neuropaca "$$ systemctl --user restart x"  # $$ — same, state backed up first
+neuropaca notifications              # what the action layer wants to tell you
+neuropaca confirmations              # dangerous actions waiting on you
+neuropaca confirm <id> [--deny]      # answer one
 ```
 
-The CLI is a thin client over a Unix socket (`$XDG_RUNTIME_DIR/neuropaca.sock`);
-`$!` / `$$` are reserved until the Action layer (B7).
+The CLI is a thin client over a Unix socket (`$XDG_RUNTIME_DIR/neuropaca.sock`).
+
+**The action layer ships inert.** `action_dry_run = True` and only the `safe`
+tier is enabled, so a fresh install describes what it would do and does nothing.
+Turning it on does not remove the guard rails: a dangerous action pauses and
+waits for `neuropaca confirm` in your terminal, silence past the timeout is a
+refusal, commands run with no shell and no inherited environment, writes are
+confined to `watch_paths` and backed up to quarantine first, and every attempt —
+refusals included — is two lines in `data/actions.jsonl`.
 
 | Path | What it holds |
 | --- | --- |

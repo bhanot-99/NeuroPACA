@@ -37,6 +37,14 @@ class EventType(StrEnum):
     # the orchestrator out of the module import graph (rules.md §0).
     SYSTEM_HEALTH_REQUEST = auto()
     SYSTEM_HEALTH_REPORT = auto()
+    # B7 · Drive & Action (L5 + L7, D-14). The confirmation handshake. The daemon
+    # is headless — `neuropacad` has no TTY — so rules.md §5.2's "terminal
+    # confirmation at execution time" is satisfied over the bus: L7 pauses the
+    # action, publishes a REQUEST, and L9 relays it to the human's terminal; the
+    # human's answer comes back as a RESPONSE carrying the same `request_id`.
+    # No response inside `action_confirmation_timeout_seconds` = refusal.
+    ACTION_CONFIRMATION_REQUEST = auto()
+    ACTION_CONFIRMATION_RESPONSE = auto()
 
 
 class NodeType(StrEnum):
