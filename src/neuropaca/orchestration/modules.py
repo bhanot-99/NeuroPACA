@@ -16,6 +16,7 @@ from neuropaca.core.config import Config
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.diagnosis.correlator import SignalCorrelator
+from neuropaca.idle.dmn import DefaultModeNetwork
 from neuropaca.interface.layer import InterfaceLayer
 from neuropaca.learning.plasticity import BitNetPlasticity
 from neuropaca.sensing.activity.collector import ActivityCollector
@@ -51,6 +52,9 @@ def build_modules(
 
     diagnosis = SignalCorrelator(event_bus, config, graph_memory)
     learning = BitNetPlasticity(event_bus, config, graph_memory, bitnet_runtime)
+    idle_cognition = DefaultModeNetwork(
+        event_bus, config, graph_memory, bitnet_runtime, clock=SystemClock()
+    )
     interface = InterfaceLayer(
         event_bus,
         config,
@@ -60,14 +64,17 @@ def build_modules(
         socket_path=config.interface_socket_path or None,
     )
 
-    # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning -> L9
-    # Interface (Architecture.md §10). L4 self-disables without llama-cpp-python /
-    # the model (D-11); L9's interactive model is likewise optional (D-12) — both
-    # never block startup.
+    # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning ->
+    # L6 Idle Cognition -> L9 Interface (Architecture.md §10, D-13). L4 and L6
+    # share the loop model and self-disable without llama-cpp-python / the model
+    # (D-11); L9's interactive model is likewise optional (D-12) — none block
+    # startup. L6 sits before L9 so a proactive thought published during startup
+    # already has a subscriber.
     modules: list[BaseModule] = [sensing]
     if config.activity_enabled:
         modules.append(ActivityCollector(event_bus, config))
     modules.append(diagnosis)
     modules.append(learning)
+    modules.append(idle_cognition)
     modules.append(interface)
     return modules

@@ -173,12 +173,11 @@ class BitNetRuntime:
 
     # ------------------------------------------------------------------ context
     def build_context_from_nodes(self, nodes: list[Node]) -> str:
-        """One terse line per node — the only serialiser for model context
-        (rules.md §4.1). Distillation to top-K happens in the caller."""
-        return "\n".join(
-            f"[{node.id}] {node.label} · {node.node_type} · score {node.relevance_score:.1f}"
-            for node in nodes
-        )
+        """One terse line per node — thin pass-through to the shared serialiser
+        (`core/context.py`, D-13/A8). Distillation to top-K is the caller's job."""
+        from neuropaca.core.context import build_context_from_nodes
+
+        return build_context_from_nodes(nodes)
 
     def get_ram_usage_mb(self) -> float:
         total = self._backend.get_ram_usage_mb()

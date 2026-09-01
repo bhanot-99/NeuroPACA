@@ -29,7 +29,7 @@ from neuropaca.core.models import Edge, Event, Node, system_error_event
 
 def test_enum_members_match_the_blueprint() -> None:
     assert len(EventType) == 16  # +APP_SWITCH (B2.5b) +SYSTEM_HEALTH_{REQUEST,REPORT} (B5)
-    assert len(NodeType) == 10
+    assert len(NodeType) == 11  # +IDLE_THOUGHT (B6, D-13)
     assert len(RelationType) == 8
     assert len(SignalType) == 7
     assert len(InterfaceChannel) == 3

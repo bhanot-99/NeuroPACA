@@ -37,6 +37,7 @@ from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
+from neuropaca.core.context import format_node_line
 from neuropaca.core.enums import EventType, MessageRole, NodeType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
@@ -64,10 +65,11 @@ _INFER_TIMEOUT = 30.0  # CPU interactive inference wall-clock ceiling (rules.md 
 _HEALTH_TIMEOUT = 2.0
 _INTERACTIVE_TEMPERATURE = 0.3  # rules.md §4.1 — ~0.4 allowed for $ / $? only
 
-# Insight surfacing (B5, B3)
+# Insight surfacing (B5, B3; B6 adds `proactive` — L6 idle thoughts, D-13)
 _INSIGHT_MIN_CONFIDENCE = 0.75
-_SURFACEABLE_CATEGORIES = frozenset({"anomaly", "distraction"})
+_SURFACEABLE_CATEGORIES = frozenset({"anomaly", "distraction", "proactive"})
 _DAILY_INSIGHT_CAP = 3
+_SURFACEABLE_NODE_PREFIXES = ("insight:", "idle:")
 
 _QUERY_PREFIXES = frozenset({"$", "$?"})
 _RESERVED_PREFIXES = frozenset({"$!", "$$"})
@@ -134,7 +136,7 @@ class InterfaceLayer(BaseModule):
         """Surface-once survives a restart: any INSIGHT node already stamped
         `surfaced_at` (schema v2) is treated as seen."""
         for node_id in self._graph.node_ids:
-            if node_id.startswith("insight:"):
+            if node_id.startswith(_SURFACEABLE_NODE_PREFIXES):
                 node = self._graph.get_node(node_id)
                 if node is not None and node.surfaced_at is not None:
                     self._surfaced_ids.add(node_id)
@@ -215,8 +217,13 @@ class InterfaceLayer(BaseModule):
 
         # Stamp the graph so surface-once survives a restart (schema v2). The
         # mutating module publishes MEMORY_UPDATED, never GraphMemory (D-5.3).
+        # `upsert_node` protects `node_type` on an existing node, so passing the
+        # right kind only matters if the node somehow vanished — pick it by id.
+        node_type = (
+            NodeType.IDLE_THOUGHT if insight.node_id.startswith("idle:") else NodeType.INSIGHT
+        )
         await self._graph.upsert_node(
-            insight.node_id, NodeType.INSIGHT, {"surfaced_at": self._clock.now()}
+            insight.node_id, node_type, {"surfaced_at": self._clock.now()}
         )
         self.event_bus.publish(
             Event(
@@ -384,7 +391,7 @@ class InterfaceLayer(BaseModule):
         kept: list[Node] = []
         used = 0
         for node in context:
-            line = f"[{node.id}] {node.label} · {node.node_type} · score {node.relevance_score:.1f}"
+            line = format_node_line(node.id, node)
             if used + len(line) + 1 > budget:
                 break
             kept.append(node)
