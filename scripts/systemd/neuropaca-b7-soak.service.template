@@ -1,0 +1,18 @@
+[Unit]
+Description=NeuroPACA B7 dry-run soak daemon
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+Environment=NEUROPACA_CONFIG=neuropaca.soak.toml
+ExecStart=__REPO__/.venv/bin/neuropacad
+StandardOutput=append:__REPO__/data/soak_b7.log
+StandardError=append:__REPO__/data/soak_b7.log
+Restart=on-failure
+RestartSec=15
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

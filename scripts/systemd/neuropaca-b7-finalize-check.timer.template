@@ -1,0 +1,10 @@
+[Unit]
+Description=NeuroPACA B7 — periodic finalize-check timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

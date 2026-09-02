@@ -2,11 +2,17 @@
 #
 # B7 · Exit Criterion 5 — unattended finalisation (phases.md B7, D-14).
 #
-# Run this after the 24 h dry-run soak window closes (~2026-09-02 16:50 IST).
-# It validates the soak, and ONLY if the validation passes does it record the
-# result, commit, and merge b7-drive-action-l5-l7 into main.
+# Run this once the 24 h dry-run soak window has closed. It validates the
+# soak, and ONLY if the validation passes does it record the result, commit,
+# and merge b7-drive-action-l5-l7 into main.
 #
 #   ./scripts/finalize_b7.sh
+#
+# Normally you don't run this by hand: neuropaca-b7-finalize-check.timer
+# (installed by start_b7_soak.sh) calls this every 30 min via
+# scripts/check_and_finalize_b7.sh and finalizes automatically the moment
+# the log qualifies — safe to call directly too, e.g. to see why it isn't
+# ready yet.
 #
 # `set -e` throughout: any failure halts before the merge. The gate is
 # deliberately strict — it refuses to merge on anything it cannot verify

@@ -4,48 +4,53 @@
 #
 #   ./scripts/stop_b7_soak.sh
 #
-# The mirror of scripts/start_b7_soak.sh: it stops the detached daemon and
-# disarms the systemd --user timer that would otherwise run finalize_b7.sh.
-# This is the two-command "cancel:" snippet that start_b7_soak.sh prints,
-# packaged so it is hard to get wrong.
+# The mirror of scripts/start_b7_soak.sh. Since the daemon is now a
+# persistent systemd --user service (survives reboot/logout), "stop" means
+# **disable --now**, not just stop: disabling also removes it from
+# default.target, so it will NOT come back on the next login/boot either.
+# `systemctl ... stop` alone would leave it enabled and it would silently
+# restart at the next login, which is not what "stop the soak" means here.
 #
-# It does NOT touch data/actions.jsonl — the audit log is left in place so you
-# can still inspect what the partial run proposed. start_b7_soak.sh archives it
-# on the next run, so a stale log will not fake the window.
+# The stop itself sends SIGTERM (systemd's default), which the orchestrator
+# already traps to save data/graph.json before exiting — no separate save
+# step needed.
 #
-# Safe to run at any time: it reports what it found and exits 0 even if nothing
-# was running.
+# It does NOT touch data/actions.jsonl — the audit log is left in place so
+# you can still inspect what the partial run proposed. start_b7_soak.sh
+# archives it on the next run, so a stale log will not fake the window.
+#
+# Safe to run at any time: it reports what it found and exits 0 even if
+# nothing was running or the units were never installed.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-UNIT="neuropaca-b7-finalize"
 LOG="data/actions.jsonl"
+SOAK_UNIT="neuropaca-b7-soak"
+CHECK_UNIT="neuropaca-b7-finalize-check"
 
 echo "=== stopping the B7 soak ==="
 
 # ------------------------------------------------------------------- the daemon
-if pgrep -f "bin/neuropacad" >/dev/null 2>&1; then
-    PIDS="$(pgrep -f 'bin/neuropacad' | tr '\n' ' ')"
-    echo "  daemon    : stopping neuropacad (pid ${PIDS})"
-    pkill -f "bin/neuropacad" || true
-    sleep 3
-    if pgrep -f "bin/neuropacad" >/dev/null 2>&1; then
-        echo "  daemon    : still up — sending SIGKILL"
-        pkill -9 -f "bin/neuropacad" || true
+if systemctl --user list-unit-files "${SOAK_UNIT}.service" >/dev/null 2>&1 \
+   && systemctl --user cat "${SOAK_UNIT}.service" >/dev/null 2>&1; then
+    if systemctl --user is-active --quiet "${SOAK_UNIT}.service" 2>/dev/null; then
+        echo "  daemon    : stopping + disabling ${SOAK_UNIT}.service (SIGTERM -> graceful save)"
+    else
+        echo "  daemon    : already stopped — disabling so it will not restart on next login"
     fi
-    echo "  daemon    : stopped"
+    systemctl --user disable --now "${SOAK_UNIT}.service" >/dev/null 2>&1 || true
+    echo "  daemon    : stopped and disabled"
 else
-    echo "  daemon    : not running"
+    echo "  daemon    : no persistent unit installed (nothing to do)"
 fi
 
-# ---------------------------------------------------------- the finalise timer
-if systemctl --user cat "${UNIT}.timer" >/dev/null 2>&1 \
-   || systemctl --user list-timers --all 2>/dev/null | grep -q "${UNIT}"; then
-    echo "  timer     : disarming '${UNIT}'"
-    systemctl --user stop "${UNIT}.timer" >/dev/null 2>&1 || true
-    systemctl --user stop "${UNIT}.service" >/dev/null 2>&1 || true
-    systemctl --user reset-failed "${UNIT}.service" >/dev/null 2>&1 || true
+# ---------------------------------------------------------- the finalize-check timer
+if systemctl --user list-unit-files "${CHECK_UNIT}.timer" >/dev/null 2>&1 \
+   && systemctl --user cat "${CHECK_UNIT}.timer" >/dev/null 2>&1; then
+    echo "  timer     : stopping + disabling ${CHECK_UNIT}.timer"
+    systemctl --user disable --now "${CHECK_UNIT}.timer" >/dev/null 2>&1 || true
+    systemctl --user reset-failed "${CHECK_UNIT}.service" >/dev/null 2>&1 || true
     echo "  timer     : disarmed"
 else
     echo "  timer     : not armed"

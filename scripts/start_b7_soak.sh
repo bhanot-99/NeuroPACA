@@ -1,20 +1,32 @@
 #!/usr/bin/env bash
 #
-# B7 · Exit Criterion 5 — start (or restart) the 24 h dry-run soak.
+# B7 · Exit Criterion 5 — start (or resume) the 24 h dry-run soak.
 #
 #   ./scripts/start_b7_soak.sh
 #
-# Starts the daemon detached under neuropaca.soak.toml (dry-run, BOTH tiers —
-# everything proposed, nothing possible) and arms a systemd --user timer to run
-# scripts/finalize_b7.sh 24 h 5 min from now.
+# The daemon now runs as a **persistent systemd --user service**
+# (neuropaca-b7-soak.service), not a detached process: it is enabled, so it
+# starts automatically every time you log in (this box has lingering on, so
+# that includes right at boot, before login) and it receives a real SIGTERM
+# on shutdown/logout, which the orchestrator already traps to save
+# data/graph.json and stop cleanly (rules.md — no code change needed there).
 #
-# Safe to re-run: it refuses if a daemon is already up, and it re-arms the timer
-# from *now*, so the window always matches the run that is actually happening.
+# A second unit, neuropaca-b7-finalize-check.timer, replaces the old
+# "compute one deadline 24 h5 min from now" transient timer. Because the
+# daemon can now be off for stretches (laptop shut down overnight), there is
+# no single instant to schedule for — validate_b7_dryrun.py measures the
+# window from the first to the last audit line, in calendar time, not
+# uptime. So instead the timer re-checks every 30 min (scripts/
+# check_and_finalize_b7.sh) and finalizes the moment the log actually
+# qualifies, however many power-cycles that took.
 #
-# The soak measures a 24 h window from the FIRST audit line to the LAST, so a
-# stale actions.jsonl from an earlier, abandoned attempt would fake the window.
-# This script archives any existing log rather than deleting it (rules.md §5.7)
-# so each attempt is measured on its own.
+# Safe to re-run: refuses if the service is already active, and — same as
+# before — archives (never deletes) any existing data/actions.jsonl first,
+# so re-running this deliberately always starts a clean, unambiguous
+# measurement window. A reboot alone does NOT go through this script and
+# does NOT archive anything — systemd just restarts the same persistent
+# service, so the log keeps accumulating across power-cycles, which is the
+# whole point.
 
 set -euo pipefail
 
@@ -23,18 +35,20 @@ REPO="$(pwd)"
 CONFIG="neuropaca.soak.toml"
 LOG="data/actions.jsonl"
 DAEMON="${REPO}/.venv/bin/neuropacad"
-UNIT="neuropaca-b7-finalize"
+UNIT_DIR="${HOME}/.config/systemd/user"
+SOAK_UNIT="neuropaca-b7-soak"
+CHECK_UNIT="neuropaca-b7-finalize-check"
 
 [ -f "$CONFIG" ] || { echo "HALT — ${CONFIG} is missing."; exit 1; }
 [ -x "$DAEMON" ] || { echo "HALT — ${DAEMON} not found; run 'uv pip install -e .'"; exit 1; }
 
-if pgrep -f "bin/neuropacad" >/dev/null 2>&1; then
-    echo "HALT — a neuropacad is already running (pid $(pgrep -f 'bin/neuropacad' | head -1))."
-    echo "  Stop it first (pkill -f neuropacad) if you mean to restart the soak."
+if systemctl --user is-active --quiet "${SOAK_UNIT}.service" 2>/dev/null; then
+    echo "HALT — ${SOAK_UNIT}.service is already active."
+    echo "  Stop it first (./scripts/stop_b7_soak.sh) if you mean to restart the soak."
     exit 1
 fi
 
-mkdir -p data
+mkdir -p data "$UNIT_DIR"
 if [ -s "$LOG" ]; then
     ARCHIVE="data/actions.$(date +%Y%m%dT%H%M%S).jsonl"
     mv "$LOG" "$ARCHIVE"
@@ -42,32 +56,31 @@ if [ -s "$LOG" ]; then
     echo "  (a stale log would inflate the measured window; nothing is deleted)"
 fi
 
-echo "starting the daemon…"
-NEUROPACA_CONFIG="$CONFIG" setsid nohup "$DAEMON" >> data/soak_b7.log 2>&1 < /dev/null &
-sleep 8
+echo "installing the systemd --user units…"
+sed "s|__REPO__|${REPO}|g" scripts/systemd/neuropaca-b7-soak.service.template \
+    >"${UNIT_DIR}/${SOAK_UNIT}.service"
+sed "s|__REPO__|${REPO}|g" scripts/systemd/neuropaca-b7-finalize-check.service.template \
+    >"${UNIT_DIR}/${CHECK_UNIT}.service"
+sed "s|__REPO__|${REPO}|g" scripts/systemd/neuropaca-b7-finalize-check.timer.template \
+    >"${UNIT_DIR}/${CHECK_UNIT}.timer"
 
-if ! pgrep -f "bin/neuropacad" >/dev/null 2>&1; then
+systemctl --user daemon-reload
+systemctl --user enable --now "${SOAK_UNIT}.service"
+systemctl --user enable --now "${CHECK_UNIT}.timer"
+
+sleep 3
+if ! systemctl --user is-active --quiet "${SOAK_UNIT}.service"; then
     echo "HALT — the daemon did not stay up. Last lines:"
     tail -15 data/soak_b7.log
     exit 1
 fi
 
-FINISH="$(date -d '+24 hours 5 minutes' '+%Y-%m-%d %H:%M:%S')"
-systemctl --user stop "${UNIT}.timer" >/dev/null 2>&1 || true
-systemctl --user reset-failed "${UNIT}.service" >/dev/null 2>&1 || true
-systemd-run --user --on-calendar="$FINISH" --unit="$UNIT" \
-    --working-directory="$REPO" \
-    /bin/bash -c './scripts/finalize_b7.sh >> data/soak_b7_eval.log 2>&1' >/dev/null
-
 echo
-echo "=== B7 soak running ==="
-echo "  daemon    : pid $(pgrep -f 'bin/neuropacad' | head -1) (config ${CONFIG}, dry-run, both tiers)"
-echo "  window    : now -> $(date -d '+24 hours' '+%Y-%m-%d %H:%M %Z')"
-echo "  finalises : ${FINISH} (systemd --user timer '${UNIT}')"
-echo
-echo "  status    : neuropaca health"
+echo "=== B7 soak running (persistent) ==="
+echo "  daemon    : systemctl --user status ${SOAK_UNIT}.service  (config ${CONFIG}, dry-run, both tiers)"
+echo "  survives  : reboot / logout — enabled, restarts automatically, no manual step needed"
+echo "  on stop   : SIGTERM -> the daemon saves data/graph.json and exits cleanly before power-off"
+echo "  finalize  : ${CHECK_UNIT}.timer re-checks every 30 min; log at data/soak_b7_finalize_check.log"
 echo "  proposals : tail -f ${LOG}"
 echo "  cancel    : ./scripts/stop_b7_soak.sh"
 echo
-echo "NOTE: shutting the laptop down kills both — the transient timer does not"
-echo "      survive a reboot. Re-run this script after booting."
