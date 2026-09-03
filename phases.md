@@ -66,8 +66,9 @@ flowchart TD
 | B4 | Learning (L4) | ✅ merged (PR #6); ⏳ full 1 h `soak_test_b4.py` on target box carried |
 | B5 | Interface (L9) | ✅ done (`b5-interface-l9`) — unix-socket IPC + thin CLI + dual-model routing (D-12); all 3 exit criteria validated on the target box (real Qwen2.5-3B Q4: grounded, ~4.7 GB concurrent, ~3.1 tok/s) |
 | B6 | Idle Cognition (L6) | ✅ merged (PR #8) — `DefaultModeNetwork` + `GraphMemory` consolidate/link-orphan/prune-stale + extractive proactive idle-thought grammar (`{subject, object, query_template}`) + L9 `proactive` surfacing; `core/context.py` shared serialiser (A8); all 3 exit criteria validated on the target box (D-13) |
-| B7 | Drive & Action (L5 + L7) | ✅ done, PR pending (`b7-drive-action-l5-l7`, D-14) — `PressureAccumulator` (two sources, exact half-life decay, set-test corroboration) + `SafetyGate` / sandbox / quarantine / JSONL audit / headless confirmation handshake + Notification·MemoryWrite·FileWrite·RunCommand; `$!` / `$$` live. **All 5 exit criteria met** — 1–4 on the target box; criterion 5 via the positive control (`spikes/b7_positive_control/`), the 24 h soak abandoned after 3 zero-proposal attempts (`HighLoadPattern`/Wayland blindspot). 288 pytest + 14 stress + 9 integration green |
-| B8–B9 | Agents & structural plasticity → Hardening | ⬜ not started |
+| B7 | Drive & Action (L5 + L7) | ✅ merged (PR #9, `bd6215f`) — `PressureAccumulator` (two sources, exact half-life decay, set-test corroboration) + `SafetyGate` / sandbox / quarantine / JSONL audit / headless confirmation handshake + Notification·MemoryWrite·FileWrite·RunCommand; `$!` / `$$` live. **All 5 exit criteria met** — 1–4 on the target box; criterion 5 via the positive control (`spikes/b7_positive_control/`), the 24 h soak abandoned after 3 zero-proposal attempts (`HighLoadPattern`/Wayland blindspot). 288 pytest + 14 stress + 9 integration green |
+| B8 | Agents & structural plasticity (L8) | 🔄 in progress (`b8-agents-structural-plasticity`, D-16) — `AgentSupervisor`, `ACTION_PROPOSAL` decoupling, ephemeral sub-clusters + apoptosis |
+| B9 | Hardening | ⬜ not started |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
 ---
@@ -173,7 +174,25 @@ Real `LlamaCppBackend` (lazy `import llama_cpp`, self-disables without the wheel
 **Found and fixed during validation:** an expired confirmation stayed visible in L9 forever, so the next `confirm` answered a request nobody was waiting on. `ACTION_TRIGGERED` now carries the `confirmation_id` and L9 retires the prompt on it, with a timeout-based sweep behind that (regression tests: `test_a_prompt_is_retired_when_l7_stops_waiting`, `test_a_prompt_older_than_the_timeout_is_never_offered`).
 
 ### B8 · Agents & structural plasticity (L8)
-`AgentSupervisor` (bounded tasks, `max_concurrent_agents`), `spawn_node()` / `kill_node()`, apoptosis after `idle_ttl = 14d`. Confirm the class shape against a full-width diagram re-export first.
+`AgentSupervisor` (bounded tasks, `max_concurrent_agents`), `spawn_node()` / `kill_node()`, apoptosis after `agent_idle_ttl_days = 14`. The class shape is `Architecture.md §11b` as ruled in **D-15** — the source diagram is permanently truncated, so there is no re-export to confirm against and B8 builds to the reconstruction.
+
+**Scope (D-16).** **Structural plasticity only.** L8 does *not* run a multi-step inference loop: `PRESSURE_THRESHOLD_REACHED` fires exactly when the box is busy, and an agent competing for the one system-wide `_inference_lock` (`rules.md §4`) would starve L4 and L9 at the worst moment. An agent reads the pressure payload and spawns a **diagnostic sub-cluster** — ephemeral `CONCEPT` nodes edged to the node under pressure — then completes. `agent_inference_budget` is 1 and unspent in B8; it exists so a later phase cannot add inference without also declaring a budget.
+
+**L7 decoupling (D-16).** L8 never holds a `SafetyGate`. An agent that wants an effect publishes `ACTION_PROPOSAL` — a *description* (`{action_type, kwargs}`), not a live object — and L7, which owns the only gate, the only `ActionAudit` writer, and the only `ConfirmationBroker`, instantiates the concrete `BaseAction`, runs it through that one gate, and answers on `ACTION_PROPOSAL_RESULT`. This is the B5 health-bridge precedent (`SYSTEM_HEALTH_REQUEST` / `REPORT`) applied to actions, and it keeps `rules.md §0` intact: no module imports another module.
+
+**No schema bump (D-16).** Spawned nodes are `NodeType.CONCEPT` carrying `is_ephemeral: True` and `spawned_by: "agent_supervisor"` in their attributes. Apoptosis selects on those attributes and calls `GraphMemory.delete_node()` directly — `prune_stale_nodes()` is a *whole-graph* sweep on one global TTL and is already owned by L6 at 48 h (`idle/dmn.py`); overloading it with a second 14-day TTL would make the two layers fight over one call.
+
+**Exit:** the ephemeral-node cap holds under a spawn storm; apoptosis reaps every node past its TTL and leaves no dangling edges; an `ACTION_PROPOSAL` routes through L7's single gate and comes back as a result; an agent never exceeds its wall-clock budget; the concurrency cap refuses rather than queues.
+
+| If… | Then… |
+| --- | --- |
+| ⬜ | `spawn_node()` never takes the graph past `max_ephemeral_nodes`, checked **before** the mutation, under a burst larger than the cap. |
+| ⬜ | apoptosis reaps every `is_ephemeral` node older than `agent_idle_ttl_days` and **nothing else**, leaving zero dangling edges and every non-ephemeral neighbour intact. |
+| ⬜ | an `ACTION_PROPOSAL` published by L8 is instantiated and gated by L7's single `SafetyGate`, with the audit pair written and an `ACTION_PROPOSAL_RESULT` returned — and an unknown `action_type` is refused, not raised. |
+| ⬜ | an agent that overruns `agent_wall_clock_budget_seconds` is cancelled cleanly, publishes `AGENT_COMPLETED` with a timeout outcome, and leaves the graph consistent. |
+| ⬜ | a spawn requested while `max_concurrent_agents` are already running is **refused and logged**, never queued. |
+
+Validated by `scripts/validate_b8_plasticity.py`, which injects synthetic pressure directly onto the bus. The 24 h-soak route is unavailable here for the same reason it failed B7: the only pressure path a headless daemon reaches is `HighLoadPattern` (the Wayland activity collector self-disables under `systemd --user`), so a soak cannot be relied on to fire L5 even once. B8 uses the B7 positive-control pattern instead — synthetic injection at thresholds identical to production.
 
 ### B9 · Hardening
 systemd user unit, crash recovery, graph schema versioning, full `health_check()`, log rotation, 7-day soak, fault injection, egress test in CI, `neuropaca export` / `panic` / `doctor`.

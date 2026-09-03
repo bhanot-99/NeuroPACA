@@ -705,6 +705,15 @@ flowchart TD
 - **Structural plasticity** is L8's alone: it owns `spawn_node()` and `kill_node()`, creating short-lived sub-clusters during high-load spikes and reaping them through **apoptosis** — a temporary node untouched past `idle_ttl = 14 d` is killed via the `GraphMemory` API (the existing `prune_stale_nodes` / `delete_node` bounded-transaction workers, never a bespoke mutation path).
 - The B7 boundaries carry over unchanged: an agent that wants an *effect* proposes a `BaseAction` through `SafetyGate` like everything else. L8 gets no privileged path to the filesystem, to a process, or past a confirmation.
 
+**As built (B8, D-16).** The D-15 shape was built with four scope rulings, all narrowing:
+
+- **Structural plasticity only — no agent inference loop.** `PRESSURE_THRESHOLD_REACHED` fires precisely when the machine is under load, and `rules.md §4` allows exactly one inference system-wide; an agent contending for `_inference_lock` there would starve L4 and L9 at the worst possible moment. An agent reads the pressure payload and spawns a **diagnostic sub-cluster**, then completes. `Config.agent_inference_budget` is 1 and deliberately unspent — it exists so a later phase cannot add inference without declaring a budget for it.
+- **L8 holds no `SafetyGate`.** The gate, the single `ActionAudit` writer, the single `ConfirmationBroker`, the `Quarantine` and the `Sandbox` are all owned by `ActionExecutor`. A second set would mean two brokers racing to consume one human answer and two writers on one audit file. So L8 publishes **`ACTION_PROPOSAL`** — `{proposal_id, action_type, kwargs, reason, trigger}`, a description and never a live object — and L7 instantiates the concrete `BaseAction` from its own registry, runs it through the one gate, and replies on **`ACTION_PROPOSAL_RESULT`**. Same shape as the B5 health bridge; `rules.md §0` ("no module imports another module") holds.
+- **No graph-schema bump.** A spawned node is a `NodeType.CONCEPT` carrying `is_ephemeral: True` and `spawned_by: "agent_supervisor"` in its attributes. Nothing in the closed enums changes, so the persisted schema stays v2.
+- **Apoptosis is L8's own lifecycle job, not `prune_stale_nodes`.** That call is a *whole-graph* sweep on one global TTL, and L6 already drives it at 48 h (`idle/dmn.py`); a second caller with a 14-day TTL would have the two layers fighting over one knob. L8 instead selects its own `is_ephemeral` nodes and calls `GraphMemory.delete_node()` per node — still the public API, still one lock cycle per mutation (`rules.md §3`).
+
+`spawn_node()` checks `Config.max_ephemeral_nodes` (50) **before** mutating, satisfying `rules.md §3`'s "a code path that can add nodes without bound is wrong". Agent tasks are wrapped in `asyncio.timeout(agent_wall_clock_budget_seconds)`; a spawn over `max_concurrent_agents` is refused and logged, never queued.
+
 ---
 
 ## 12. Blueprint reconciliation
@@ -726,7 +735,7 @@ flowchart TD
 
 | Gap | Action |
 | --- | --- |
-| L7 and L8 cut off at the right edge | §11b is reconstructed. Re-export at full width and reconcile before building them. |
+| L7 and L8 cut off at the right edge | §11b is reconstructed and, by ruling, **authoritative** — the source is permanently truncated, so no re-export is coming. L7 built in B7 (D-14); L8 built in B8 (D-16). |
 | `BaseModule` lifecycle not detailed | Defined in §3.7. |
 | `SystemHealth` / `ModuleHealth` shapes undefined | Define in the core-infra phase. |
 | Node/Edge/enum drift between the diagram and the concept HTML's inline code | The diagram wins. Concept variants noted inline above. |
@@ -770,7 +779,10 @@ flowchart LR
 | `ACTION_CONFIRMATION_RESPONSE` | L9 | L7 | `{request_id, approved}` (B7 — silence past the timeout = refusal) |
 | `MEMORY_UPDATED` | the mutating module (L3 / L6 / L9) | L9 (optional) | `{node_ids: List[str], operation: str}` |
 | `USER_MESSAGE` | L9 | **L7** (`$!` / `$$` only, B7) | `{text, prefix}` |
-| `AGENT_SPAWNED` / `AGENT_COMPLETED` | L8 | — | agent id, goal, outcome |
+| `AGENT_SPAWNED` | L8 | — (unsubscribed; surfaced via `neuropaca health`) | `{payload: AgentSpawnedPayload}` — `{agent_id, trigger_node}` (B8, D-16) |
+| `AGENT_COMPLETED` | L8 | — (unsubscribed; surfaced via `neuropaca health`) | `{payload: AgentCompletedPayload}` — `{agent_id, nodes_spawned, outcome}` (B8, D-16) |
+| `ACTION_PROPOSAL` | L8 | **L7** | `{proposal_id, action_type, kwargs, reason, trigger}` (B8, D-16 — a *description*, never a live `BaseAction`) |
+| `ACTION_PROPOSAL_RESULT` | L7 | L8 | `{proposal_id, accepted, ok, detail, request_id}` (B8, D-16) |
 | `SYSTEM_ERROR` | any | L9, L10 | module, exception, severity |
 | `SYSTEM_HEALTH_REQUEST` | L9 | L10 | `{}` (B5 — L9 cannot import L10, A6) |
 | `SYSTEM_HEALTH_REPORT` | L10 | L9 | `{health: SystemHealth-as-dict}` |
