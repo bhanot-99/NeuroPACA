@@ -11,7 +11,9 @@ concurrency:
 
 env:
   # Privacy invariant (rules.md §6): the test suite must pass with no network.
-  # This does not sandbox the runner, but it catches an accidental live call.
+  # A hint for every job, NOT a claim that the runner is sandboxed — the quality
+  # job has full internet. The affirmative egress assertions gate on
+  # NEUROPACA_NO_NETWORK instead, which the egress job sets inside the namespace.
   NEUROPACA_OFFLINE: "1"
 
 jobs:
@@ -67,7 +69,7 @@ jobs:
         run: |
           sudo unshare --net -- bash -c '
             ip link set lo up
-            NEUROPACA_OFFLINE=1 .venv/bin/python -m pytest \
+            NEUROPACA_NO_NETWORK=1 .venv/bin/python -m pytest \
               tests/integration/test_egress_blocked.py -q
           '
 
@@ -76,5 +78,5 @@ jobs:
         run: |
           sudo unshare --net -- bash -c '
             ip link set lo up
-            NEUROPACA_OFFLINE=1 .venv/bin/python -m pytest -q
+            NEUROPACA_NO_NETWORK=1 .venv/bin/python -m pytest -q
           '

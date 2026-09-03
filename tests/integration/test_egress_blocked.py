@@ -18,10 +18,13 @@ These tests assert the property directly, in two independent ways:
    all. These hold even on a developer machine with working internet, where the
    first group is skipped.
 
-`NEUROPACA_OFFLINE=1` marks an environment that has promised there is no
-outbound path; the CI egress job sets it inside the namespace. Without it the
-connect tests skip, so a developer laptop with working internet is not a red
-build — the static checks still run everywhere.
+`NEUROPACA_NO_NETWORK=1` marks an environment where there is genuinely no route
+out, and only the CI egress job sets it — inside the namespace, never at
+workflow level. It is deliberately *not* `NEUROPACA_OFFLINE`, which is a general
+"assume offline" hint set for every job: the `quality` job carries that flag on a
+runner with full internet, so gating on it made these tests fail there for the
+right reason at the wrong time. Without the flag the connect tests skip, so a
+developer laptop is not a red build — the static checks still run everywhere.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-_OFFLINE = os.environ.get("NEUROPACA_OFFLINE") == "1"
+_NO_NETWORK = os.environ.get("NEUROPACA_NO_NETWORK") == "1"
 _SRC = Path(__file__).resolve().parents[2] / "src" / "neuropaca"
 
 # Modules allowed to reference sockets at all. L9 serves a *Unix* socket; the
@@ -58,8 +61,8 @@ _FORBIDDEN_IMPORTS = {
 }
 
 requires_blocked_network = pytest.mark.skipif(
-    not _OFFLINE,
-    reason="set NEUROPACA_OFFLINE=1 (CI does) — this asserts outbound is actually blocked",
+    not _NO_NETWORK,
+    reason="needs NEUROPACA_NO_NETWORK=1 — set only where there is truly no route out",
 )
 
 
