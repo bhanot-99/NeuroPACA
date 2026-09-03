@@ -51,3 +51,6 @@ coverage.xml
 # Obsidian vault internals (kept out of the code repo)
 /.obsidian/
 /.trash/
+
+# Personal project walkthrough — not a code-repo artifact
+/neuropaca-field-guide.html
