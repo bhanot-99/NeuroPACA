@@ -54,3 +54,7 @@ coverage.xml
 
 # Personal project walkthrough — not a code-repo artifact
 /neuropaca-field-guide.html
+
+# B9 soak state — machine-local measurement, regenerated per run. The result
+# that matters is the summary quoted in phases.md, not 10 080 sample rows.
+data/b9_soak/

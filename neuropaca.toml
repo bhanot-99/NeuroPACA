@@ -1,0 +1,64 @@
+# NeuroPACA — the SHIPPING configuration (B9 · Hardening).
+#
+# This is the config `scripts/systemd/neuropacad.service` points at, and the one
+# `neuropaca doctor` reads when NEUROPACA_CONFIG is unset. Until B9 it did not
+# exist: neuropaca.soak.toml said "neuropaca.toml (B9, systemd) will ship with
+# dry-run on and only the safe tier enabled" and nothing ever created it, so
+# doctor reported `config INVALID` and the unit could not have started at all.
+#
+# How it differs from neuropaca.soak.toml, and why:
+#
+#   action_enabled_tiers = ["safe"]   — the soak config enables BOTH tiers
+#     because a review period is supposed to propose everything and do nothing.
+#     The shipped daemon is not a review period. `dangerous` stays off until it
+#     has been earned by evidence from a completed soak, per D-14(c).
+#
+#   action_dry_run = true             — unchanged, and deliberately so. Nothing
+#     executes on this machine until the 7-day soak (B9 exit criterion 4) has
+#     produced an audit log a human has actually read. rules.md §5.6.
+#
+# Everything else is byte-for-byte the soak config: the gradient, the decay
+# constants, the poll intervals and the model paths are the *shipped* ones, so
+# the soak measures the system that runs, not a tuned variant of it.
+
+model_path = "models/bitnet-2b4t-tq2_0.gguf"
+interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
+inference_backend = "llama"
+
+graph_db_path = "data/graph.json"
+action_log_path = "data/actions.jsonl"
+quarantine_path = "data/quarantine"
+log_level = "INFO"
+
+# The file sink scripts/logrotate/neuropaca rotates. On under systemd too: the
+# journal is bounded by journald and rolls, whereas a 7-day soak wants a log the
+# analysis scripts can read back from a fixed path after the fact.
+log_to_file = true
+log_file_path = "data/neuropaca.log"
+
+# L2 · sensing. The real Wayland ActivityCollector (B2.5a/b) — the collector the
+# soak gate checks for, and the one whose silence cost B7 three soaks.
+activity_enabled = true
+top_process_count = 5
+poll_intervals = { system = 60.0, filesystem = 60.0 }
+
+# Both the L2 filesystem-sensing scope and the L7 write allowlist (D-14).
+# Deliberately just this repo: real edit activity, and the only root that could
+# ever be written to is one under version control.
+watch_paths = ["/home/bhanot/NeuroPaca"]
+
+# L5 · drive. The shipped gradient, unmodified.
+pressure_low_threshold = 1.0
+pressure_high_threshold = 3.0
+pressure_decay_half_life_seconds = 60
+pressure_decay_interval_seconds = 10
+
+# L7 · action. Dry-run ON, and only the safe tier is even proposed.
+action_dry_run = true
+action_enabled_tiers = ["safe"]
+action_confirmation_timeout_seconds = 60
+quarantine_ttl_hours = 168
+
+# rules.md §5.5 — reserved switches, no class behind them (D-14).
+api_call_enabled = false
+api_allowlist = []

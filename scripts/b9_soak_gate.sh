@@ -61,11 +61,25 @@ tr '\0' '\n' < "/proc/${PID}/environ" | grep -q '^WAYLAND_DISPLAY=' \
 echo "ok: daemon pid ${PID} has WAYLAND_DISPLAY"
 
 # --- 3. the activity collector did not self-disable ---------------------------
-if journalctl --user -u "$UNIT" --since "-10 min" 2>/dev/null \
-     | grep -qi 'no \$WAYLAND_DISPLAY\|collector-disabled'; then
-  fail "the activity collector self-disabled — check the journal"
-fi
-echo "ok: no collector-disabled in the last 10 minutes"
+# Asked of the daemon, not of the journal. Measured on the target box
+# 2026-09-03, `journalctl --user -u neuropacad` returns "No journal files were
+# found" -- journald ships Storage=auto and /var/log/journal does not exist, so
+# the journal is volatile and holds no per-user files. A grep against that is
+# unconditionally empty, which reads as "nothing wrong" here and as "nothing
+# happening" in check 5. Both are the apparatus lying, and this gate exists
+# precisely because B7 spent three soaks believing an apparatus that lied.
+PY="${REPO}/.venv/bin/python"
+PROBE="${REPO}/scripts/b9_soak_probe.py"
+
+"$PY" "$PROBE" | "$PY" -c '
+import json, sys
+sample = json.load(sys.stdin)
+if not sample.get("daemon_up"):
+    sys.exit("the daemon did not answer on the L9 socket")
+if "activity" in sample.get("degraded", []):
+    sys.exit("the activity collector reports itself degraded -- it self-disabled")
+' || fail "the activity collector is not healthy (see above)"
+echo "ok: the activity collector reports healthy over the socket"
 
 # --- 4. the CLI works under the hardened unit (BL-1) --------------------------
 # ProtectSystem=strict made $XDG_RUNTIME_DIR read-only, so the L9 socket could
@@ -78,33 +92,58 @@ echo "ok: no collector-disabled in the last 10 minutes"
 echo "ok: neuropaca health answers over the socket"
 
 # --- 5. watch for real sensing/pressure activity over the window --------------
-echo "watching for activity/pressure for ${MINUTES} min..."
-START_EPOCH="$(date +%s)"
-sleep $(( MINUTES * 60 )) &
-SLEEP_PID=$!
-trap 'kill "$SLEEP_PID" 2>/dev/null || true' EXIT
-wait "$SLEEP_PID" || true
+# The counters are cumulative, so the question is whether they MOVED across the
+# window -- a snapshot of "3 switches" proves only that something happened once,
+# possibly before the gate started.
+echo "watching for activity for ${MINUTES} min..."
+BEFORE="$("$PY" "$PROBE")"
+sleep $(( MINUTES * 60 ))
+AFTER="$("$PY" "$PROBE")"
 
-SINCE="@${START_EPOCH}"
-ACTIVITY="$(journalctl --user -u "$UNIT" --since "$SINCE" 2>/dev/null \
-            | grep -ci 'ACTIVITY_DETECTED\|IDLE_DETECTED' || true)"
-PRESSURE="$(journalctl --user -u "$UNIT" --since "$SINCE" 2>/dev/null \
-            | grep -ci 'pressure' || true)"
+read -r ACTIVITY PRESSURE <<<"$("$PY" -c '
+import json, sys
+before, after = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+def moved(key):
+    # A daemon restart mid-window resets the counter; the after-value is then
+    # the honest count for the life that is still running, and is never negative.
+    delta = after.get(key, 0) - before.get(key, 0)
+    return after.get(key, 0) if delta < 0 else delta
+print(moved("activity_edges") + moved("app_switches"), moved("pressure_events"))
+' "$BEFORE" "$AFTER")"
 
-echo "activity/idle edges: ${ACTIVITY}"
-echo "pressure mentions:   ${PRESSURE}"
+echo "activity/idle edges + app switches: ${ACTIVITY}"
+echo "pressure contributions:             ${PRESSURE}"
 
-[ "$ACTIVITY" -gt 0 ] || fail "zero activity/idle edges in ${MINUTES} min — the
+[ "$ACTIVITY" -gt 0 ] || fail "zero sensing events in ${MINUTES} min — the
   sensing path is not producing events, so a 7-day soak would prove nothing.
   (Use the machine normally during the gate; an untouched box is legitimately
   idle, and the gate cannot tell that apart from a dead collector.)"
 
+# The stamp is the gate's only durable output, and scripts/b9_soak_7day.sh
+# refuses to start without it. Writing it HERE -- after all five checks and not
+# one line earlier -- is what makes "the soak cannot run ungated" a property of
+# the filesystem rather than of someone remembering the running order.
+STAMP_FILE="${REPO}/data/b9_soak/gate-passed"
+mkdir -p "$(dirname "$STAMP_FILE")"
+{
+  echo "gate passed ${STAMP}"
+  echo "window_minutes ${MINUTES}"
+  echo "daemon_pid ${PID}"
+  echo "activity_edges ${ACTIVITY}"
+  echo "pressure_mentions ${PRESSURE}"
+  echo "log ${OUT}"
+} > "$STAMP_FILE"
+
 echo
 echo "=== GATE PASSED ==="
-echo "log: $OUT"
+echo "log:   $OUT"
+echo "stamp: $STAMP_FILE"
 echo
 echo "Start the 7-day soak with sleep inhibited — a laptop that suspends does not"
 echo "accumulate runtime, which is what ended the B2 soak at 11 h of a 24 h window:"
 echo
-echo "  systemd-inhibit --what=sleep:idle --who=NeuroPACA --why='B9 7-day soak' \\"
-echo "    scripts/b9_soak_7day.sh"
+echo "  systemctl --user enable --now neuropaca-b9-soak"
+echo
+echo "The unit wraps the driver in systemd-inhibit itself, starts with the"
+echo "graphical session and stops when the machine does -- so the week survives"
+echo "reboots and is accumulated across them."

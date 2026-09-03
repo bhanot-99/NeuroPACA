@@ -7,7 +7,7 @@
 
 | | |
 | --- | --- |
-| **Status** | **B8 · Agents & structural plasticity (L8) complete** — B0–B8 (incl. B2.5) all merged to `main`; all ten layers L1–L10 exist. Next and last: **B9 · Hardening**. See [`memory.md`](memory.md) for the live state. |
+| **Status** | **B9 · Hardening in progress** — B0–B8 (incl. B2.5) all merged to `main`; all ten layers L1–L10 exist. BL-1…BL-10 resolved; 6 of 7 B9 exit criteria met and the daemon now runs under the hardened systemd unit. The 7-day soak (`neuropaca-b9-soak.service`) is the last thing outstanding. See [`memory.md`](memory.md) for the live state. |
 | **Version** | v4 |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Runs on** | One laptop, CPU-only, single user, single graph. No GPU, no accounts, no telemetry. |
