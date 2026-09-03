@@ -33,6 +33,20 @@ L7 owns what they mean):
 Neither prefix ever reaches L5: `PressureAccumulator` subscribes to L3 and L4
 only (D-14), so a typed command cannot poison the pressure map.
 
+From B8 (D-16) L7 is also the *only* executor of agent-proposed effects.
+`AgentSupervisor` owns no gate: it publishes `ACTION_PROPOSAL` carrying a
+**description** — `{proposal_id, action_type, kwargs, reason, trigger}` — and L7
+instantiates the concrete `BaseAction` from `_PROPOSABLE` below, runs it through
+this module's one `SafetyGate`, and answers on `ACTION_PROPOSAL_RESULT`. A second
+gate in L8 would mean two `ConfirmationBroker`s racing to consume the human's
+single answer and two writers on one audit file; a description on the bus avoids
+both while leaving `rules.md §0` ("no module imports another module") intact.
+
+The proposal path grants nothing. An unknown `action_type`, a bad kwarg, or a
+tier the config has not enabled is **refused and audited**, never raised — and a
+`dangerous` proposal still needs the same recorded human confirmation any other
+dangerous action does (`rules.md §5.2`).
+
 Handlers hand off to background tasks. A dangerous action waits on a human for
 up to `action_confirmation_timeout_seconds`, and a bus handler must never block
 the dispatch loop for a minute (rules.md §2).
@@ -46,6 +60,7 @@ import logging
 import shlex
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from neuropaca.action.actions import (
@@ -74,6 +89,14 @@ _log = logging.getLogger(__name__)
 
 _COMMAND_PREFIXES = frozenset({"$!", "$$"})
 _COMMAND_TIMEOUT_SECONDS = 30.0
+
+#: B8 (D-16). The closed set of actions another layer may *ask* for by name.
+#: Membership here is the whole allowlist — an `action_type` outside it is
+#: refused, so a proposal can never reach a class L7 did not intend to expose.
+#: `ApiCallAction` is absent because it does not exist (rules.md §5.5).
+_PROPOSABLE: frozenset[str] = frozenset(
+    {"notification", "memory_write", "file_write", "run_command"}
+)
 
 __all__ = [
     "ActionExecutor",
@@ -115,6 +138,7 @@ class ActionExecutor(BaseModule):
         self.event_bus.subscribe(
             EventType.ACTION_CONFIRMATION_RESPONSE, self.confirmations.on_response
         )
+        self.event_bus.subscribe(EventType.ACTION_PROPOSAL, self.on_action_proposal)
 
     async def start(self) -> None:
         if self.is_running:
@@ -133,6 +157,7 @@ class ActionExecutor(BaseModule):
         self.event_bus.unsubscribe(
             EventType.ACTION_CONFIRMATION_RESPONSE, self.confirmations.on_response
         )
+        self.event_bus.unsubscribe(EventType.ACTION_PROPOSAL, self.on_action_proposal)
         for task in list(self._tasks):
             if not task.done():
                 task.cancel()
@@ -209,6 +234,162 @@ class ActionExecutor(BaseModule):
             )
         except Exception as exc:
             self._fail("on_user_message", exc)
+
+    async def on_action_proposal(self, event: Event) -> None:
+        """B8 (D-16). Another layer has *asked* for an effect. L7 owns the only
+        gate, so the proposal is a description and this is where it becomes an
+        action — or is refused.
+
+        Nothing here is privileged. The proposal is validated against
+        `_PROPOSABLE`, instantiated with L7's *own* sandbox / quarantine / graph
+        (never anything the proposer supplied), and then handed to the same
+        `SafetyGate.run` a pressure-driven action goes through — same tier check,
+        same audit pair, same confirmation for a dangerous tier.
+        """
+        proposal_id = ""
+        try:
+            proposal_id = str(event.payload.get("proposal_id", ""))
+            action_type = str(event.payload.get("action_type", ""))
+            kwargs = event.payload.get("kwargs")
+            reason = str(event.payload.get("reason", "")) or f"proposed by {event.source}"
+            trigger = str(event.payload.get("trigger", "")) or f"proposal:{event.source}"
+            if not isinstance(kwargs, dict):
+                kwargs = {}
+
+            try:
+                action = self._instantiate(action_type, reason, kwargs)
+            except SafetyGateError as exc:
+                await self._refuse_proposal(proposal_id, action_type, trigger, str(exc))
+                return
+
+            self._proposals += 1
+            task = asyncio.create_task(self._run_proposal(action, trigger, proposal_id))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            self._fail("on_action_proposal", exc)
+            with contextlib.suppress(Exception):
+                await self._refuse_proposal(proposal_id, "", "", f"handler error: {exc}")
+
+    def _instantiate(self, action_type: str, reason: str, kwargs: dict[str, Any]) -> BaseAction:
+        """Build a concrete action from a *described* one. Every dependency comes
+        from L7's own state; the proposer supplies data, never objects.
+
+        A `SafetyGateError` here means the proposal is malformed — it is refused
+        and audited by the caller, never raised at the bus (rules.md §2).
+        """
+        name = action_type.strip()
+        if name not in _PROPOSABLE:
+            raise SafetyGateError(f"action_type not proposable: {action_type!r}")
+        if not reason:
+            raise SafetyGateError("a proposal must carry a reason")
+        try:
+            if name == "notification":
+                return NotificationAction(
+                    reason=reason,
+                    text=str(kwargs["text"]),
+                    node_ids=tuple(str(n) for n in kwargs.get("node_ids", ())),
+                )
+            if name == "memory_write":
+                return MemoryWriteAction(
+                    self._graph,
+                    reason=reason,
+                    node_id=str(kwargs["node_id"]),
+                    node_type=NodeType(str(kwargs["node_type"])),
+                    attributes=dict(kwargs.get("attributes") or {}),
+                    edges=tuple(
+                        (str(target), RelationType(str(relation)))
+                        for target, relation in kwargs.get("edges", ())
+                    ),
+                )
+            if name == "file_write":
+                return FileWriteAction(
+                    self.sandbox,
+                    self.quarantine,
+                    reason=reason,
+                    path=str(kwargs["path"]),
+                    content=str(kwargs["content"]),
+                )
+            # run_command — dangerous, and the confirmation in front of it is not
+            # removable by any flag (rules.md §5.2). argv is exec'd as a list with
+            # no shell, so there is nothing to inject into (rules.md §5.4).
+            argv = tuple(str(a) for a in kwargs["argv"])
+            if not argv:
+                raise SafetyGateError("run_command needs a non-empty argv")
+            return RunCommandAction(
+                self.sandbox,
+                reason=reason,
+                argv=argv,
+                timeout_seconds=float(kwargs.get("timeout_seconds", _COMMAND_TIMEOUT_SECONDS)),
+            )
+        except SafetyGateError:
+            raise
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SafetyGateError(f"malformed {name} proposal: {exc}") from exc
+
+    async def _refuse_proposal(
+        self, proposal_id: str, action_type: str, trigger: str, detail: str
+    ) -> None:
+        """A proposal that never became an action still leaves a trail: one audit
+        pair and one result, so the proposer is not left waiting on silence."""
+        self._errors += 1
+        _log.warning("L7 refused proposal %s (%s): %s", proposal_id, action_type, detail)
+        for phase, extra in (
+            ("attempt", {"refused": detail}),
+            ("result", {"ok": False, "detail": f"refused: {detail}"}),
+        ):
+            await self.audit.record(
+                phase,
+                request_id="",
+                action=action_type or "unknown",
+                tier="",
+                trigger=trigger,
+                reason="action proposal",
+                **extra,
+            )
+        self._publish_proposal_result(proposal_id, accepted=False, ok=False, detail=detail)
+
+    async def _run_proposal(self, action: BaseAction, trigger: str, proposal_id: str) -> None:
+        try:
+            result = await self.gate.run(action, trigger=trigger)
+            self._last_at = result.finished_at
+            self._publish_proposal_result(
+                proposal_id,
+                accepted=True,
+                ok=result.ok,
+                detail=result.detail,
+                request_id=result.request_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._fail("proposal gate run", exc)
+            self._publish_proposal_result(
+                proposal_id, accepted=True, ok=False, detail=f"gate error: {exc}"
+            )
+
+    def _publish_proposal_result(
+        self,
+        proposal_id: str,
+        *,
+        accepted: bool,
+        ok: bool,
+        detail: str,
+        request_id: str = "",
+    ) -> None:
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.ACTION_PROPOSAL_RESULT,
+                source="action",
+                payload={
+                    "proposal_id": proposal_id,
+                    "accepted": accepted,
+                    "ok": ok,
+                    "detail": detail,
+                    "request_id": request_id,
+                },
+            )
+        )
 
     def _fail(self, where: str, exc: Exception) -> None:
         self._errors += 1

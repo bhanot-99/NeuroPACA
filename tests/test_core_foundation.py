@@ -30,7 +30,11 @@ from neuropaca.core.models import Edge, Event, Node, system_error_event
 def test_enum_members_match_the_blueprint() -> None:
     # +APP_SWITCH (B2.5b) +SYSTEM_HEALTH_{REQUEST,REPORT} (B5)
     # +ACTION_CONFIRMATION_{REQUEST,RESPONSE} (B7, D-14)
-    assert len(EventType) == 18
+    # +ACTION_PROPOSAL{,_RESULT} (B8, D-16 — the L7/L8 decoupling)
+    assert len(EventType) == 20
+    # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
+    # its id prefix, so structural plasticity costs no enum member and no schema
+    # bump (D-16).
     assert len(NodeType) == 11  # +IDLE_THOUGHT (B6, D-13)
     assert len(RelationType) == 8
     assert len(SignalType) == 7

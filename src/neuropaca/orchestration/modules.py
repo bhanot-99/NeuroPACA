@@ -10,6 +10,7 @@ from B4 on.
 from __future__ import annotations
 
 from neuropaca.action.executor import ActionExecutor
+from neuropaca.agents.supervisor import AgentSupervisor
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import SystemClock
@@ -56,6 +57,7 @@ def build_modules(
     learning = BitNetPlasticity(event_bus, config, graph_memory, bitnet_runtime)
     drive = PressureAccumulator(event_bus, config, graph_memory, clock=SystemClock())
     action = ActionExecutor(event_bus, config, graph_memory)
+    agents = AgentSupervisor(event_bus, config, graph_memory, clock=SystemClock())
     idle_cognition = DefaultModeNetwork(
         event_bus, config, graph_memory, bitnet_runtime, clock=SystemClock()
     )
@@ -69,12 +71,15 @@ def build_modules(
     )
 
     # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning ->
-    # L5 Drive -> L7 Action -> L6 Idle Cognition -> L9 Interface — the blueprint's
-    # own order (Architecture.md §10 A7, B7). L5 sits after its two producers
-    # (L3, L4) and L7 immediately after L5, so a threshold crossed during startup
-    # already has an executor listening; L9 is last so it is subscribed to L7's
-    # notification intents and confirmation prompts before either can be
-    # published. L4 and L6 share the loop model and self-disable without
+    # L5 Drive -> L7 Action -> L8 Agents -> L6 Idle Cognition -> L9 Interface —
+    # the blueprint's own order (Architecture.md §10 A7, B7/B8). L5 sits after its
+    # two producers (L3, L4) and L7 immediately after L5, so a threshold crossed
+    # during startup already has an executor listening. L8 follows L7 for the
+    # same reason in reverse: it is the second reader of that threshold, and it
+    # must not start before the layer that will gate its `ACTION_PROPOSAL`s.
+    # L9 is last so it is subscribed to L7's notification intents and
+    # confirmation prompts before either can be published. L4 and L6 share the
+    # loop model and self-disable without
     # llama-cpp-python / the model (D-11); L9's interactive model is likewise
     # optional (D-12) — none block startup.
     modules: list[BaseModule] = [sensing]
@@ -84,6 +89,8 @@ def build_modules(
     modules.append(learning)
     modules.append(drive)
     modules.append(action)
+    if config.agents_enabled:
+        modules.append(agents)
     modules.append(idle_cognition)
     modules.append(interface)
     return modules

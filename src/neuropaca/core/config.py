@@ -54,7 +54,26 @@ class Config:
     # at any instant regardless of tick alignment.
     pressure_decay_half_life_seconds: int = 60
     pressure_decay_interval_seconds: int = 10
+    # B8 · Agents (L8, D-16). `max_concurrent_agents` is load-bearing from here:
+    # a spawn requested while that many agents are running is **refused and
+    # logged**, never queued — an unbounded queue is how a load spike becomes a
+    # thundering herd. The rest of the budgets:
+    #   - agents_enabled — the kill switch, matching `activity_enabled`.
+    #   - agent_wall_clock_budget_seconds — `asyncio.timeout` ceiling on one
+    #     agent body; an overrun is cancelled and reported, never fatal.
+    #   - agent_inference_budget — declared but **unspent in B8**: L8 ships
+    #     structural plasticity only, because pressure crosses exactly when the
+    #     box is busy and `rules.md §4` allows one inference system-wide. The
+    #     field exists so a later phase cannot add inference without a budget.
+    #   - agent_idle_ttl_days — apoptosis TTL for an ephemeral node (D-15's 14 d).
+    #   - max_ephemeral_nodes — the hard cap `spawn_node()` checks **before**
+    #     mutating (`rules.md §3`: an unbounded node-adding path is wrong).
     max_concurrent_agents: int = 2
+    agents_enabled: bool = True
+    agent_wall_clock_budget_seconds: int = 30
+    agent_inference_budget: int = 1
+    agent_idle_ttl_days: int = 14
+    max_ephemeral_nodes: int = 50
     log_level: str = "INFO"
     poll_intervals: dict[str, float] = field(default_factory=lambda: {"system": 60.0})
     graph_save_interval_seconds: int = 300
@@ -192,6 +211,9 @@ class Config:
             "pressure_decay_interval_seconds",
             "quarantine_ttl_hours",
             "action_confirmation_timeout_seconds",
+            "agent_wall_clock_budget_seconds",
+            "agent_idle_ttl_days",
+            "max_ephemeral_nodes",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
@@ -215,6 +237,8 @@ class Config:
             errs.append("api_call_enabled requires a non-empty api_allowlist (rules.md §5.5)")
         if self.max_concurrent_agents < 0:
             errs.append(f"max_concurrent_agents must be >= 0, got {self.max_concurrent_agents}")
+        if self.agent_inference_budget < 0:
+            errs.append(f"agent_inference_budget must be >= 0, got {self.agent_inference_budget}")
         if self.top_process_count < 0:
             errs.append(f"top_process_count must be >= 0, got {self.top_process_count}")
 

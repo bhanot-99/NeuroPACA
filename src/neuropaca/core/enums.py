@@ -45,6 +45,15 @@ class EventType(StrEnum):
     # No response inside `action_confirmation_timeout_seconds` = refusal.
     ACTION_CONFIRMATION_REQUEST = auto()
     ACTION_CONFIRMATION_RESPONSE = auto()
+    # B8 · Agents (L8, D-16). The L7/L8 decoupling. L8 owns no `SafetyGate` —
+    # duplicating it would mean two `ConfirmationBroker`s racing to consume the
+    # human's one answer and two writers on one audit file. Instead L8 publishes
+    # a *description* of the effect it wants (`action_type` + `kwargs`, never a
+    # live `BaseAction`), L7 instantiates it from its own registry, runs it
+    # through the single gate, and answers with the result. Same shape as the
+    # B5 health bridge; `rules.md §0` ("no module imports another module") holds.
+    ACTION_PROPOSAL = auto()
+    ACTION_PROPOSAL_RESULT = auto()
 
 
 class NodeType(StrEnum):
