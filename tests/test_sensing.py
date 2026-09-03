@@ -253,13 +253,14 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    # L2 -> L3 -> L4 -> L5 -> L7 -> L6 -> L9 (B7, D-14; Architecture.md §10 A7)
+    # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> L9 (B8, D-16; Architecture.md §10 A7)
     assert [m.name for m in modules] == [
         "sensing",
         "diagnosis",
         "learning",
         "drive",
         "action",
+        "agents",
         "idle",
         "interface",
     ]
@@ -283,10 +284,18 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "learning",
         "drive",
         "action",
+        "agents",
         "idle",
         "interface",
     ]
     assert with_activity[0]._emit_idle_from_cpu is False
+
+    # B8 (D-16): agents_enabled is a real kill switch — L8 is absent, and every
+    # other layer is wired exactly as before.
+    without_agents = build_modules(
+        Config(inference_backend="fake", agents_enabled=False), bus, graph, runtime
+    )
+    assert "agents" not in [m.name for m in without_agents]
 
 
 async def test_orchestrator_runs_sensing_via_build_modules(tmp_path) -> None:
