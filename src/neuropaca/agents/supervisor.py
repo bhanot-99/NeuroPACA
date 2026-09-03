@@ -193,7 +193,11 @@ class AgentSupervisor(BaseModule):
             )
             task = asyncio.create_task(self._run_agent(agent_id, entry))
             self._agents[agent_id] = task
-            task.add_done_callback(lambda _t, aid=agent_id: self._agents.pop(aid, None))
+            # A plain closure, not a default-arg lambda: `agent_id` is a fresh
+            # local per handler call rather than a loop variable, so there is no
+            # late-binding hazard to defend against — and the default argument
+            # was defeating type inference on the callback for no benefit.
+            task.add_done_callback(lambda _task: self._agents.pop(agent_id, None))
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._fail("on_pressure_threshold", exc)
 
