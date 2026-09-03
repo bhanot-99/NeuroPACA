@@ -26,7 +26,7 @@ This file holds three things:
 | 1.6 | How do we sort activity into 10 topics? | 🟢 resolved (D-10, B2.5b) | core |
 | 1.7 | Reading the active window is OS-specific and hard | 🟢 resolved (D-9 idle, D-10 window) | core |
 | 1.8 | One user on one machine is not enough to prove anything | 🔴 open | core / research |
-| 1.9 | The Action and Agents layers are guesses | 🟢 resolved by ruling — L7 built (D-14), L8 reconstruction authoritative (D-15) | core |
+| 1.9 | The Action and Agents layers are guesses | 🟢 resolved — L7 built (D-14), **L8 built (D-16)** | core |
 | 1.10 | Concurrency traps | 🟡 in progress | core |
 | 1.11 | Too big for one person / takes too long | 🟡 in progress | core |
 | 1.12 | Privacy makes it hard to prove it works | 🟡 in progress | core / research |
@@ -39,7 +39,7 @@ flowchart LR
         R16["1.6 domain classification 🟢"]
         R17["1.7 active window 🟢"]
         R113["1.13 model coherence 🟠 → L4 mitigated"]
-        R19["1.9 L7 built (D-14) · L8 specified (D-15) 🟢"]
+        R19["1.9 L7 built (D-14) · L8 built (D-16) 🟢"]
         R110["1.10 concurrency 🟡"]
         R18["1.8 single-user evidence 🔴"]
     end
@@ -160,7 +160,7 @@ flowchart LR
 
 ---
 
-### 1.9 The Action and Agents layers are guesses · 🟢 resolved by ruling (D-14, D-15)
+### 1.9 The Action and Agents layers are guesses · 🟢 resolved — L7 built (D-14), L8 built (D-16)
 
 **Problem.** The class diagram is cut off at the right edge. Layers L7 (Action) and L8 (Agents) have no boxes — we reconstructed them from two event names and a note. L7 is the layer that can *change files and run commands*.
 
@@ -171,7 +171,7 @@ flowchart LR
 - Until then, mark everything about L7/L8 in the docs as "reconstructed — verify" (already done in `Architecture.md §11b`).
 - Build the safe parts of L7 first (notifications, memory writes). Leave file-writes and command-running for last, behind the strictest gate.
 
-**Ruling (D-14, 2026-09-01).** No re-export materialised and B7 could not wait on one, so the §11b reconstruction was **accepted as authoritative for L7** and built to. The mitigation above was followed in full: the two safe actions (`NotificationAction`, `MemoryWriteAction`) are the only ones that can fire autonomously; `FileWriteAction` and `RunCommandAction` are `dangerous`, ship behind `action_enabled_tiers` (default `["safe"]`) *and* `action_dry_run = True`, and cannot execute without a recorded human confirmation. `ApiCallAction` — the one component that would open a socket — **was not built at all**; only its reserved config switches exist. **L8 unblocked (D-15, 2026-09-01).** The original diagram is permanently truncated — waiting on a re-export was waiting on something that will never arrive, which is worse than a recorded ruling. The `Architecture.md §11b` L8 reconstruction is therefore **authoritative**: `AgentSupervisor` subscribes `PRESSURE_THRESHOLD_REACHED` and spawns bounded multi-step sub-agents capped by `max_concurrent_agents`; it alone owns `spawn_node()` / `kill_node()`, creating sub-clusters on high-load spikes and reaping them by apoptosis at `idle_ttl = 14 d` through the `GraphMemory` API. B8 is cleared to start. **This problem closes 🟢** — with the standing caveat that L7/L8 shapes came from a ruling, not from the source diagram, and any future re-export should be reconciled against them.
+**Ruling (D-14, 2026-09-01).** No re-export materialised and B7 could not wait on one, so the §11b reconstruction was **accepted as authoritative for L7** and built to. The mitigation above was followed in full: the two safe actions (`NotificationAction`, `MemoryWriteAction`) are the only ones that can fire autonomously; `FileWriteAction` and `RunCommandAction` are `dangerous`, ship behind `action_enabled_tiers` (default `["safe"]`) *and* `action_dry_run = True`, and cannot execute without a recorded human confirmation. `ApiCallAction` — the one component that would open a socket — **was not built at all**; only its reserved config switches exist. **L8 unblocked (D-15, 2026-09-01).** The original diagram is permanently truncated — waiting on a re-export was waiting on something that will never arrive, which is worse than a recorded ruling. The `Architecture.md §11b` L8 reconstruction is therefore **authoritative**: `AgentSupervisor` subscribes `PRESSURE_THRESHOLD_REACHED` and spawns bounded multi-step sub-agents capped by `max_concurrent_agents`; it alone owns `spawn_node()` / `kill_node()`, creating sub-clusters on high-load spikes and reaping them by apoptosis at `idle_ttl = 14 d` through the `GraphMemory` API. B8 is cleared to start. **This problem closes 🟢** — with the standing caveat that L7/L8 shapes came from a ruling, not from the source diagram, and any future re-export should be reconciled against them. **L8 built (D-16), 2026-09-03.** The reconstruction is no longer merely authoritative, it is implemented and validated: `AgentSupervisor` ships **structural plasticity only** — no multi-step inference loop, because pressure crosses exactly when the box is busy and `rules.md §4` allows one inference system-wide — and it holds **no `SafetyGate`**, reaching L7 through the `ACTION_PROPOSAL` / `ACTION_PROPOSAL_RESULT` pair so one audit writer and one `ConfirmationBroker` survive. Ephemeral nodes are `NodeType.CONCEPT` marked by an `ephemeral:` id prefix (D-16(d-bis)) — no schema bump — capped at `max_ephemeral_nodes` and reaped by L8's own apoptosis at 14 d. All 5 exit criteria met on the target box (`scripts/validate_b8_plasticity.py`).
 
 ---
 

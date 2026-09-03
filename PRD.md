@@ -251,7 +251,7 @@ NeuroPACA isn't a competing agent runtime (Hermes Agent, OpenClaw). It's a **beh
 | **R3** | DMN competes for CPU with real work | Idle-only trigger (CPU < 5 %); aborts on activity |
 | **R4** | Graph grows unbounded | Routing layer + score decay + `prune_low_score` + raw-buffer purge |
 | **R5** | Domain classification of raw activity is brittle | Ship an editable `app_map` (process → domain); the graph self-corrects via co-occurrence; never classify in the polling loop |
-| **R6** | The reconstructed L7/L8 shapes are wrong | Re-export the class diagram at full width before building them; build safe actions first |
+| **R6** | ~~The reconstructed L7/L8 shapes are wrong~~ — **retired 2026-09-03.** Both layers are built: **L7 in B7** (D-14, PR #9) and **L8 in B8** (D-15/D-16), each against its own exit criteria. No re-export is pending — the source diagram is permanently truncated, so `Architecture.md §11b` is authoritative by ruling rather than provisional. The mitigation was carried out in full: safe actions first, `ApiCallAction` never built, and every dangerous action still behind the tier gate, the sandbox and a recorded confirmation. | Residual: the shapes came from a ruling, not the diagram. Any future full-width export is reconciled against §11b, not the reverse. |
 | — | *Pruning-specific risks live in `pruning.md` §5, not here — that work is deferred.* | |
 
 ---
