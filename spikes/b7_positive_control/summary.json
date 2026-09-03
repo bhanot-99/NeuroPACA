@@ -1,0 +1,19 @@
+{
+  "kind": "b7-positive-control",
+  "synthetic": true,
+  "not_a_soak_result": true,
+  "started_at": "2026-09-02T20:02:34.465364+00:00",
+  "ended_at": "2026-09-03T00:49:17.962114+00:00",
+  "control_log": "/home/bhanot/.cache/neuropaca-b7-control/actions.jsonl",
+  "audit_lines": 120,
+  "attempts": 60,
+  "results": 60,
+  "paired": true,
+  "low_tier_proposals": 60,
+  "high_tier_proposals": 0,
+  "executed_effects": 0,
+  "low_tier_reasons": [
+    "L3 high_load: cpu 100% (> 90%) for 5 samples (~5 min)"
+  ],
+  "high_tier_reasons": []
+}

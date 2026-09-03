@@ -23,9 +23,9 @@ cd "$(dirname "$0")/.."
 {
     echo "=== finalize-check $(date -Iseconds) ==="
     if ./scripts/finalize_b7.sh; then
-        echo ">>> B7 FINALISED — merged into main locally. Review, then: git push origin main"
-        echo ">>> The soak daemon is still running (systemctl --user status neuropaca-b7-soak.service)"
-        echo ">>> — stop it with: ./scripts/stop_b7_soak.sh"
+        echo ">>> B7 criterion 5 VALIDATED. finalize_b7.sh no longer merges —"
+        echo ">>> finalise via PR: git push -u origin b7-drive-action-l5-l7 && gh pr create --base main --fill"
+        echo ">>> Stop the soak if it is still running: ./scripts/stop_b7_soak.sh"
     else
         echo "(not ready yet — see above)"
     fi
