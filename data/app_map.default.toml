@@ -54,11 +54,19 @@
 "com.spotify.Client" = "habits"
 "spotify" = "habits"
 "tv.plex.PlexDesktop" = "habits"
+# Brave was previously unmapped, which is indistinguishable from "not classified"
+# to FocusSessionPattern — it silently never counted as any kind of work. Mapped
+# here as "habits" (2026-09-02) by user's own call on real usage, *not* research
+# or engineering — deliberate: only those two domains drive FocusSessionPattern
+# (patterns.py `_FOCUS_DOMAINS`), so this mapping fixes the classification but
+# does NOT by itself unblock B7 criterion 5.
+"brave-browser" = "habits"
 
 [wm_class]
 # XWayland clients report a wm_class instead of an app_id.
 "code" = "engineering"
 "jetbrains-pycharm" = "engineering"
+"brave-browser" = "habits"
 "Slack" = "comms"
 "zoom" = "meetings"
 "Spotify" = "habits"

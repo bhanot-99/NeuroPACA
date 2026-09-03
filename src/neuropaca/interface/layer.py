@@ -13,7 +13,14 @@ Shape:
   the `parse_answer` grounding gate; anything ungrounded, timed out, or a missing
   interactive model falls back to an **extractive template** — never a raw model
   string.
-- `$!` / `$$` are parsed and *reserved*: they need L7 (B7) and are refused for now.
+- `$!` / `$$` are live from B7: L9 parses them and publishes `USER_MESSAGE`; L7
+  owns what they mean and answers through its own gate. L9 never executes
+  anything — it relays the request and, later, the confirmation prompt.
+- L9 is the human end of the L7 confirmation handshake (D-14): it holds the
+  `ACTION_CONFIRMATION_REQUEST`s L7 is blocked on (`confirmations`), sends the
+  human's verdict back as `ACTION_CONFIRMATION_RESPONSE` (`confirm`), and
+  delivers L7's notification *intents* (`notifications`) — L7 itself never
+  touches the desktop.
 - `conversation_history` is a `list[Message]` in RAM only — never disk, graph, or
   log; every logged IPC payload goes through `redact()` (rules.md §6, PRD §8.5).
 - health: L9 cannot import L10, so `health` publishes `SYSTEM_HEALTH_REQUEST` and
@@ -29,7 +36,7 @@ import json
 import logging
 import os
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -72,8 +79,14 @@ _DAILY_INSIGHT_CAP = 3
 _SURFACEABLE_NODE_PREFIXES = ("insight:", "idle:")
 
 _QUERY_PREFIXES = frozenset({"$", "$?"})
-_RESERVED_PREFIXES = frozenset({"$!", "$$"})
-_B7_REFUSAL = "not available until B7 (Action layer)"
+# B7: the two action prefixes. L9 relays them to L7 and returns immediately —
+# a dangerous action then waits on a *separate* confirmation round-trip, so the
+# query socket is never held open for the length of a human decision.
+_COMMAND_PREFIXES = frozenset({"$!", "$$"})
+_MAX_PENDING_NOTIFICATIONS = 50
+# A prompt this far past its timeout is stale even if L7's completion event never
+# arrived; L9 stops offering it rather than accept an answer nobody awaits.
+_CONFIRMATION_GRACE = 5.0
 
 
 def default_socket_path() -> Path:
@@ -103,6 +116,8 @@ class InterfaceLayer(BaseModule):
         self._latest_health: dict[str, Any] | None = None
         self._health_waiters: list[asyncio.Future[dict[str, Any] | None]] = []
         self._pending_insights: list[Insight] = []
+        self._pending_notifications: list[dict[str, Any]] = []
+        self._pending_confirmations: dict[str, dict[str, Any]] = {}
         self._surfaced_ids: set[str] = set()
         self._cap_day: date | None = None
         self._surfaced_today = 0
@@ -115,6 +130,12 @@ class InterfaceLayer(BaseModule):
         self.event_bus.subscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.subscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
         self.event_bus.subscribe(EventType.METRIC_COLLECTED, self._on_metric)
+        # B7 (D-14): L7 publishes intents and confirmation prompts; L9 is the
+        # only module that may turn either into something a human sees.
+        self.event_bus.subscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
+        self.event_bus.subscribe(
+            EventType.ACTION_CONFIRMATION_REQUEST, self.on_confirmation_request
+        )
         # PATTERN_DETECTED / MEMORY_UPDATED are intentionally NOT subscribed (B6).
 
     async def start(self) -> None:
@@ -148,6 +169,10 @@ class InterfaceLayer(BaseModule):
         self.event_bus.unsubscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
         self.event_bus.unsubscribe(EventType.METRIC_COLLECTED, self._on_metric)
+        self.event_bus.unsubscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
+        self.event_bus.unsubscribe(
+            EventType.ACTION_CONFIRMATION_REQUEST, self.on_confirmation_request
+        )
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -163,7 +188,9 @@ class InterfaceLayer(BaseModule):
             detail=(
                 f"socket {self._socket_path.name} · {self._queries} queries · "
                 f"{len(self._conversation_history)} turns · "
-                f"{self._surfaced_today} insights surfaced today · {self._errors} errors"
+                f"{self._surfaced_today} insights surfaced today · "
+                f"{len(self._pending_confirmations)} confirmations waiting · "
+                f"{self._errors} errors"
             ),
         )
 
@@ -233,6 +260,109 @@ class InterfaceLayer(BaseModule):
             )
         )
 
+    async def on_action_triggered(self, event: Event) -> None:
+        """L7 finished an attempt. Two jobs:
+
+        1. retire the confirmation prompt, if this attempt had one — L7 is no
+           longer waiting, so the human must stop being asked;
+        2. turn a *notification intent* into a line the human can read. Every
+           other action result is left to the audit log — L9 does not narrate
+           the daemon's housekeeping."""
+        try:
+            confirmation_id = str(event.payload.get("confirmation_id", ""))
+            if confirmation_id:
+                self._pending_confirmations.pop(confirmation_id, None)
+            intent = event.payload.get("intent")
+            if not isinstance(intent, dict) or intent.get("kind") != "notification":
+                return
+            text = str(intent.get("text", "")).strip()
+            if not text or not bool(event.payload.get("ok")):
+                return
+            self._pending_notifications.append(
+                {
+                    "text": text,
+                    "reason": str(intent.get("reason", "")),
+                    "node_ids": list(intent.get("node_ids", [])),
+                    "dry_run": bool(event.payload.get("dry_run")),
+                    "at": self._clock.now().isoformat(),
+                }
+            )
+            if len(self._pending_notifications) > _MAX_PENDING_NOTIFICATIONS:
+                # Bounded: an undrained queue must not grow without limit. The
+                # audit log is the complete record; this is only the tail.
+                del self._pending_notifications[:-_MAX_PENDING_NOTIFICATIONS]
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            self._errors += 1
+            _log.exception("interface on_action_triggered failed")
+            self.event_bus.publish(
+                system_error_event(module="interface", exception=str(exc), severity="handler")
+            )
+
+    async def on_confirmation_request(self, event: Event) -> None:
+        """L7 has paused a dangerous action and is waiting on a human. Hold the
+        prompt until a terminal asks for it — L9 never answers on its own."""
+        try:
+            request_id = str(event.payload.get("request_id", ""))
+            if not request_id:
+                return
+            self._pending_confirmations[request_id] = {
+                "request_id": request_id,
+                "action": str(event.payload.get("action", "")),
+                "tier": str(event.payload.get("tier", "")),
+                "summary": str(event.payload.get("summary", "")),
+                "reason": str(event.payload.get("reason", "")),
+                "requested_at": str(event.payload.get("requested_at", "")),
+            }
+            _log.warning("L9 holding confirmation %s for the user", request_id)
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            self._errors += 1
+            _log.exception("interface on_confirmation_request failed")
+            self.event_bus.publish(
+                system_error_event(module="interface", exception=str(exc), severity="handler")
+            )
+
+    def _expire_stale_confirmations(self) -> None:
+        """Belt and braces behind the `confirmation_id` retirement above: if L7's
+        completion event were ever lost, a prompt older than the timeout is one
+        nobody can still be waiting on. Showing it would invite an approval that
+        silently goes nowhere."""
+        grace = float(self.config.action_confirmation_timeout_seconds) + _CONFIRMATION_GRACE
+        now = self._clock.now()
+        for request_id, pending in list(self._pending_confirmations.items()):
+            raw = str(pending.get("requested_at", ""))
+            try:
+                requested_at = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+            if (now - requested_at).total_seconds() > grace:
+                self._pending_confirmations.pop(request_id, None)
+
+    def _answer_confirmation(self, request_id: str, approved: bool) -> dict[str, Any]:
+        """Relay one human verdict to L7. Unknown or already-answered ids are
+        rejected rather than published — an approval must correspond to a prompt
+        that is actually outstanding."""
+        self._expire_stale_confirmations()
+        if request_id not in self._pending_confirmations:
+            return {"ok": False, "error": f"no confirmation is waiting with id {request_id!r}"}
+        pending = self._pending_confirmations.pop(request_id)
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.ACTION_CONFIRMATION_RESPONSE,
+                source="interface",
+                priority=10,
+                payload={"request_id": request_id, "approved": approved},
+            )
+        )
+        _log.warning(
+            "L9 relayed confirmation %s: %s", request_id, "APPROVED" if approved else "DENIED"
+        )
+        return {
+            "ok": True,
+            "request_id": request_id,
+            "approved": approved,
+            "action": pending.get("action", ""),
+        }
+
     # ------------------------------------------------------------ IPC server
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -284,6 +414,16 @@ class InterfaceLayer(BaseModule):
             drained = [self._insight_line(i) for i in self._pending_insights]
             self._pending_insights.clear()
             return {"ok": True, "insights": drained}
+        if op == "notifications":
+            drained = list(self._pending_notifications)
+            self._pending_notifications.clear()
+            return {"ok": True, "notifications": drained}
+        if op == "confirmations":
+            self._expire_stale_confirmations()
+            return {"ok": True, "confirmations": list(self._pending_confirmations.values())}
+        if op == "confirm":
+            request_id = str(req.get("request_id", ""))
+            return self._answer_confirmation(request_id, bool(req.get("approved", False)))
         if op == "query":
             prefix = str(req.get("prefix", "$"))
             text = str(req.get("text", "")).strip()
@@ -307,11 +447,15 @@ class InterfaceLayer(BaseModule):
 
     # ------------------------------------------------------------ query pipeline
     async def on_user_input(self, prefix: str, text: str) -> dict[str, Any]:
-        """Parse one `$`-grammar turn and answer it. `$!` / `$$` are refused
-        until B7. Publishes `USER_MESSAGE` (catalogued; no subscriber yet, B6)."""
+        """Parse one `$`-grammar turn.
+
+        `$` / `$?` are answered here. `$!` / `$$` are *commands*: L9 publishes
+        `USER_MESSAGE` and returns immediately — L7 decides what they mean, and a
+        dangerous action comes back as a separate confirmation prompt rather than
+        holding this socket open (B7, D-14)."""
         self._queries += 1
-        if prefix in _RESERVED_PREFIXES:
-            return {"ok": False, "error": _B7_REFUSAL, "prefix": prefix}
+        if prefix in _COMMAND_PREFIXES:
+            return self._relay_command(prefix, text)
         if prefix not in _QUERY_PREFIXES:
             return {"ok": False, "error": f"unknown prefix: {prefix!r}"}
         if not text:
@@ -338,6 +482,31 @@ class InterfaceLayer(BaseModule):
             "confidence": round(confidence, 3),
             "source": source,
         }
+
+    def _relay_command(self, prefix: str, text: str) -> dict[str, Any]:
+        """Hand `$!` / `$$` to L7 over the bus. L9 holds no gate of its own — it
+        does not decide, back up, sandbox, or execute anything. It also does not
+        pre-empt L7's refusal: an empty command is the one thing it can reject
+        without guessing at L7's policy."""
+        if not text:
+            return {"ok": False, "error": "empty command", "prefix": prefix}
+        self._store_message(MessageRole.USER, f"{prefix} {text}")
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                source="interface",
+                priority=5,
+                payload={"text": text, "prefix": prefix},
+            )
+        )
+        if self.config.action_dry_run:
+            note = "queued — the action layer is in dry-run, so nothing will be executed"
+        else:
+            note = (
+                "queued — a dangerous action needs your confirmation: "
+                "run `neuropaca confirmations`, then `neuropaca confirm <id>`"
+            )
+        return {"ok": True, "queued": True, "prefix": prefix, "note": note}
 
     def _build_context(self, query: str) -> list[Node]:
         """Retrieval: label search -> 1-hop neighbourhood -> rank by score

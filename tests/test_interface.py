@@ -231,15 +231,232 @@ async def test_socket_query_answers_dollar_with_a_grounded_node_label(tmp_path) 
     assert resp["cited"] == ["app:webpack"]
 
 
-async def test_socket_refuses_bang_and_double_dollar_until_b7(tmp_path) -> None:
+async def test_bang_and_double_dollar_are_relayed_to_l7_not_executed(tmp_path) -> None:
+    """B7 (D-14): L9 hands `$!` / `$$` to the action layer and returns at once.
+
+    It publishes exactly one `USER_MESSAGE` per command carrying the prefix, and
+    it answers `queued` — never an answer, and never an effect of its own."""
     w = await _wired(tmp_path)
+    seen: list[tuple[str, str]] = []
+
+    async def spy(event) -> None:
+        seen.append((event.payload["prefix"], event.payload["text"]))
+
+    w.bus.subscribe(EventType.USER_MESSAGE, spy)
     try:
         bang = await w.request({"op": "query", "prefix": "$!", "text": "kill it"})
         dd = await w.request({"op": "query", "prefix": "$$", "text": "clean up"})
+        empty = await w.request({"op": "query", "prefix": "$!", "text": ""})
+        await w.bus.join()
     finally:
         await _teardown(w)
-    assert bang["ok"] is False and "B7" in bang["error"]
-    assert dd["ok"] is False and "B7" in dd["error"]
+
+    assert bang["ok"] is True and bang["queued"] is True and bang["prefix"] == "$!"
+    assert dd["ok"] is True and dd["queued"] is True and dd["prefix"] == "$$"
+    assert "answer" not in bang and "answer" not in dd
+    assert empty["ok"] is False and "empty command" in empty["error"]
+    assert seen == [("$!", "kill it"), ("$$", "clean up")]
+
+
+async def test_notification_intents_are_drained_by_the_notifications_op(tmp_path) -> None:
+    """B7 (D-14): L7 publishes an intent, L9 owns delivery. A non-notification
+    action result is *not* narrated to the user — the audit log has that."""
+    w = await _wired(tmp_path)
+    try:
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_TRIGGERED,
+                source="action",
+                payload={
+                    "ok": True,
+                    "dry_run": True,
+                    "intent": {
+                        "kind": "notification",
+                        "reason": "corroborated pressure",
+                        "text": "webpack is hot",
+                        "node_ids": ["app:webpack"],
+                    },
+                },
+            )
+        )
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_TRIGGERED,
+                source="action",
+                payload={"ok": True, "intent": {"kind": "memory_write", "reason": "r"}},
+            )
+        )
+        await w.bus.join()
+        first = await w.request({"op": "notifications"})
+        second = await w.request({"op": "notifications"})
+    finally:
+        await _teardown(w)
+
+    assert [n["text"] for n in first["notifications"]] == ["webpack is hot"]
+    assert first["notifications"][0]["dry_run"] is True
+    assert second["notifications"] == []  # drained, delivered once
+
+
+async def test_a_failed_action_is_not_narrated_to_the_user(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_TRIGGERED,
+                source="action",
+                payload={
+                    "ok": False,
+                    "intent": {"kind": "notification", "text": "never said", "reason": "r"},
+                },
+            )
+        )
+        await w.bus.join()
+        resp = await w.request({"op": "notifications"})
+    finally:
+        await _teardown(w)
+
+    assert resp["notifications"] == []
+
+
+async def test_l9_relays_a_confirmation_verdict_back_to_l7(tmp_path) -> None:
+    """The headless-daemon handshake, end to end from L9's side: hold the prompt,
+    show it on request, publish exactly the verdict the human typed."""
+    w = await _wired(tmp_path)
+    responses: list[dict] = []
+
+    async def spy(event) -> None:
+        responses.append(event.payload)
+
+    w.bus.subscribe(EventType.ACTION_CONFIRMATION_RESPONSE, spy)
+    try:
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_CONFIRMATION_REQUEST,
+                source="action",
+                payload={
+                    "request_id": "abc123",
+                    "action": "run_command",
+                    "tier": "dangerous",
+                    "summary": "run /usr/bin/pkill with 1 argument(s), 30.0s budget",
+                    "reason": "user requested via $!",
+                    "requested_at": "2026-09-01T12:00:00+00:00",
+                },
+            )
+        )
+        await w.bus.join()
+
+        listed = await w.request({"op": "confirmations"})
+        approved = await w.request({"op": "confirm", "request_id": "abc123", "approved": True})
+        again = await w.request({"op": "confirm", "request_id": "abc123", "approved": True})
+        unknown = await w.request({"op": "confirm", "request_id": "nope", "approved": True})
+        await w.bus.join()
+    finally:
+        await _teardown(w)
+
+    assert [c["request_id"] for c in listed["confirmations"]] == ["abc123"]
+    assert listed["confirmations"][0]["summary"].startswith("run /usr/bin/pkill")
+    assert approved["ok"] is True and approved["approved"] is True
+    # One prompt, one verdict: a request cannot be answered twice, and an id
+    # nobody is waiting on is never published.
+    assert again["ok"] is False and "no confirmation is waiting" in again["error"]
+    assert unknown["ok"] is False
+    assert responses == [{"request_id": "abc123", "approved": True}]
+
+
+async def test_a_prompt_is_retired_when_l7_stops_waiting(tmp_path) -> None:
+    """Regression (found on the target box by `scripts/validate_b7_confirmation.py`):
+    an expired confirmation used to sit in the terminal forever, so the next
+    `confirm` answered a question nobody was listening to. L7's completion event
+    carries the `confirmation_id`, and L9 retires the prompt on it."""
+    w = await _wired(tmp_path)
+    try:
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_CONFIRMATION_REQUEST,
+                source="action",
+                payload={"request_id": "r1", "action": "run_command", "tier": "dangerous"},
+            )
+        )
+        await w.bus.join()
+        assert len((await w.request({"op": "confirmations"}))["confirmations"]) == 1
+
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_TRIGGERED,
+                source="action",
+                payload={
+                    "ok": False,
+                    "detail": "refused: not confirmed (denied or expired)",
+                    "confirmation_id": "r1",
+                    "intent": {"kind": "run_command", "reason": "r"},
+                },
+            )
+        )
+        await w.bus.join()
+        after = await w.request({"op": "confirmations"})
+        late = await w.request({"op": "confirm", "request_id": "r1", "approved": True})
+    finally:
+        await _teardown(w)
+
+    assert after["confirmations"] == []
+    assert late["ok"] is False
+
+
+async def test_a_prompt_older_than_the_timeout_is_never_offered(tmp_path) -> None:
+    """Defence in depth: even if L7's completion event were lost, a prompt past
+    its timeout cannot be approved."""
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock, action_confirmation_timeout_seconds=10)
+    try:
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_CONFIRMATION_REQUEST,
+                source="action",
+                payload={
+                    "request_id": "old",
+                    "action": "run_command",
+                    "tier": "dangerous",
+                    "requested_at": clock.now().isoformat(),
+                },
+            )
+        )
+        await w.bus.join()
+        assert len((await w.request({"op": "confirmations"}))["confirmations"]) == 1
+
+        await clock.advance(60)
+        listed = await w.request({"op": "confirmations"})
+        late = await w.request({"op": "confirm", "request_id": "old", "approved": True})
+    finally:
+        await _teardown(w)
+
+    assert listed["confirmations"] == []
+    assert late["ok"] is False
+
+
+async def test_a_denial_is_relayed_as_a_denial(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    responses: list[dict] = []
+
+    async def spy(event) -> None:
+        responses.append(event.payload)
+
+    w.bus.subscribe(EventType.ACTION_CONFIRMATION_RESPONSE, spy)
+    try:
+        w.bus.publish(
+            Event(
+                event_type=EventType.ACTION_CONFIRMATION_REQUEST,
+                source="action",
+                payload={"request_id": "d1", "action": "run_command", "tier": "dangerous"},
+            )
+        )
+        await w.bus.join()
+        resp = await w.request({"op": "confirm", "request_id": "d1", "approved": False})
+        await w.bus.join()
+    finally:
+        await _teardown(w)
+
+    assert resp["approved"] is False
+    assert responses == [{"request_id": "d1", "approved": False}]
 
 
 async def test_health_op_bridges_request_and_report_over_the_bus(tmp_path) -> None:
@@ -319,6 +536,14 @@ async def test_ipc_payloads_are_redacted_in_logs(tmp_path, caplog) -> None:
         (["$? why slow"], {"op": "query", "prefix": "$?", "text": "why slow"}),
         (["$ hello there"], {"op": "query", "prefix": "$", "text": "hello there"}),
         (["$! kill it"], {"op": "query", "prefix": "$!", "text": "kill it"}),
+        (["$$ restart it"], {"op": "query", "prefix": "$$", "text": "restart it"}),
+        (["notifications"], {"op": "notifications"}),
+        (["confirmations"], {"op": "confirmations"}),
+        (["confirm", "abc123"], {"op": "confirm", "request_id": "abc123", "approved": True}),
+        (
+            ["confirm", "abc123", "--deny"],
+            {"op": "confirm", "request_id": "abc123", "approved": False},
+        ),
     ],
 )
 def test_cli_parse(argv: list[str], expected: dict) -> None:
@@ -329,6 +554,12 @@ def test_cli_parse(argv: list[str], expected: dict) -> None:
 def test_cli_parse_rejects_garbage() -> None:
     with pytest.raises(cli._CliError):
         cli._parse([])
+    # `confirm` names exactly one outstanding request — never a wildcard, never
+    # "all" (rules.md §5.2: one recorded confirmation per dangerous action).
+    with pytest.raises(cli._CliError, match="exactly one request id"):
+        cli._parse(["confirm"])
+    with pytest.raises(cli._CliError, match="exactly one request id"):
+        cli._parse(["confirm", "a", "b"])
 
 
 def test_cli_reports_a_missing_daemon(capsys) -> None:

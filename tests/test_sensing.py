@@ -253,11 +253,13 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    # L2 -> L3 -> L4 -> L6 -> L9 (B6, D-13)
+    # L2 -> L3 -> L4 -> L5 -> L7 -> L6 -> L9 (B7, D-14; Architecture.md §10 A7)
     assert [m.name for m in modules] == [
         "sensing",
         "diagnosis",
         "learning",
+        "drive",
+        "action",
         "idle",
         "interface",
     ]
@@ -279,6 +281,8 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "activity",
         "diagnosis",
         "learning",
+        "drive",
+        "action",
         "idle",
         "interface",
     ]

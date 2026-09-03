@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "purpose": "B7 positive control",
+  "not_for_paper_soak_results": true,
+  "plan": {
+    "minutes": 300,
+    "burst_seconds": 480,
+    "cooldown_seconds": 720,
+    "episodes": 13,
+    "attempt_high_tier": true,
+    "finale_seconds": 1600,
+    "estimated_seconds": 17200
+  },
+  "started_at": "2026-09-02T20:02:34.465364+00:00"
+}

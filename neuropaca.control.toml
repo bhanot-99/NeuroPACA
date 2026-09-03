@@ -1,0 +1,70 @@
+# B7 · Exit Criterion 5 — the *positive control* config (companion to
+# neuropaca.soak.toml).
+#
+# The 24 h dry-run soak answers "does NeuroPACA stay quiet and correct under a
+# normal working day". It cannot, on its own, answer the prior question: "if a
+# real behavioural spike happened, would L3->L4->L5->L7 actually fire and land a
+# traceable proposal in the audit log?" A quiet soak and a broken pipeline
+# produce the *same* empty log.
+#
+# This config runs a SECOND, throwaway daemon whose only job is to be driven by
+# scripts/b7_positive_control.py — a bounded synthetic-load experiment. It is a
+# positive control, not a soak run, and its output is DELIBERATELY kept out of
+# the repo so it can never be confused with, or contaminate, the real
+# data/actions.jsonl that backs the B7 acceptance judgement:
+#
+#   * every path below lives under ~/.cache/neuropaca-b7-control/ or
+#     $XDG_RUNTIME_DIR — nothing it writes lands inside the repo, so the real
+#     soak's filesystem watcher never sees it;
+#   * its L9 socket is a different name, so the two daemons never collide;
+#   * thresholds, poll intervals, decay, model paths and the dry-run/both-tiers
+#     stance are byte-for-byte the same as neuropaca.soak.toml — the control is
+#     only meaningful if it exercises the *shipped* gradient, not a tuned one.
+#
+#   NEUROPACA_CONFIG=neuropaca.control.toml neuropacad
+#
+# Not the default config and never shipped — like neuropaca.soak.toml it is a
+# measurement instrument, not a deployment.
+
+model_path = "models/bitnet-2b4t-tq2_0.gguf"
+interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
+inference_backend = "llama"
+
+# --- isolated state — all outside the repo (see the header) -------------------
+graph_db_path = "/home/bhanot/.cache/neuropaca-b7-control/graph.json"
+action_log_path = "/home/bhanot/.cache/neuropaca-b7-control/actions.jsonl"
+quarantine_path = "/home/bhanot/.cache/neuropaca-b7-control/quarantine"
+interface_socket_path = "/run/user/1000/neuropaca-b7-control.sock"
+log_level = "INFO"
+
+# The app_map is read once at startup and never written — safe to share the
+# repo's shipped copy.
+app_map_path = "data/app_map.default.toml"
+
+# L2 · sensing. Same cadence as the soak. The activity (Wayland) collector will
+# self-disable under systemd-run just as it does for the soak — the control
+# drives pressure through HighLoadPattern (CPU + file churn), which is the only
+# path currently reachable in an unattended run anyway.
+activity_enabled = true
+top_process_count = 5
+poll_intervals = { system = 60.0, filesystem = 60.0 }
+
+# The one directory b7_positive_control.py churns. Outside the repo on purpose:
+# the real soak watches /home/bhanot/NeuroPaca recursively, so churning inside it
+# would make the real soak log synthetic HIGH_LOAD proposals too.
+watch_paths = ["/home/bhanot/.cache/neuropaca-b7-control/churn"]
+
+# L5 · drive. Identical to the soak — the point is to observe the shipped gradient.
+pressure_low_threshold = 1.0
+pressure_high_threshold = 3.0
+pressure_decay_half_life_seconds = 60
+pressure_decay_interval_seconds = 10
+
+# L7 · action. Dry-run ON, BOTH tiers enabled — identical to the soak.
+action_dry_run = true
+action_enabled_tiers = ["safe", "dangerous"]
+action_confirmation_timeout_seconds = 60
+quarantine_ttl_hours = 168
+
+api_call_enabled = false
+api_allowlist = []

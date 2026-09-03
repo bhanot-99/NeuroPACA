@@ -1,0 +1,7 @@
+[Unit]
+Description=NeuroPACA B7 — check whether the soak window qualifies, finalize if so
+
+[Service]
+Type=oneshot
+WorkingDirectory=__REPO__
+ExecStart=__REPO__/scripts/check_and_finalize_b7.sh
