@@ -79,6 +79,18 @@ Nice=10
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+# ReadWritePaths is LOAD-BEARING, not tidiness (B9/BL-1).
+#
+# ProtectSystem=strict mounts the whole hierarchy read-only except /dev, /proc
+# and /sys — and that includes $XDG_RUNTIME_DIR. Without the %t line below the
+# L9 interface cannot bind $XDG_RUNTIME_DIR/neuropaca.sock and every `neuropaca`
+# verb dies, `confirm` included. Since D-14(c) makes `neuropaca confirm` the only
+# way to approve a dangerous action, and silence past the timeout is a refusal,
+# the daemon would look healthy in the journal while the entire action tier was
+# quietly unusable. Measured before the fix: "[Errno 30] Read-only file system".
+#
+#   %t = $XDG_RUNTIME_DIR for a --user unit (/run/user/$UID)
+ReadWritePaths=%t
 ReadWritePaths=__REPO__/data
 ProtectKernelTunables=true
 ProtectKernelModules=true

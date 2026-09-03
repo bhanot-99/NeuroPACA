@@ -68,7 +68,7 @@ flowchart TD
 | B6 | Idle Cognition (L6) | ✅ merged (PR #8) — `DefaultModeNetwork` + `GraphMemory` consolidate/link-orphan/prune-stale + extractive proactive idle-thought grammar (`{subject, object, query_template}`) + L9 `proactive` surfacing; `core/context.py` shared serialiser (A8); all 3 exit criteria validated on the target box (D-13) |
 | B7 | Drive & Action (L5 + L7) | ✅ merged (PR #9, `bd6215f`) — `PressureAccumulator` (two sources, exact half-life decay, set-test corroboration) + `SafetyGate` / sandbox / quarantine / JSONL audit / headless confirmation handshake + Notification·MemoryWrite·FileWrite·RunCommand; `$!` / `$$` live. **All 5 exit criteria met** — 1–4 on the target box; criterion 5 via the positive control (`spikes/b7_positive_control/`), the 24 h soak abandoned after 3 zero-proposal attempts (`HighLoadPattern`/Wayland blindspot). 288 pytest + 14 stress + 9 integration green |
 | B8 | Agents & structural plasticity (L8) | ✅ done (`b8-agents-structural-plasticity`, D-16) — `AgentSupervisor` + ephemeral sub-clusters + apoptosis + the `ACTION_PROPOSAL` decoupling. **All 5 exit criteria met on the target box** (`scripts/validate_b8_plasticity.py`). 311 pytest + stress + integration green |
-| B9 | Hardening | ⬜ not started |
+| B9 | Hardening | 🟡 in progress — 6 of 7 exit criteria met; the 7-day soak remains |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
 ---
@@ -180,7 +180,9 @@ Real `LlamaCppBackend` (lazy `import llama_cpp`, self-disables without the wheel
 
 **L7 decoupling (D-16).** L8 never holds a `SafetyGate`. An agent that wants an effect publishes `ACTION_PROPOSAL` — a *description* (`{action_type, kwargs}`), not a live object — and L7, which owns the only gate, the only `ActionAudit` writer, and the only `ConfirmationBroker`, instantiates the concrete `BaseAction`, runs it through that one gate, and answers on `ACTION_PROPOSAL_RESULT`. This is the B5 health-bridge precedent (`SYSTEM_HEALTH_REQUEST` / `REPORT`) applied to actions, and it keeps `rules.md §0` intact: no module imports another module.
 
-**No schema bump (D-16).** Spawned nodes are `NodeType.CONCEPT` carrying `is_ephemeral: True` and `spawned_by: "agent_supervisor"` in their attributes. Apoptosis selects on those attributes and calls `GraphMemory.delete_node()` directly — `prune_stale_nodes()` is a *whole-graph* sweep on one global TTL and is already owned by L6 at 48 h (`idle/dmn.py`); overloading it with a second 14-day TTL would make the two layers fight over one call.
+**No schema bump (D-16, amended by D-16(d-bis)).** Spawned nodes are `NodeType.CONCEPT`. **Apoptosis selects on the node-id prefix `ephemeral:<facet>:<uuid>` — not on an attribute.** `GraphMemory` builds its networkx node data from the *fixed* `Node` field set (`_node_to_attrs`), and `_node_record` / `_deserialise` round-trip only those same fields, so an ad-hoc key is discarded at creation and again on every `save()`. Selecting on an attribute would therefore mean that after one daemon restart every ephemeral node looked permanent, the sweep reaped nothing, and the graph grew without bound — silently. Ids persist, so the prefix does not, and it is the convention already used for exactly this purpose (`idle:`, `insight:`, `action:`). `is_ephemeral: True` / `spawned_by: "agent_supervisor"` are still written and are useful for in-process introspection, but they are **not durable and must never be used as the selector**. Regression: `test_the_ephemeral_marker_survives_a_save_and_reload`.
+
+Apoptosis calls `GraphMemory.delete_node()` directly — `prune_stale_nodes()` is a *whole-graph* sweep on one global TTL and is already owned by L6 at 48 h (`idle/dmn.py`); overloading it with a second 14-day TTL would make the two layers fight over one call.
 
 **Exit:** the ephemeral-node cap holds under a spawn storm; apoptosis reaps every node past its TTL and leaves no dangling edges; an `ACTION_PROPOSAL` routes through L7's single gate and comes back as a result; an agent never exceeds its wall-clock budget; the concurrency cap refuses rather than queues.
 
@@ -196,6 +198,24 @@ Validated by `scripts/validate_b8_plasticity.py`, which injects synthetic pressu
 
 ### B9 · Hardening
 systemd user unit, crash recovery, graph schema versioning, full `health_check()`, log rotation, 7-day soak, fault injection, egress test in CI, `neuropaca export` / `panic` / `doctor`.
+
+**Blockers ruled together in D-17** (BL-1 … BL-10). The four that were load-bearing: the hardened unit made `$XDG_RUNTIME_DIR` read-only and so killed every CLI verb including `confirm`; boot "recovery" was a restart loop that ended in permanent failure; `schema_version` was written but never read; and logrotate targeted a file no code created.
+
+**Exit:**
+
+| # | Criterion | Proven by |
+| --- | --- | --- |
+| 1 | `neuropaca doctor` produces a full report with **the daemon not running** — no socket connect, no daemon required. | `test_doctor_runs_with_no_daemon_and_no_data_directory`, `test_doctor_never_opens_the_socket_when_the_daemon_is_absent`, `test_the_cli_routes_offline_verbs_without_a_socket` |
+| 2 | `neuropaca panic` leaves nothing: daemon SIGKILLed first (so nothing re-persists), then every item under `data/` gone. Refuses without the typed word, and refuses when the config will not load rather than guessing a directory. | `test_panic_wipes_the_data_directory`, `test_panic_without_the_typed_word_touches_nothing`, `test_panic_refuses_when_the_config_will_not_load` |
+| 3 | CI **affirmatively** fails an outbound connection: the egress job runs inside a network namespace with only loopback, and the test asserts that HTTP and raw TCP both raise. Static checks additionally forbid any outbound client import and any non-`AF_UNIX` socket in the shipped package. | `tests/integration/test_egress_blocked.py` (5 tests), `.github/workflows/ci.yml` `egress-test` |
+| 4 | The **7-day soak** completes, having first passed the 1-hour live gate, run under `systemd-inhibit --what=sleep:idle`. Subsumes the carried B1 T2 / B2 T3 / B4 windows. | `scripts/b9_soak_gate.sh` then `scripts/b9_soak_7day.sh` — **not yet run** |
+| 5 | An unreadable graph is quarantined and the daemon **boots anyway** on a fresh 11-hub graph, reporting itself degraded rather than ok. | `test_an_unreadable_graph_is_quarantined_and_the_daemon_still_boots` (×3 corruption shapes), `test_a_degraded_boot_is_visible_in_health`, `test_the_reseeded_graph_is_persisted_not_just_in_memory` |
+| 6 | `schema_version` is **read** on load: a newer-than-supported file is refused with a message rather than silently dropping fields; a v1 file still loads; a malformed record arrives as `GraphMemoryError`, not `KeyError`. | `test_a_graph_from_a_newer_build_is_refused_not_silently_loaded`, `test_a_v1_graph_still_loads`, `test_a_malformed_node_record_raises_graph_memory_error_not_key_error` |
+| 7 | The unit binds the L9 socket under `ProtectSystem=strict`, and logrotate targets files the daemon actually writes. | `test_the_systemd_unit_grants_write_access_to_the_runtime_directory`, `test_logrotate_targets_the_configured_log_paths`, `systemd-analyze --user verify` |
+
+Criteria 1–3 and 5–7 are met by the test suite. **Criterion 4 is the only one that cannot be met from a keyboard** — it needs a week of wall-clock on the target box, gated by `scripts/b9_soak_gate.sh`.
+
+**Soak methodology (BL-5).** B7 ran three soaks and L5 fired zero times; the recorded cause ("the collector cannot see Wayland under `systemd --user`") was wrong — measured 2026-09-03, `WAYLAND_DISPLAY` *is* in the manager environment and the daemon merely started before the compositor imported it. The unit now binds `graphical-session.target`. Because a soak that produces nothing looks identical to a soak of a working-but-idle system, the 7-day run is gated: `scripts/b9_soak_gate.sh` checks the live process environment (not the manager's), that the collector did not self-disable, that `neuropaca health` answers over the socket, and that real activity edges appear within an hour. Only then does the soak start — under `systemd-inhibit --what=sleep:idle`, because a suspending laptop accrues no runtime, which is exactly what ended the B2 soak at 11 h of 24.
 
 ---
 

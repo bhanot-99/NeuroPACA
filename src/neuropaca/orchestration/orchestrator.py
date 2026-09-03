@@ -20,14 +20,17 @@ import signal
 import time
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
 
 from neuropaca.core import logging as np_logging
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType
+from neuropaca.core.errors import GraphMemoryError
 from neuropaca.core.event_bus import EventBus
-from neuropaca.core.graph_memory import GraphMemory
+from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
 from neuropaca.core.health import SystemHealth, current_rss_mb
 from neuropaca.core.inference import create_backend, create_interactive_backend
 from neuropaca.core.models import Event
@@ -53,6 +56,10 @@ class NeuroPACAOrchestrator:
         self._running = False
         self._shutdown_done = False
         self._started_at: float | None = None
+        # Non-fatal degradations survived at boot (B9/BL-2). Surfaced through
+        # health_check().notes so `neuropaca health` shows a daemon that came
+        # up on a reseeded graph as degraded rather than silently ok.
+        self._degraded_notes: list[str] = []
         self._shutdown_event = asyncio.Event()
 
     # ---------------------------------------------------------------- properties
@@ -82,14 +89,17 @@ class NeuroPACAOrchestrator:
     async def initialize(self) -> None:
         if self._initialized:
             return
-        np_logging.configure(self._config.log_level)
+        np_logging.configure(
+            self._config.log_level,
+            file_path=self._config.log_file_path if self._config.log_to_file else None,
+        )
         self._event_bus = EventBus.get_instance()
         self._graph_memory = GraphMemory.get_instance(persistence_path=self._config.graph_db_path)
         self._bitnet_runtime = BitNetRuntime.get_instance(
             create_backend(self._config),
             create_interactive_backend(self._config),  # B5 · L9 $ / $? model (D-12)
         )
-        await self._graph_memory.load()
+        await self._load_graph_with_recovery()
         self._scheduler = Scheduler(self._graph_memory, self._config)
         if self._module_builder is not None:
             self._modules.extend(
@@ -107,6 +117,63 @@ class NeuroPACAOrchestrator:
             self._config.inference_backend,
             len(self._modules),
         )
+
+    async def _load_graph_with_recovery(self) -> None:
+        """Load the graph; if it is unreadable, quarantine it and boot on a fresh
+        one rather than refusing to start (B9/BL-2).
+
+        Before B9 this was a bare `await load()`. `load()` raises
+        `GraphMemoryError` on any unreadable file, so a single corrupt
+        `graph.json` took the daemon down, `Restart=on-failure` restarted it into
+        the same corrupt file, and `StartLimitBurst` then gave up permanently —
+        with no `neuropaca` verb able to explain why, because every one of them
+        needs the daemon that will not start. A graph is a *derived* artefact
+        rebuilt from observation, so refusing to run without it trades a
+        recoverable problem for an unrecoverable one.
+
+        The bad file is moved, never deleted: it is the only evidence of what
+        went wrong, and `neuropaca doctor` reports it.
+        """
+        assert self._graph_memory is not None
+        try:
+            await self._graph_memory.load()
+            return
+        except GraphMemoryError as exc:
+            quarantined = self._quarantine_unreadable_graph(exc)
+
+        # Reseed in place — the singleton is already wired into the modules built
+        # below, so it must be *this* instance that comes back with the 11 hubs.
+        await self._graph_memory.reset_to_seed()
+        _log.error(
+            "graph was unreadable and has been quarantined at %s — "
+            "booted on a fresh 11-hub graph; run `neuropaca doctor` for detail",
+            quarantined,
+        )
+        self._degraded_notes.append(
+            f"graph unreadable at boot; quarantined to {quarantined} and reseeded"
+        )
+
+    def _quarantine_unreadable_graph(self, exc: Exception) -> str:
+        """Move the unreadable graph aside. Never raises — a failure here must not
+        turn a recoverable boot into the crash loop this whole path exists to
+        avoid."""
+        source = Path(self._config.graph_db_path)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        target = source.with_name(f"{source.name}.corrupt.{stamp}")
+        try:
+            if source.exists():
+                source.replace(target)
+        except OSError as move_exc:
+            _log.error(
+                "could not quarantine the unreadable graph %s (%r) — "
+                "starting fresh anyway; the original may be overwritten on the "
+                "next save",
+                source,
+                move_exc,
+            )
+            return f"{source} (quarantine failed: {move_exc!r})"
+        _log.error("graph %s was unreadable (%r)", source, exc)
+        return str(target)
 
     def register_module(self, module: BaseModule) -> None:
         """Attach a module before `initialize()`. The orchestrator then drives its
@@ -189,7 +256,12 @@ class NeuroPACAOrchestrator:
             )
             reports = tuple(module.health() for module in self._modules)
             return SystemHealth(
-                ok=self._running and not self._shutdown_done and all(r.ok for r in reports),
+                ok=(
+                    self._running
+                    and not self._shutdown_done
+                    and all(r.ok for r in reports)
+                    and not self._degraded_notes
+                ),
                 uptime_seconds=uptime,
                 modules=reports,
                 graph_nodes=self._graph_memory.node_count if self._graph_memory else 0,
@@ -199,6 +271,8 @@ class NeuroPACAOrchestrator:
                 events_dropped=self._event_bus.dropped_count if self._event_bus else 0,
                 inference_loaded=self._bitnet_runtime.is_loaded if self._bitnet_runtime else False,
                 rss_mb=current_rss_mb(),
+                graph_schema_version=graph_schema_version(),
+                notes=tuple(self._degraded_notes),
             )
         except Exception as exc:  # health_check never raises (Architecture.md §3.7)
             return SystemHealth(

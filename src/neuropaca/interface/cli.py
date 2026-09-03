@@ -15,6 +15,9 @@ answer comes from the running daemon.
     neuropaca notifications                   # drain what L7 wants to tell you
     neuropaca confirmations                   # dangerous actions awaiting you
     neuropaca confirm <id> [--deny]           # answer one of them
+    neuropaca doctor                          # offline diagnosis (B9, no daemon)
+    neuropaca export <path>                   # dump the graph out of data/ (B9)
+    neuropaca panic                           # kill the daemon, wipe state (B9)
 
 Socket: ``--socket PATH`` > ``$NEUROPACA_SOCKET`` > ``$XDG_RUNTIME_DIR/neuropaca.sock``.
 Non-inference commands (`health`, `insights`, a refused prefix) never touch the
@@ -30,12 +33,16 @@ import os
 import sys
 from typing import Any
 
+from neuropaca.interface import offline
 from neuropaca.interface.layer import default_socket_path
 
 _USAGE = (
     "usage: neuropaca (ask|diagnose|health|insights|notifications|confirmations) [text]\n"
     "       neuropaca confirm <request-id> [--deny]\n"
     '       neuropaca "$ <question>" | "$? <question>" | "$! <command>" | "$$ <command>"\n'
+    "       neuropaca doctor                  # offline diagnosis (no daemon needed)\n"
+    "       neuropaca export <path> [--force] # dump the graph out of data/\n"
+    "       neuropaca panic [--yes]           # kill the daemon and wipe all state\n"
 )
 _PREFIXES = ("$?", "$!", "$$", "$")  # longest-first so `$?` wins over `$`
 _CONNECT_TIMEOUT = 3.0
@@ -227,6 +234,14 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+
+    # The three offline verbs are handled before anything touches the socket
+    # (B9/BL-7). `doctor` in particular exists for the case where the daemon is
+    # not running, so it must not be routed through the daemon.
+    offline_result = offline.dispatch(raw_argv)
+    if offline_result is not None:
+        return offline_result
+
     try:
         request, socket_override = _parse(raw_argv)
     except _CliError as exc:

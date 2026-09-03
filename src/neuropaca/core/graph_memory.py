@@ -42,6 +42,18 @@ from neuropaca.core.models import Edge, Node
 # file loads unchanged (the key is simply absent -> None).
 _SCHEMA_VERSION = 2
 
+# The oldest on-disk version this build can still read. v1 differs from v2 only
+# by the absent `surfaced_at` key, which `_deserialise` already tolerates, so no
+# migration step is needed yet — when one is, add it to `_migrate` rather than
+# widening this window silently.
+_MIN_READABLE_SCHEMA_VERSION = 1
+
+
+def graph_schema_version() -> int:
+    """The on-disk graph schema version this build writes (B9/BL-3)."""
+    return _SCHEMA_VERSION
+
+
 DOMAIN_SLUGS: tuple[str, ...] = (
     "engineering",
     "research",
@@ -334,7 +346,22 @@ class GraphMemory:
                     payload = json.loads(self._path.read_text("utf-8"))
                 except (OSError, ValueError) as exc:
                     raise GraphMemoryError(f"cannot load graph {self._path}: {exc}") from exc
-                self._graph = self._deserialise(payload)
+                if not isinstance(payload, dict):
+                    raise GraphMemoryError(
+                        f"cannot load graph {self._path}: top level is "
+                        f"{type(payload).__name__}, expected an object"
+                    )
+                try:
+                    self._graph = self._deserialise(payload)
+                except GraphMemoryError:
+                    raise
+                except (KeyError, TypeError, ValueError) as exc:
+                    # A truncated or hand-edited record. Surface it as the one
+                    # exception type callers handle (BL-2) rather than leaking a
+                    # bare KeyError out of the node loop.
+                    raise GraphMemoryError(
+                        f"cannot load graph {self._path}: malformed record ({exc!r})"
+                    ) from exc
             if self._graph.number_of_nodes() == 0:
                 self._seed_hubs_unsafe()
             self._dirty = False
@@ -342,6 +369,23 @@ class GraphMemory:
         # and large (10k+ node/edge attr dicts), and without this every gen-2
         # collection triggered by unrelated churn — notably save()'s transient
         # records — rescans it, stalling the loop ~25 ms (problems.md T4).
+        gc.collect()
+        gc.freeze()
+
+    async def reset_to_seed(self) -> None:
+        """Drop everything and come back as a bare 11-hub graph (B9/BL-2).
+
+        Used only by the orchestrator's boot recovery, after the on-disk graph
+        has been quarantined. It mutates *this* instance rather than building a
+        new one because `GraphMemory` is a singleton already handed to the
+        modules, so a replacement object would leave them pointing at the old
+        one. `_dirty` is left True so the reseeded graph is persisted on the next
+        scheduler tick.
+        """
+        async with self._lock:
+            self._graph = nx.MultiDiGraph()
+            self._seed_hubs_unsafe()
+            self._dirty = True
         gc.collect()
         gc.freeze()
 
@@ -682,7 +726,41 @@ class GraphMemory:
             )
 
     # ---------------------------------------------------------------- (de)serialise
+    @staticmethod
+    def _validate_schema_version(payload: dict[str, Any]) -> int:
+        """Read and check `schema_version` *before* touching any node data (B9/BL-3).
+
+        Until B9 this value was written on every save and never read back, so a
+        file from a future build was parsed optimistically: unknown-but-required
+        keys raised `KeyError` deep inside the node loop, and a renamed field was
+        worse — it loaded "successfully" with data silently dropped. Both are
+        checked here instead, where the error can say what actually happened.
+
+        A file with no `schema_version` at all is v1: the key was introduced with
+        the field, so its absence is meaningful rather than missing.
+        """
+        raw = payload.get("schema_version", 1)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise GraphMemoryError(
+                f"graph schema_version must be an integer, got {raw!r} — "
+                "the file is not a NeuroPACA graph, or is corrupt"
+            )
+        if raw > _SCHEMA_VERSION:
+            raise GraphMemoryError(
+                f"graph schema v{raw} was written by a newer NeuroPACA than this one "
+                f"(reads up to v{_SCHEMA_VERSION}). Refusing to load it rather than "
+                "drop the fields this build does not know about — upgrade, or point "
+                "`graph_db_path` elsewhere."
+            )
+        if raw < _MIN_READABLE_SCHEMA_VERSION:
+            raise GraphMemoryError(
+                f"graph schema v{raw} is older than the oldest readable version "
+                f"(v{_MIN_READABLE_SCHEMA_VERSION}); no migration path exists"
+            )
+        return int(raw)
+
     def _deserialise(self, payload: dict[str, Any]) -> Any:
+        self._validate_schema_version(payload)
         graph = nx.MultiDiGraph()
         for raw in payload.get("nodes", []):
             node = Node(

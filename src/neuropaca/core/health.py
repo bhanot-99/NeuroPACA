@@ -66,6 +66,7 @@ class SystemHealth:
     events_dropped: int = 0
     inference_loaded: bool = False
     rss_mb: float | None = None
+    graph_schema_version: int = 0
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     @property

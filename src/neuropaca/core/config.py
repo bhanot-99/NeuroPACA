@@ -75,6 +75,11 @@ class Config:
     agent_idle_ttl_days: int = 14
     max_ephemeral_nodes: int = 50
     log_level: str = "INFO"
+    # B9/BL-4 · the file sink `scripts/logrotate/neuropaca` rotates. journald
+    # captures stderr under systemd, but the audit trail in data/ is useless
+    # without the daemon log beside it when reconstructing an incident.
+    log_to_file: bool = True
+    log_file_path: str = "data/neuropaca.log"
     poll_intervals: dict[str, float] = field(default_factory=lambda: {"system": 60.0})
     graph_save_interval_seconds: int = 300
     bitnet_max_tokens: int = 256
@@ -189,6 +194,8 @@ class Config:
 
         if self.log_level.upper() not in logging.getLevelNamesMapping():
             errs.append(f"unknown log_level: {self.log_level!r}")
+        if self.log_to_file and not self.log_file_path:
+            errs.append("log_file_path must not be empty when log_to_file is on")
 
         for name in (
             "idle_threshold_seconds",
