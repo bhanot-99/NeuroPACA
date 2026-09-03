@@ -83,6 +83,27 @@ async def _teardown(executor: ActionExecutor, bus: EventBus) -> None:
     await bus.stop()
 
 
+async def _settle(executor: ActionExecutor, bus: EventBus) -> None:
+    """Wait for the gated action to actually finish, rather than guessing at a
+    sleep budget.
+
+    `_teardown` calls `executor.stop()`, which **cancels** pending tasks. A gated
+    action that has not finished by then is killed before it can publish
+    `ACTION_TRIGGERED` or write its audit pair — so a fixed sleep is a race
+    against the machine, not a wait. It held on a fast box and lost on the CI
+    runner, where the audit log's `fsync` alone can exceed 50 ms.
+
+    Awaiting the executor's own task set is deterministic and needs no clock, per
+    rules.md §8 ("no test sleeps"). The second `join()` drains the events those
+    tasks published so a spy subscriber has seen them.
+    """
+    await bus.join()
+    pending = list(executor._tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    await bus.join()
+
+
 async def _approve_next(bus: EventBus, *, approved: bool) -> list[str]:
     """Stand in for the human at the terminal: answer whatever L7 asks."""
     answered: list[str] = []
@@ -527,8 +548,7 @@ async def test_the_low_tier_writes_a_silent_memory_record(tmp_path) -> None:
                 },
             )
         )
-        await bus.join()
-        await asyncio.sleep(0.05)
+        await _settle(executor, bus)
         written = [n for n in graph.node_ids if n.startswith("action:")]
         assert len(written) == 1
         node = graph.get_node(written[0])
@@ -566,8 +586,7 @@ async def test_the_high_tier_asks_instead_of_acting(tmp_path) -> None:
                 },
             )
         )
-        await bus.join()
-        await asyncio.sleep(0.05)
+        await _settle(executor, bus)
     finally:
         await _teardown(executor, bus)
 
@@ -619,8 +638,7 @@ async def test_double_dollar_backs_up_the_daemons_state_first(tmp_path) -> None:
                 },
             )
         )
-        await bus.join()
-        await asyncio.sleep(0.3)
+        await _settle(executor, bus)
     finally:
         await _teardown(executor, bus)
 
@@ -640,8 +658,7 @@ async def test_a_question_prefix_never_reaches_the_action_layer(tmp_path) -> Non
                     payload={"prefix": prefix, "text": "/bin/true"},
                 )
             )
-        await bus.join()
-        await asyncio.sleep(0.05)
+        await _settle(executor, bus)
     finally:
         await _teardown(executor, bus)
 
@@ -658,8 +675,7 @@ async def test_an_unparseable_command_is_refused_and_still_logged(tmp_path) -> N
                 payload={"prefix": "$!", "text": 'unbalanced "quote'},
             )
         )
-        await bus.join()
-        await asyncio.sleep(0.05)
+        await _settle(executor, bus)
     finally:
         await _teardown(executor, bus)
 
