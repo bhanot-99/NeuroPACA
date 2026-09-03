@@ -7,7 +7,7 @@
 
 | | |
 | --- | --- |
-| **Status** | B5 · Interface (L9) built (`b5-interface-l9`). B0–B4 + B2.5 merged. See [`memory.md`](memory.md) for the live state. |
+| **Status** | **B8 · Agents & structural plasticity (L8) complete** — B0–B8 (incl. B2.5) all merged to `main`; all ten layers L1–L10 exist. Next and last: **B9 · Hardening**. See [`memory.md`](memory.md) for the live state. |
 | **Version** | v4 |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Runs on** | One laptop, CPU-only, single user, single graph. No GPU, no accounts, no telemetry. |
@@ -28,8 +28,16 @@ flowchart LR
     LEARN --> GRAPH
     GRAPH --> IDLE[L6 · Idle Cognition<br/>replay + housekeeping<br/>when you walk away]
     IDLE --> GRAPH
+    DIAG -->|Signal| DRIVE[L5 · Drive<br/>pressure accumulates,<br/>decays by half every 60s]
+    LEARN -->|Insight| DRIVE
+    DRIVE -->|threshold crossed| ACT[L7 · Action<br/>one SafetyGate,<br/>one audit log]
+    DRIVE -->|threshold crossed| AGENT[L8 · Agents<br/>ephemeral diagnostic<br/>sub-cluster, reaped at 14d]
+    AGENT -->|ACTION_PROPOSAL| ACT
+    AGENT --> GRAPH
+    ACT --> GRAPH
     GRAPH --> ASK["L9 · Interface<br/>$ what's using my CPU?"]
     ASK -->|grounded answer,<br/>cites real nodes| USER([You, in the terminal])
+    ACT -.->|needs your yes| USER
 ```
 
 **One score, several jobs.** Every node carries one `relevance_score` (0–10) that governs **what the graph keeps**, **what it replays during idle time**, and **how it ranks context for your questions**. A later, deferred phase uses that same score to prune a local model toward your work ([`pruning.md`](pruning.md)).
@@ -77,11 +85,23 @@ refusal, commands run with no shell and no inherited environment, writes are
 confined to `watch_paths` and backed up to quarantine first, and every attempt —
 refusals included — is two lines in `data/actions.jsonl`.
 
+**Agents are structural, not autonomous.** When pressure crosses the high
+threshold, L8 spawns a short-lived diagnostic sub-cluster of `ephemeral:` nodes
+around whatever is under pressure, then completes. It runs no inference loop —
+one inference is allowed system-wide, and an agent competing for it would starve
+L4 and L9 exactly when they matter. It holds no `SafetyGate` of its own: an agent
+that wants an effect publishes an `ACTION_PROPOSAL` *description* and L7 — the
+only gate, the only audit writer — decides. Ephemeral nodes are capped
+(`max_ephemeral_nodes`), a spawn past `max_concurrent_agents` is refused rather
+than queued, and apoptosis reaps every ephemeral node past
+`agent_idle_ttl_days`.
+
 | Path | What it holds |
 | --- | --- |
-| `src/neuropaca/` | One package per architectural layer (`core/`, `sensing/`, `diagnosis/`, `learning/`, …) |
+| `src/neuropaca/` | One package per architectural layer — `core/`, `sensing/`, `diagnosis/`, `learning/`, `drive/`, `idle/`, `action/`, `agents/`, `interface/`, `orchestration/` |
 | [`memory.md`](memory.md) | The current phase and next action — **always read this first** |
-| `spikes/b0_bitnet/` | The B0 BitNet de-risking spike — throwaway code, never imported by the daemon |
+| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), soak runners, and the `systemd/` unit templates they use |
+| `spikes/` | Throwaway de-risking spikes (`b0_bitnet/`, `b2_5_activity/`) — never imported by the daemon |
 | `data/` | gitignored — `graph.json`, `idle_cache.db`, `actions.jsonl`, logs |
 
 ---
