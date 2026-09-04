@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuroPACA · behavioural graph</title>
+<!--
+  Rendered by scripts/neuropaca_graph.py, which splices the graph payload into
+  the __DATA__ placeholder below. The output is self-contained.
+
+  ZERO EGRESS (rules.md §6): no <script src>, no <link href>, no webfont, no
+  fetch. System font stacks only. A viewer for a local-first daemon must not be
+  the one thing in the project that phones home.
+-->
+<style>
+  :root {
+    --ground:#f2f4f7; --panel:rgba(255,255,255,.93); --panel-bd:#c9d1da;
+    --ink:#11161d; --muted:#5d6875; --faint:#8e9aa7;
+    --edge:rgba(60,72,88,.26); --edge-hub:rgba(60,72,88,.09);
+    --accent:#0f7c8c; --halo:rgba(242,244,247,.82);
+    --t-concept:#b8791f; --t-file:#1a8f9c; --t-app:#7c5cd6; --t-insight:#2c8f63;
+    --t-idle_thought:#c0559a; --t-session:#5d6875; --t-metric:#8a6d3b;
+    --t-task:#2f7dbf; --t-person:#c2557a; --t-event_log:#77808c; --t-goal:#3f8f7a;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","IBM Plex Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --ground:#0b0e14; --panel:rgba(19,24,33,.91); --panel-bd:#2a323e;
+    --ink:#e6ecf3; --muted:#98a5b3; --faint:#6b7886;
+    --edge:rgba(190,205,222,.22); --edge-hub:rgba(190,205,222,.07);
+    --accent:#45c0d0; --halo:rgba(11,14,20,.80);
+    --t-concept:#e0a458; --t-file:#4cc9d4; --t-app:#a78bfa; --t-insight:#5fce9a;
+    --t-idle_thought:#e07ab8; --t-session:#8c9aa8; --t-metric:#d0a86a;
+    --t-task:#6aaee8; --t-person:#e78aa8; --t-event_log:#9aa5b1; --t-goal:#6cc4ab;
+  }}
+  :root[data-theme=dark]{
+    --ground:#0b0e14; --panel:rgba(19,24,33,.91); --panel-bd:#2a323e;
+    --ink:#e6ecf3; --muted:#98a5b3; --faint:#6b7886;
+    --edge:rgba(190,205,222,.22); --edge-hub:rgba(190,205,222,.07);
+    --accent:#45c0d0; --halo:rgba(11,14,20,.80);
+    --t-concept:#e0a458; --t-file:#4cc9d4; --t-app:#a78bfa; --t-insight:#5fce9a;
+    --t-idle_thought:#e07ab8; --t-session:#8c9aa8; --t-metric:#d0a86a;
+    --t-task:#6aaee8; --t-person:#e78aa8; --t-event_log:#9aa5b1; --t-goal:#6cc4ab;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.5 var(--sans);
+       height:100vh;overflow:hidden}
+  #stage{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%;cursor:grab}
+  canvas.dragging{cursor:grabbing}
+  .panel{position:fixed;background:var(--panel);border:1px solid var(--panel-bd);
+         border-radius:3px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  #rail{top:16px;left:16px;width:238px;padding:14px 16px 15px}
+  #rail h1{font-size:13px;font-weight:700;letter-spacing:-.01em;margin:0 0 2px}
+  #rail .sub{font-family:var(--mono);font-size:10px;color:var(--faint);
+             letter-spacing:.04em;text-transform:uppercase;margin:0 0 13px}
+  .grp{border-top:1px solid var(--panel-bd);padding-top:10px;margin-top:10px}
+  .grp-label{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+             text-transform:uppercase;color:var(--faint);margin:0 0 7px}
+  label.row{display:flex;align-items:center;gap:8px;font-size:12px;padding:2.5px 0;
+            cursor:pointer;user-select:none}
+  label.row input{accent-color:var(--accent);margin:0;cursor:pointer}
+  .slider{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:4px 0 1px}
+  .slider input{flex:1;accent-color:var(--accent);min-width:0;cursor:pointer}
+  .slider b{font-family:var(--mono);font-size:10.5px;font-weight:600;min-width:26px;
+            text-align:right}
+  .legend{display:grid;gap:4px}
+  .lg{display:flex;align-items:center;gap:8px;font-size:11.5px}
+  .lg .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .lg .n{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+  .stat{display:flex;justify-content:space-between;font-size:11.5px;padding:1.5px 0}
+  .stat b{font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums}
+  .btn{font-family:var(--mono);font-size:10.5px;font-weight:600;background:transparent;
+       color:var(--ink);border:1px solid var(--panel-bd);border-radius:3px;
+       padding:5px 9px;cursor:pointer;letter-spacing:.03em}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  #focusBar{display:none;align-items:center;gap:8px;font-size:11.5px;margin-top:9px}
+  #focusBar.on{display:flex}
+  #focusName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+             white-space:nowrap;font-weight:600;color:var(--accent)}
+  #inspect{top:16px;right:16px;width:252px;padding:13px 15px 15px;display:none}
+  #inspect.on{display:block}
+  #inspect .lbl{font-size:13px;font-weight:600;margin:0 0 3px;word-break:break-word}
+  #inspect .id{font-family:var(--mono);font-size:10px;color:var(--faint);
+               word-break:break-all;margin:0 0 11px}
+  #inspect dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:0;
+              font-size:11.5px}
+  #inspect dt{color:var(--muted)}
+  #inspect dd{margin:0;text-align:right;font-family:var(--mono);
+              font-variant-numeric:tabular-nums;font-weight:500}
+  .bar{height:3px;background:var(--panel-bd);border-radius:2px;overflow:hidden;margin-top:9px}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  #time{bottom:16px;left:16px;right:16px;padding:11px 16px 13px}
+  .trow{display:flex;align-items:center;gap:14px}
+  #play{font-family:var(--mono);font-size:11px;font-weight:600;background:var(--accent);
+        color:var(--ground);border:0;border-radius:3px;padding:6px 13px;cursor:pointer;
+        letter-spacing:.04em;min-width:78px}
+  #play:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  #scrub{flex:1;accent-color:var(--accent);cursor:pointer;min-width:0}
+  #clock{font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums;
+         color:var(--muted);white-space:nowrap}
+  #clock b{color:var(--ink);font-weight:600}
+  .ticks{display:flex;justify-content:space-between;font-family:var(--mono);
+         font-size:9.5px;color:var(--faint);margin:7px 92px 0 92px}
+  #note{position:fixed;bottom:94px;left:16px;font-family:var(--mono);font-size:10px;
+        color:var(--faint);background:var(--panel);border:1px solid var(--panel-bd);
+        padding:5px 9px;border-radius:3px}
+  #empty{position:fixed;inset:0;display:none;place-items:center;text-align:center;
+         padding:24px;pointer-events:none}
+  #empty.on{display:grid}
+  #empty p{max-width:44ch;color:var(--muted);font-size:14px}
+  #empty b{display:block;color:var(--ink);font-size:17px;font-weight:600;margin-bottom:8px}
+  @media (max-width:860px){#rail{width:198px}#inspect{display:none!important}
+    .ticks{margin:7px 20px 0 20px}}
+</style>
+</head>
+<body>
+
+<div id="stage"><canvas id="c"></canvas></div>
+
+<div id="empty">
+  <p><b>Only the routing hubs so far</b>
+  No behaviour has been recorded into the graph yet. Let the daemon run, then
+  regenerate this page.</p>
+</div>
+
+<div class="panel" id="rail">
+  <h1>Behavioural graph</h1>
+  <p class="sub" id="railSub">—</p>
+
+  <div class="grp" style="border-top:0;padding-top:0;margin-top:0">
+    <p class="grp-label">Readability</p>
+    <label class="row"><input type="checkbox" id="cluster" checked> Cluster by domain</label>
+    <label class="row"><input type="checkbox" id="pinHubs" checked> Pin the routing hubs</label>
+    <label class="row"><input type="checkbox" id="hideHubEdges"> Hide hub edges</label>
+    <label class="row"><input type="checkbox" id="showLabels" checked> Labels (decluttered)</label>
+    <label class="row"><input type="checkbox" id="autofit" checked> Auto-fit to view</label>
+    <div class="slider"><span>min&nbsp;weight</span>
+      <input type="range" id="minw" min="0" max="100" value="0"><b id="minwv">0.0</b></div>
+    <div id="focusBar"><span id="focusName"></span>
+      <button class="btn" id="clearFocus">CLEAR</button></div>
+  </div>
+
+  <div class="grp"><p class="grp-label">Node type</p><div class="legend" id="legend"></div></div>
+
+  <div class="grp">
+    <p class="grp-label">At this moment</p>
+    <div class="stat"><span>Nodes</span><b id="sN">0</b></div>
+    <div class="stat"><span>Edges drawn</span><b id="sE">0</b></div>
+    <div class="stat"><span>Mean score</span><b id="sS">0.0</b></div>
+  </div>
+</div>
+
+<div class="panel" id="inspect">
+  <p class="lbl" id="iLbl"></p><p class="id" id="iId"></p>
+  <dl>
+    <dt>type</dt><dd id="iType"></dd>
+    <dt>domain</dt><dd id="iDom"></dd>
+    <dt>relevance</dt><dd id="iScore"></dd>
+    <dt>access count</dt><dd id="iAcc"></dd>
+    <dt>degree</dt><dd id="iDeg"></dd>
+    <dt>created</dt><dd id="iCre"></dd>
+  </dl>
+  <div class="bar"><i id="iBar"></i></div>
+</div>
+
+<div class="panel" id="time">
+  <div class="trow">
+    <button id="play" aria-label="Play or pause the replay">▶ PLAY</button>
+    <input type="range" id="scrub" min="0" max="1000" value="1000"
+           aria-label="Time through the recorded window">
+    <span id="clock"><b id="cd">—</b></span>
+  </div>
+  <div class="ticks" id="ticks"></div>
+</div>
+
+<div id="note">click a node to isolate it · scroll to zoom · drag to pan</div>
+
+<script>
+(() => {
+  "use strict";
+  const DATA = /*__DATA__*/null;
+
+  const LABEL_FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const el = id => document.getElementById(id);
+  const colourOf = t => css("--t-" + t) || css("--t-session");
+
+  const SPAN = Math.max(1, DATA.span_seconds);
+  const HUBS = new Set(DATA.hub_ids);
+  const DOMS = DATA.domain_ids;
+
+  const nodes = DATA.nodes.map(n => ({
+    id: n.id, node_type: n.node_type, label: n.label, created_at: n.t,
+    relevance_score: n.score, access_count: n.access, domain: n.domain,
+    hub: HUBS.has(n.id), x: 0, y: 0, vx: 0, vy: 0, fx: 0, fy: 0, deg: 0,
+  }));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const edges = DATA.edges
+    .filter(e => byId.has(e.s) && byId.has(e.t) && e.s !== e.t)
+    .map(e => ({ source: e.s, target: e.t, relation: e.rel, created_at: e.at, weight: e.w }));
+  edges.forEach(e => { byId.get(e.source).deg++; byId.get(e.target).deg++; });
+
+  const slotOf = id => {
+    const i = DOMS.indexOf(id);
+    return { i, a: (Math.max(i, 0) / Math.max(DOMS.length, 1)) * Math.PI * 2 - Math.PI / 2 };
+  };
+
+  let seed = 987654321;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+
+  nodes.forEach(n => {
+    if (n.id === DATA.root_id) { n.x = 0; n.y = 0; return; }
+    const a = n.domain ? slotOf(n.domain).a : rnd() * 6.2832;
+    const r = n.hub ? 230 : 300 + rnd() * 150;
+    n.x = Math.cos(a) * r + (rnd() - .5) * 90;
+    n.y = Math.sin(a) * r + (rnd() - .5) * 90;
+  });
+
+  const TYPES = [...new Set(nodes.map(n => n.node_type))].sort();
+
+  const cv = el("c"), ctx = cv.getContext("2d");
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth || 900; H = cv.clientHeight || 640;
+    cv.width = W * DPR; cv.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  new ResizeObserver(resize).observe(cv); resize();
+
+  const view = { x: 0, y: 0, k: 1 };
+  let now = SPAN, playing = false, hover = null, focus = null, drag = null, pan = null;
+  let minW = 0, ring = 230;
+
+  const visN = () => nodes.filter(n => n.created_at <= now);
+  const visE = () => edges.filter(e => e.created_at <= now && e.weight >= minW
+    && byId.get(e.source).created_at <= now && byId.get(e.target).created_at <= now);
+
+  function step() {
+    const ns = visN(), es = visE();
+    const pinned = el("pinHubs").checked, clustered = el("cluster").checked;
+    // Density must stay constant as the graph grows, or the last day is just
+    // the first day's layout with four times as much crammed into it. Lengths
+    // scale with sqrt(n); repulsion with its square, so forces stay comparable.
+    const S = Math.sqrt(Math.max(ns.length, 26) / 26);
+    const REST = 58 * S, REPULSE = 1750 * S * S;
+    ring = 210 * S;
+
+    for (const n of ns) { n.fx = 0; n.fy = 0; }
+    for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
+      const a = ns[i], b = ns[j];
+      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+      if (d2 < 1) { d2 = 1; dx = rnd() - .5; dy = rnd() - .5; }
+      if (d2 > 600000) continue;
+      const d = Math.sqrt(d2), f = REPULSE / d2;
+      a.fx += dx / d * f; a.fy += dy / d * f; b.fx -= dx / d * f; b.fy -= dy / d * f;
+    }
+    for (const e of es) {
+      const a = byId.get(e.source), b = byId.get(e.target);
+      const hubEdge = a.hub || b.hub;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      // Hub edges pull weakly or the routing hubs drag everything into one
+      // blob — the same reason find_related() will not traverse through a hub.
+      const k = (hubEdge ? .0014 : .0072) * (.5 + e.weight);
+      const f = (d - REST) * k;
+      a.fx += dx / d * f; a.fy += dy / d * f; b.fx -= dx / d * f; b.fy -= dy / d * f;
+    }
+    for (const n of ns) {
+      if (n.hub && pinned) {
+        if (n.id === DATA.root_id) { n.x = 0; n.y = 0; n.vx = n.vy = 0; continue; }
+        const s = slotOf(n.id);
+        if (s.i >= 0) {
+          n.x = Math.cos(s.a) * ring; n.y = Math.sin(s.a) * ring; n.vx = n.vy = 0; continue;
+        }
+      }
+      if (n === drag) continue;
+      if (clustered && n.domain && !n.hub) {
+        const h = byId.get(n.domain);
+        if (h) { n.fx += (h.x - n.x) * .0075; n.fy += (h.y - n.y) * .0075; }
+      } else { n.fx -= n.x * .0026; n.fy -= n.y * .0026; }
+      n.vx = (n.vx + n.fx) * .86; n.vy = (n.vy + n.fy) * .86;
+      n.x += Math.max(-16, Math.min(16, n.vx));
+      n.y += Math.max(-16, Math.min(16, n.vy));
+    }
+  }
+
+  const radius = n => 3 + Math.sqrt(Math.max(n.relevance_score, 0)) * 2.4 + (n.hub ? 3 : 0);
+
+  function fitView(instant) {
+    const ns = visN(); if (!ns.length) return;
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const n of ns) {
+      x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x);
+      y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y);
+    }
+    const k = Math.max(.18, Math.min(1.5,
+      Math.min((W - 300) / Math.max(x1 - x0, 1), (H - 210) / Math.max(y1 - y0, 1))));
+    const tx = -((x0 + x1) / 2) * k, ty = -((y0 + y1) / 2) * k, e = instant ? 1 : .055;
+    view.k += (k - view.k) * e; view.x += (tx - view.x) * e; view.y += (ty - view.y) * e;
+  }
+
+  function draw() {
+    const ns = visN(), es = visE();
+    const hideHub = el("hideHubEdges").checked, labels = el("showLabels").checked;
+    const lit = focus || hover;
+    const near = new Set();
+    if (lit) {
+      near.add(lit.id);
+      for (const e of es) {
+        if (e.source === lit.id) near.add(e.target);
+        if (e.target === lit.id) near.add(e.source);
+      }
+    }
+    ctx.clearRect(0, 0, W, H);
+    ctx.save(); ctx.translate(W / 2 + view.x, H / 2 + view.y); ctx.scale(view.k, view.k);
+
+    let drawn = 0;
+    for (const e of es) {
+      const a = byId.get(e.source), b = byId.get(e.target), hubEdge = a.hub || b.hub;
+      if (hubEdge && hideHub) continue;
+      const on = lit && (e.source === lit.id || e.target === lit.id);
+      if (focus && !on) continue;
+      ctx.strokeStyle = on ? css("--accent") : (hubEdge ? css("--edge-hub") : css("--edge"));
+      ctx.globalAlpha = hover && !focus && !on ? .15 : 1;
+      ctx.lineWidth = Math.min(3.2, .4 + e.weight * 1.25) * (on ? 2 : 1);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      drawn++;
+    }
+    ctx.globalAlpha = 1;
+    for (const n of ns) {
+      if (focus && !near.has(n.id)) continue;
+      ctx.globalAlpha = (!focus && hover && !near.has(n.id)) ? .16 : 1;
+      ctx.fillStyle = colourOf(n.node_type);
+      ctx.beginPath(); ctx.arc(n.x, n.y, radius(n), 0, 6.2832); ctx.fill();
+      if (n === lit) { ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.8; ctx.stroke(); }
+    }
+    ctx.globalAlpha = 1; ctx.restore();
+
+    // Labels in screen space, strongest first, skipped on collision. Drawing
+    // every strong label is what turns a full graph into soup; an overlapping
+    // label is worse than no label.
+    if (labels) {
+      const cands = ns
+        .filter(n => (n.hub || n.relevance_score >= DATA.label_threshold)
+                  && (!focus || near.has(n.id)))
+        .sort((a, b) => (b.hub ? 1e6 : b.relevance_score) - (a.hub ? 1e6 : a.relevance_score));
+      const placed = []; ctx.textAlign = "center";
+      for (const n of cands) {
+        if (placed.length >= 42) break;
+        const sx = W / 2 + view.x + n.x * view.k;
+        const sy = H / 2 + view.y + n.y * view.k - radius(n) * view.k - 6;
+        if (sx < 70 || sx > W - 70 || sy < 26 || sy > H - 92) continue;
+        ctx.font = (n.hub ? "600 11.5px " : "500 10.5px ") + LABEL_FONT;
+        const txt = n.label.length > 24 ? n.label.slice(0, 23) + "…" : n.label;
+        const w = ctx.measureText(txt).width;
+        const r = { x: sx - w / 2 - 3, y: sy - 11, w: w + 6, h: 15 };
+        if (placed.some(p => !(r.x + r.w < p.x || p.x + p.w < r.x
+                            || r.y + r.h < p.y || p.y + p.h < r.y))) continue;
+        placed.push(r);
+        ctx.fillStyle = css("--halo"); ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = css("--ink"); ctx.globalAlpha = n.hub ? 1 : .9;
+        ctx.fillText(txt, sx, sy); ctx.globalAlpha = 1;
+      }
+    }
+
+    el("sN").textContent = focus ? near.size : ns.length;
+    el("sE").textContent = drawn;
+    el("sS").textContent = ns.length
+      ? (ns.reduce((s, n) => s + n.relevance_score, 0) / ns.length).toFixed(1) : "0.0";
+    const counts = {};
+    ns.forEach(n => counts[n.node_type] = (counts[n.node_type] || 0) + 1);
+    TYPES.forEach(t => { const e = el("lg-" + t); if (e) e.textContent = counts[t] || 0; });
+  }
+
+  const fmtAt = s => {
+    const d = new Date(Date.parse(DATA.t0) + s * 1000);
+    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    return SPAN > 172800
+      ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + time
+      : time;
+  };
+
+  function frame() {
+    step();
+    if (el("autofit").checked) fitView(false);
+    draw();
+    if (playing) {
+      now += SPAN / 1000;
+      if (now >= SPAN) { now = SPAN; setPlaying(false); }
+      el("scrub").value = String(Math.round(now / SPAN * 1000));
+      el("cd").textContent = fmtAt(now);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function setPlaying(p) { playing = p; el("play").textContent = p ? "❚❚ PAUSE" : "▶ PLAY"; }
+  el("play").addEventListener("click", () => {
+    if (!playing && now >= SPAN) now = 0;
+    setPlaying(!playing);
+  });
+  el("scrub").addEventListener("input", e => {
+    setPlaying(false); now = +e.target.value / 1000 * SPAN; el("cd").textContent = fmtAt(now);
+  });
+  el("minw").addEventListener("input", e => {
+    minW = +e.target.value / 100 * Math.max(DATA.max_weight, 0.01);
+    el("minwv").textContent = minW.toFixed(1);
+  });
+
+  function setFocus(n) {
+    focus = n; el("focusBar").classList.toggle("on", !!n);
+    if (n) el("focusName").textContent = n.label;
+  }
+  el("clearFocus").addEventListener("click", () => setFocus(null));
+
+  const at = ev => {
+    const r = cv.getBoundingClientRect();
+    return { x: (ev.clientX - r.left - W / 2 - view.x) / view.k,
+             y: (ev.clientY - r.top - H / 2 - view.y) / view.k };
+  };
+  const hit = p => {
+    let best = null, bd = 1e9;
+    for (const n of visN()) {
+      const d = Math.hypot(n.x - p.x, n.y - p.y);
+      if (d < radius(n) + 7 && d < bd) { bd = d; best = n; }
+    }
+    return best;
+  };
+  let moved = false;
+  cv.addEventListener("mousemove", ev => {
+    const p = at(ev);
+    if (drag) { moved = true; drag.x = p.x; drag.y = p.y; drag.vx = drag.vy = 0; return; }
+    if (pan) {
+      moved = true; el("autofit").checked = false;
+      view.x = pan.vx + ev.clientX - pan.sx; view.y = pan.vy + ev.clientY - pan.sy; return;
+    }
+    const h = hit(p);
+    if (h !== hover) { hover = h; showInspector(h || focus); }
+  });
+  cv.addEventListener("mousedown", ev => {
+    const p = at(ev), h = hit(p); moved = false;
+    if (h) drag = h; else pan = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y };
+    cv.classList.add("dragging");
+  });
+  addEventListener("mouseup", () => {
+    if (!moved) { const h = drag; setFocus(h && h !== focus ? h : null); }
+    drag = null; pan = null; cv.classList.remove("dragging");
+  });
+  cv.addEventListener("wheel", ev => {
+    ev.preventDefault(); el("autofit").checked = false;
+    view.k = Math.max(.15, Math.min(3.2, view.k * (ev.deltaY < 0 ? 1.11 : .9)));
+  }, { passive: false });
+
+  function showInspector(n) {
+    const box = el("inspect");
+    if (!n) { box.classList.remove("on"); return; }
+    box.classList.add("on");
+    el("iLbl").textContent = n.label;
+    el("iId").textContent = n.id;
+    el("iType").textContent = n.node_type;
+    el("iDom").textContent = n.domain ? n.domain.replace(/^domain:/, "") : "—";
+    el("iScore").textContent = n.relevance_score.toFixed(2) + " / 10";
+    el("iAcc").textContent = n.access_count;
+    el("iDeg").textContent = n.deg;
+    el("iCre").textContent = fmtAt(n.created_at);
+    el("iBar").style.width = (Math.min(n.relevance_score, 10) / 10 * 100) + "%";
+  }
+
+  el("legend").innerHTML = TYPES.map(t =>
+    `<div class="lg"><span class="dot" style="background:var(--t-${t})"></span>` +
+    `<span>${t.replace(/_/g, " ")}</span><span class="n" id="lg-${t}">0</span></div>`).join("");
+
+  el("railSub").textContent = DATA.subtitle;
+  el("ticks").innerHTML = DATA.ticks.map(t => `<span>${t}</span>`).join("");
+  el("cd").textContent = fmtAt(SPAN);
+  if (edges.length === 0 && nodes.length <= DATA.hub_ids.length) el("empty").classList.add("on");
+
+  for (let i = 0; i < 220; i++) step();
+  fitView(true);
+  frame();
+})();
+</script>
+</body>
+</html>
