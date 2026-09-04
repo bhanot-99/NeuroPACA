@@ -42,12 +42,11 @@ class Scheduler:
                 pass
 
     async def _loop(self) -> None:
-        try:
-            while True:
-                await asyncio.sleep(self._interval)
-                await self._tick()
-        except asyncio.CancelledError:
-            raise
+        # No try/except here: CancelledError propagates on its own, and catching
+        # it only to re-raise is scaffolding that reads like a decision.
+        while True:
+            await asyncio.sleep(self._interval)
+            await self._tick()
 
     async def _tick(self) -> None:
         try:

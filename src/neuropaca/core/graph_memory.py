@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import heapq
 import json
 import math
 import os
@@ -223,33 +224,59 @@ class GraphMemory:
         `access_count` sums, `relevance_score` averages, every edge rewires to the
         survivor. The 11 routing hubs are never touched.
 
-        One `_lock` cycle per merge, re-scanning between: the graph may shift
-        under a long run and cancellation is always safe. Returns merges done."""
+        Still one `_lock` cycle per merge with a yield between — cancellation
+        lands between two merges, never inside one — but the *scan* is one pass
+        per sweep rather than one per merge. Re-scanning per merge made this
+        O(duplicates x nodes): every merge walked the whole graph again to find
+        the next pair. The sweep repeats until a pass merges nothing, so a
+        duplicate that appears mid-run is still caught. Returns merges done."""
         merged = 0
         while True:
             async with self._lock:
-                pair = self._find_one_duplicate_pair_unsafe()
-                if pair is None:
-                    break
-                self._merge_nodes_unsafe(*pair)
-                merged += 1
-            await asyncio.sleep(0)
+                pairs = self._find_duplicate_pairs_unsafe()
+            if not pairs:
+                break
+            swept = 0
+            for survivor, victim in pairs:
+                async with self._lock:
+                    # Re-checked under the lock: the pair was chosen from a
+                    # snapshot, and an earlier merge in this sweep may already
+                    # have consumed one end of it.
+                    if self._merge_nodes_unsafe(survivor, victim):
+                        swept += 1
+                await asyncio.sleep(0)
+            merged += swept
+            if swept == 0:
+                break  # nothing in that pass was still mergeable — stop, do not spin
         return merged
 
     async def link_orphan_nodes(self) -> int:
         """Give every non-hub node with total degree 0 a `RELATED_TO` edge to
         `YOU`, so ordinary score decay can then manage it rather than it floating
         forever unreachable (D-13). One `_lock` cycle per link. Returns links
-        made."""
+        made.
+
+        Like `consolidate`, the orphan set is collected in one pass per sweep and
+        each candidate re-checked under the lock before it is linked. The old
+        shape restarted the scan at node 0 for *every* link, which on a graph of
+        mostly-unlinked nodes cost seconds — more than the whole DMN cycle
+        budget it runs inside."""
         linked = 0
         while True:
             async with self._lock:
-                orphan = self._next_orphan_unsafe()
-                if orphan is None:
-                    break
-                self._add_edge_unsafe(orphan, "YOU", RelationType.RELATED_TO, 0.0)
-                linked += 1
-            await asyncio.sleep(0)
+                orphans = self._orphan_ids_unsafe()
+            if not orphans:
+                break
+            swept = 0
+            for orphan in orphans:
+                async with self._lock:
+                    if self._is_orphan_unsafe(orphan):
+                        self._add_edge_unsafe(orphan, "YOU", RelationType.RELATED_TO, 0.0)
+                        swept += 1
+                await asyncio.sleep(0)
+            linked += swept
+            if swept == 0:
+                break
         return linked
 
     async def prune_stale_nodes(self, ttl: timedelta) -> int:
@@ -301,6 +328,33 @@ class GraphMemory:
         visited.discard(node_id)
         return [self._node_from_attrs(n, self._graph.nodes[n]) for n in visited if n in self._graph]
 
+    def top_nodes_by_score(
+        self, limit: int, *, exclude_types: frozenset[NodeType] | None = None
+    ) -> list[Node]:
+        """The `limit` highest-`relevance_score` non-hub nodes, best first.
+
+        Ranking reads the raw attribute dicts and only the survivors are built
+        into `Node`s. The caller-side shape this replaces (`get_node()` for every
+        id, then sort) constructed the whole graph as dataclasses — datetime
+        parsing included — to keep five of them, ~32 ms of unbroken event-loop
+        block at 10k nodes, every DMN cycle. Equal scores break on id, so the
+        result is deterministic. Kept here rather than in the caller because reaching into
+        `graph_memory.graph` from outside this file is a review block (rules.md §3).
+        """
+        if limit <= 0:
+            return []
+        excluded = exclude_types or frozenset()
+        ranked = heapq.nlargest(
+            limit,
+            (
+                (float(data.get("relevance_score", 0.0)), node_id)
+                for node_id, data in self._graph.nodes(data=True)
+                if node_id not in HUB_NODE_IDS and NodeType(data["node_type"]) not in excluded
+            ),
+            key=lambda pair: (pair[0], pair[1]),
+        )
+        return [self._node_from_attrs(node_id, self._graph.nodes[node_id]) for _, node_id in ranked]
+
     def search_by_label(self, query: str, limit: int = 10) -> list[Node]:
         """L9 retrieval entry point (B5, A1). A deliberately dumb lexical match —
         **zero embeddings, zero inference** (rules.md §4, problems.md 1.6 spirit):
@@ -339,13 +393,26 @@ class GraphMemory:
         return ranked[:limit]
 
     # --------------------------------------------------------------- persistence
+    def _read_payload(self) -> Any:
+        """BLOCKING — read + decode the graph file. Runs in a worker thread."""
+        return json.loads(self._path.read_text("utf-8"))
+
     async def load(self) -> None:
+        # Read and decode off the loop, *before* taking the lock. `save()` has
+        # always offloaded its file I/O (rules.md §3); `load()` did not, so a
+        # multi-MB graph blocked the event loop for the whole read plus decode —
+        # while holding `_lock`, so every other module stalled behind it too.
+        # Boot is not the only caller: BL-2 recovery re-enters this path.
+        payload: Any = None
+        exists = await asyncio.to_thread(self._path.exists)
+        if exists:
+            try:
+                payload = await asyncio.to_thread(self._read_payload)
+            except (OSError, ValueError) as exc:
+                raise GraphMemoryError(f"cannot load graph {self._path}: {exc}") from exc
+
         async with self._lock:
-            if self._path.exists():
-                try:
-                    payload = json.loads(self._path.read_text("utf-8"))
-                except (OSError, ValueError) as exc:
-                    raise GraphMemoryError(f"cannot load graph {self._path}: {exc}") from exc
+            if payload is not None:
                 if not isinstance(payload, dict):
                     raise GraphMemoryError(
                         f"cannot load graph {self._path}: top level is "
@@ -402,10 +469,21 @@ class GraphMemory:
 
         `_dirty` is cleared *before* streaming: a mutation mid-save flips it back
         on, so the next tick re-persists — the on-disk file is always valid JSON,
-        at most one save behind."""
+        at most one save behind.
+
+        If the save does not complete, `_dirty` goes back on. Clearing it up front
+        is what makes the concurrent-mutation case work, but on a cancelled or
+        failed save it stranded every pending change: the graph looked clean, the
+        scheduler skipped it, and nothing was written. The DMN hits this on the
+        ordinary path — `ACTIVITY_DETECTED` cancels an idle cycle exactly when its
+        save is most likely to be in flight."""
         self._dirty = False
-        text = await self._serialise_streamed()
-        await asyncio.to_thread(self._write_atomic, text)
+        try:
+            text = await self._serialise_streamed()
+            await asyncio.to_thread(self._write_atomic, text)
+        except BaseException:  # including CancelledError — nothing reached the file
+            self._dirty = True
+            raise
         self._last_save = _utcnow()
 
     async def _serialise_streamed(self) -> str:
@@ -476,7 +554,15 @@ class GraphMemory:
             fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=self._path.name + ".", suffix=".tmp")
             tmp = Path(tmp_name)
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                # `fdopen` takes ownership of fd, but only once it succeeds — if
+                # it raises, the descriptor is ours and leaks. On a daemon that
+                # saves every 5 minutes for months, leaked fds end as EMFILE.
+                try:
+                    fh = os.fdopen(fd, "w", encoding="utf-8")
+                except BaseException:
+                    os.close(fd)
+                    raise
+                with fh:
                     fh.write(text)
                     fh.flush()
                     os.fsync(fh.fileno())
@@ -592,33 +678,44 @@ class GraphMemory:
         {NodeType.INSIGHT, NodeType.IDLE_THOUGHT}
     )
 
-    def _find_one_duplicate_pair_unsafe(self) -> tuple[str, str] | None:
-        """First `(survivor, victim)` where two non-hub nodes share `node_type`
-        and case-folded `label`. Survivor = older `created_at` (tiebreak: id)."""
-        seen: dict[tuple[str, str], str] = {}
+    def _find_duplicate_pairs_unsafe(self) -> list[tuple[str, str]]:
+        """Every `(survivor, victim)` in one pass over the graph.
+
+        Two non-hub nodes are duplicates when they share `node_type` and
+        case-folded `label`; the survivor is the older `created_at` (tiebreak:
+        id). A run of three or more nodes on one key yields one pair per victim
+        against the same survivor, so a chain collapses in a single sweep.
+        """
+        best: dict[tuple[str, str], tuple[datetime, str]] = {}
+        members: dict[tuple[str, str], list[str]] = {}
         for node_id, data in self._graph.nodes(data=True):
             if node_id in HUB_NODE_IDS:
                 continue
             key = (str(data.get("node_type", "")), str(data.get("label", "")).strip().casefold())
-            prior = seen.get(key)
-            if prior is None:
-                seen[key] = node_id
-                continue
-            prior_created = _as_dt(self._graph.nodes[prior].get("created_at", _utcnow()))
-            this_created = _as_dt(data.get("created_at", _utcnow()))
-            if (this_created, node_id) < (prior_created, prior):
-                return (node_id, prior)  # this one is older -> it survives
-            return (prior, node_id)
-        return None
+            created = _as_dt(data.get("created_at", _utcnow()))
+            members.setdefault(key, []).append(node_id)
+            incumbent = best.get(key)
+            if incumbent is None or (created, node_id) < incumbent:
+                best[key] = (created, node_id)
 
-    def _merge_nodes_unsafe(self, survivor_id: str, victim_id: str) -> None:
+        pairs: list[tuple[str, str]] = []
+        for key, group in members.items():
+            if len(group) < 2:
+                continue
+            survivor = best[key][1]
+            pairs.extend((survivor, victim) for victim in group if victim != survivor)
+        return pairs
+
+    def _merge_nodes_unsafe(self, survivor_id: str, victim_id: str) -> bool:
         """Fold `victim` into `survivor` (D-13 merge math), then delete `victim`.
-        Both must exist and neither may be a routing hub — the caller guarantees
-        it, this asserts it cheaply."""
+        Returns whether the merge happened: the caller works from a snapshot, so
+        either end may already be gone, and neither may be a routing hub."""
         if survivor_id in HUB_NODE_IDS or victim_id in HUB_NODE_IDS:
-            return
+            return False
         if survivor_id not in self._graph or victim_id not in self._graph:
-            return
+            return False
+        if survivor_id == victim_id:
+            return False
         s = self._graph.nodes[survivor_id]
         v = self._graph.nodes[victim_id]
 
@@ -646,6 +743,7 @@ class GraphMemory:
 
         self._graph.remove_node(victim_id)
         self._dirty = True
+        return True
 
     def _rewire_edge_unsafe(self, source: str, target: str, key: Any, weight: float) -> None:
         if self._graph.has_edge(source, target, key):
@@ -654,13 +752,20 @@ class GraphMemory:
             return
         self._graph.add_edge(source, target, key=key, weight=weight, created_at=_utcnow())
 
-    def _next_orphan_unsafe(self) -> str | None:
-        for node_id in self._graph.nodes:
-            if node_id in HUB_NODE_IDS:
-                continue
-            if int(self._graph.degree(node_id)) == 0:
-                return str(node_id)
-        return None
+    def _is_orphan_unsafe(self, node_id: str) -> bool:
+        """A non-hub node that still exists and still has total degree 0."""
+        if node_id in HUB_NODE_IDS or node_id not in self._graph:
+            return False
+        return int(self._graph.degree(node_id)) == 0
+
+    def _orphan_ids_unsafe(self) -> list[str]:
+        """Every orphan, in one pass. `degree` over the whole graph is a single
+        O(N) walk; asking for one orphan at a time made it O(orphans x N)."""
+        return [
+            str(node_id)
+            for node_id, degree in self._graph.degree()
+            if degree == 0 and node_id not in HUB_NODE_IDS
+        ]
 
     def _prune_stale_unsafe(self, ttl: timedelta) -> int:
         now = _utcnow()

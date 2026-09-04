@@ -662,3 +662,48 @@ async def test_surfaced_at_is_stamped_and_survives_a_restart(tmp_path) -> None:
     finally:
         await layer2.stop()
         await bus2.stop()
+
+
+# --------------------------------------------------------------- audit regressions
+# From the B9 optimisation audit: L9's two collections that grew without a ceiling
+# on a daemon meant to run for months.
+
+
+async def test_surfaced_ids_are_bounded_and_keep_the_newest(tmp_path) -> None:
+    """Surface-once bookkeeping outlives the node it describes — an insight is
+    pruned at its 48 h TTL but its id had to stay remembered. Remembering every
+    id forever made that a leak; the cap keeps the newest, which are the only
+    ones a live node can still match."""
+    from neuropaca.interface.layer import _MAX_SURFACED_IDS
+
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        total = _MAX_SURFACED_IDS + 50
+        for i in range(total):
+            w.layer._remember_surfaced(f"insight:{i}")
+            if i % 3 == 0:  # keep the daily cap out of it — this is the id store
+                w.layer._surfaced_today = 0
+        assert len(w.layer._surfaced_ids) == _MAX_SURFACED_IDS
+        assert f"insight:{total - 1}" in w.layer._surfaced_ids, "newest must survive"
+        assert "insight:0" not in w.layer._surfaced_ids, "oldest must be evicted"
+    finally:
+        await _teardown(w)
+
+
+async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -> None:
+    """Insights queue until a CLI client reads them out. Nothing guarantees one
+    ever connects, so the queue needs its own ceiling."""
+    from neuropaca.interface.layer import _MAX_PENDING_INSIGHTS
+
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        for day in range(_MAX_PENDING_INSIGHTS + 20):
+            await w.layer.on_insight_generated(_insight_event(_insight(f"insight:d{day}")))
+            await clock.advance(24 * 3600)  # a fresh day, so the 3/day cap never bites
+        assert len(w.layer._pending_insights) == _MAX_PENDING_INSIGHTS
+        # the tail is kept — the newest insights are the ones worth showing
+        assert w.layer._pending_insights[-1].node_id.endswith(f"d{_MAX_PENDING_INSIGHTS + 19}")
+    finally:
+        await _teardown(w)
