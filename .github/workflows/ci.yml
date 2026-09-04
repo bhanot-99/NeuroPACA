@@ -11,7 +11,9 @@ concurrency:
 
 env:
   # Privacy invariant (rules.md §6): the test suite must pass with no network.
-  # This does not sandbox the runner, but it catches an accidental live call.
+  # A hint for every job, NOT a claim that the runner is sandboxed — the quality
+  # job has full internet. The affirmative egress assertions gate on
+  # NEUROPACA_NO_NETWORK instead, which the egress job sets inside the namespace.
   NEUROPACA_OFFLINE: "1"
 
 jobs:
@@ -44,8 +46,15 @@ jobs:
         run: uv run pytest -q
 
   egress-test:
-    # rules.md §6 — "Blocked DNS / blocked outbound must fail no test."
-    # The full CI egress test lands in B9; this is the early canary.
+    # rules.md §6 — "zero cloud calls", asserted affirmatively (B9/BL-8).
+    #
+    # This job used to append hosts to /etc/hosts and re-run the same suite,
+    # which proved only that a blocked resolver breaks no test — a suite that
+    # never opens a socket passed identically either way, and a hardcoded IP
+    # would have sailed straight through. It now runs inside a network
+    # namespace with nothing but loopback, so "no route out" is a fact about
+    # the environment and tests/integration/test_egress_blocked.py can assert
+    # against it.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,9 +62,21 @@ jobs:
         with:
           version: "0.12.1"
       - run: uv python install 3.12
+      # Dependencies are installed *before* the network is taken away.
       - run: uv sync --locked --extra dev
-      - name: Pytest with outbound DNS nulled
+
+      - name: Egress assertions with no network at all
         run: |
-          # Redirect common resolvers to loopback for the test process only.
-          sudo bash -c 'echo "0.0.0.0 pypi.org files.pythonhosted.org huggingface.co github.com" >> /etc/hosts'
-          uv run pytest -q
+          sudo unshare --net -- bash -c '
+            ip link set lo up
+            NEUROPACA_NO_NETWORK=1 .venv/bin/python -m pytest \
+              tests/integration/test_egress_blocked.py -q
+          '
+
+      - name: Full suite with no network at all
+        # rules.md §6's other half: nothing in the suite may *need* the network.
+        run: |
+          sudo unshare --net -- bash -c '
+            ip link set lo up
+            NEUROPACA_NO_NETWORK=1 .venv/bin/python -m pytest -q
+          '

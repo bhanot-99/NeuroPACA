@@ -16,8 +16,12 @@ from __future__ import annotations
 import importlib
 import logging
 from collections.abc import Iterator
+from pathlib import Path
+from typing import TextIO
 
 import pytest
+
+from neuropaca.core import logging as np_logging
 
 _SINGLETONS: tuple[tuple[str, str], ...] = (
     ("neuropaca.core.event_bus", "EventBus"),
@@ -65,3 +69,26 @@ def fake_config():
     from neuropaca.core.config import Config
 
     return Config(inference_backend="fake")
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_log_sink_out_of_the_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect any file sink that points outside pytest's tmp tree (B9/BL-4).
+
+    `Config.log_to_file` defaults to True with `log_file_path = "data/neuropaca.log"`,
+    so every test that builds a bare `Config()` and initialises an orchestrator
+    would otherwise append to the *real* `data/` directory of whatever checkout
+    it runs in — shared mutable state between tests, and a file the developer
+    never asked for. Tests that mean to exercise the sink pass a tmp path and are
+    left alone.
+    """
+    real = np_logging.configure
+
+    def guarded(
+        level: str = "INFO", *, stream: TextIO | None = None, file_path: str | None = None
+    ) -> None:
+        if file_path is not None and not str(file_path).startswith(str(tmp_path.parent)):
+            file_path = str(tmp_path / "redirected.log")
+        real(level, stream=stream, file_path=file_path)
+
+    monkeypatch.setattr(np_logging, "configure", guarded)

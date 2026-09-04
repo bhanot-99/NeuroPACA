@@ -1,0 +1,78 @@
+# NeuroPACA B9 · 7-day soak supervisor -- systemd --user unit.
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-b9-soak.service \
+#     > ~/.config/systemd/user/neuropaca-b9-soak.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-b9-soak
+#
+# START AT BOOT, STOP AT SHUTDOWN -- how that is actually achieved:
+#
+#   WantedBy=graphical-session.target   starts it once you are logged in and the
+#                                       compositor has imported the session
+#                                       environment. That last part is why it is
+#                                       not default.target: the soak raises a
+#                                       zenity dialog, which needs WAYLAND_DISPLAY,
+#                                       and it is the exact ordering bug that
+#                                       silently killed three B7 soaks.
+#   PartOf=graphical-session.target     stops it when the session ends, which is
+#                                       what shutdown, reboot and logout all do
+#                                       before anything is torn down underneath it.
+#   KillSignal=SIGTERM                  the driver traps TERM, closes the session
+#   TimeoutStopSec=45                   in the ledger and prints a final summary.
+#                                       45 s is generous on purpose: a session
+#                                       that is killed instead of stopped has to
+#                                       be healed from a heartbeat at next boot,
+#                                       and healed time is rounded DOWN, so an
+#                                       impatient timeout silently costs runtime.
+#
+# Requires=/After=neuropacad.service: there is nothing to measure without the
+# daemon, and BindsTo would take the soak down on a daemon restart -- which is a
+# thing the soak is specifically supposed to observe and record, not die of.
+
+[Unit]
+Description=NeuroPACA B9 7-day soak supervisor
+Documentation=file://__REPO__/phases.md
+After=graphical-session.target neuropacad.service
+Requires=neuropacad.service
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+
+# systemd-inhibit --what=sleep:idle wraps the driver rather than the other way
+# round so the lock is held for exactly as long as the soak process lives and is
+# released the moment it stops. `idle` blocks the idle-suspend that ended the B2
+# soak at 11 h of 24; `sleep` blocks the automatic suspend behind it. Neither
+# blocks an explicit shutdown -- SIGTERM still arrives and the session closes.
+ExecStart=/usr/bin/systemd-inhibit --what=sleep:idle --who=NeuroPACA \
+          --why=B9-7-day-soak __REPO__/scripts/b9_soak_7day.sh
+
+KillSignal=SIGTERM
+TimeoutStopSec=45
+KillMode=mixed
+
+# A soak that stops on its own after seven days has SUCCEEDED. Restarting it
+# would start an eighth day and overwrite the result with a fresh session, so
+# on-failure only -- and even then, back off long enough that a crash loop
+# cannot shred the sample file faster than a human can read the journal.
+Restart=on-failure
+RestartSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=neuropaca-soak
+
+# The supervisor samples /proc and shells out to journalctl once a minute. It
+# must never be the reason a measurement looks bad.
+Nice=15
+CPUWeight=10
+IOWeight=10
+MemoryMax=512M
+
+[Install]
+WantedBy=graphical-session.target

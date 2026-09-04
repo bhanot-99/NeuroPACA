@@ -1,0 +1,112 @@
+# NeuroPACA daemon — systemd --user unit (B9 · Hardening).
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropacad.service \
+#     > ~/.config/systemd/user/neuropacad.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropacad
+#
+# ORDERING IS LOAD-BEARING — read before changing it.
+#
+# The B7 soak was `After=default.target` / `WantedBy=default.target` and its
+# Wayland sources died on every start with "no $WAYLAND_DISPLAY". The recorded
+# root cause was "the collector cannot see Wayland under systemd --user". That
+# was wrong. Measured on the target box 2026-09-03:
+#
+#   graphical-session.target ActiveEnterTimestamp  01:30:50
+#   ActivityCollector "no $WAYLAND_DISPLAY"        01:30:44   (6 s EARLIER)
+#   systemctl --user show-environment              HAS WAYLAND_DISPLAY=wayland-1
+#
+# The variable is present in the manager environment — it is just imported by
+# the compositor *after* default.target has already started its units. A process
+# started before that import gets an environment without it and keeps that
+# environment for its whole life, so the collector self-disabled permanently on
+# a machine that was running Wayland the entire time.
+#
+# Binding to graphical-session.target is therefore the fix, not a preference:
+# the unit now starts after the compositor has imported the session environment,
+# and stops when the session ends rather than lingering with a stale one.
+
+[Unit]
+Description=NeuroPACA daemon (local-first behavioural graph)
+Documentation=file://__REPO__/README.md
+After=graphical-session.target
+PartOf=graphical-session.target
+# Never race the compositor's environment import again.
+Requisite=graphical-session.target
+
+# Rate limit lives in [Unit], not [Service] — five failures inside five minutes
+# means the fault is not transient, and a restart storm would only bury the
+# evidence of what actually broke.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+Environment=NEUROPACA_CONFIG=__REPO__/neuropaca.toml
+ExecStart=__REPO__/.venv/bin/neuropacad
+
+# Crash recovery (B9 exit criterion). Restart on failure, but give up rather
+# than loop: five failures inside five minutes means the fault is not transient
+# and a restart storm would only bury the evidence.
+Restart=on-failure
+RestartSec=15
+
+# Graceful stop — the daemon must reach its own shutdown path so the graph is
+# saved atomically (temp -> fsync -> rename) rather than truncated by a KILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+KillMode=mixed
+
+# Logs go to the journal; scripts/logrotate/neuropaca covers the file sink that
+# `log_to_file` produces when it is enabled.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=neuropacad
+
+# Resource ceilings. Two models resident at peak is ~4.7 GB measured in B5, so
+# 8 G is headroom that still stops a leak from taking the desktop down with it.
+MemoryMax=8G
+MemoryHigh=6G
+# The daemon must always lose to real work — that is the whole premise (PRD §9).
+CPUWeight=20
+IOWeight=20
+Nice=10
+
+# Hardening. rules.md §6 is "zero egress"; these make it structural rather than
+# a property of the code, so a future ApiCallAction cannot silently open a
+# socket even if someone builds one.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# ReadWritePaths is LOAD-BEARING, not tidiness (B9/BL-1).
+#
+# ProtectSystem=strict mounts the whole hierarchy read-only except /dev, /proc
+# and /sys — and that includes $XDG_RUNTIME_DIR. Without the %t line below the
+# L9 interface cannot bind $XDG_RUNTIME_DIR/neuropaca.sock and every `neuropaca`
+# verb dies, `confirm` included. Since D-14(c) makes `neuropaca confirm` the only
+# way to approve a dangerous action, and silence past the timeout is a refusal,
+# the daemon would look healthy in the journal while the entire action tier was
+# quietly unusable. Measured before the fix: "[Errno 30] Read-only file system".
+#
+#   %t = $XDG_RUNTIME_DIR for a --user unit (/run/user/$UID)
+ReadWritePaths=%t
+ReadWritePaths=__REPO__/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+NoNewPrivileges=true
+MemoryDenyWriteExecute=false
+# AF_UNIX only: the L9 IPC socket works, the network does not exist.
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=graphical-session.target

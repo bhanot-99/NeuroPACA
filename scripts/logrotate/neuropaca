@@ -1,0 +1,48 @@
+# NeuroPACA log rotation (B9 · Hardening).
+#
+# Under systemd the daemon logs to the journal (see scripts/systemd/
+# neuropacad.service), which journald already bounds. These two file sinks are
+# the ones nothing else rotates:
+#
+#   data/neuropaca.log   — the daemon's own file sink, when log_to_file is on
+#   data/actions.jsonl   — the L7 audit log (rules.md §5.6)
+#
+# Install (rootless, matching the --user daemon):
+#   mkdir -p ~/.config/logrotate.d
+#   sed "s|__REPO__|$PWD|g;s|__USER__|$USER|g" scripts/logrotate/neuropaca \
+#     > ~/.config/logrotate.d/neuropaca
+#   logrotate --state ~/.local/state/neuropaca/logrotate.status \
+#             ~/.config/logrotate.d/neuropaca
+
+__REPO__/data/neuropaca.log {
+    weekly
+    rotate 8
+    size 32M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # The daemon holds this handle open for the life of the process, so rotate
+    # by copying and resetting in place — the inode is preserved, which means no
+    # restart, no SIGHUP, and no window in which lines are written to a file
+    # nobody will read again.
+    copytruncate
+    create 0600 __USER__ __USER__
+}
+
+# The audit log is evidence, not diagnostics: rules.md §5.6 requires one line
+# before and one after every action attempt, refusals included. So it rotates on
+# size only, is kept far longer, and deliberately does NOT use copytruncate —
+# the daemon reopens it per append and fsyncs, which makes a clean rename safe,
+# whereas resetting it in place could lose the half of a pair that proves what a
+# dangerous action actually did.
+__REPO__/data/actions.jsonl {
+    monthly
+    rotate 24
+    size 16M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 __USER__ __USER__
+}

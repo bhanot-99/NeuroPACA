@@ -9,14 +9,17 @@ never model output verbatim. That is a review rule, not something enforced here;
 `redact()` is provided for the few places a value of unknown provenance reaches
 a log line.
 
-Rotation and a JSONL sink to `data/` are B9 (`phases.md` — Hardening). B0 emits
-a single human-readable line per record to a stream.
+The file sink is B9 (`log_to_file` / `log_file_path`). Rotation is deliberately
+*not* done in-process: `scripts/logrotate/neuropaca` rotates it with
+`copytruncate`, which preserves the inode, so the handle opened here stays
+valid across a rotation and the daemon needs no SIGHUP and no restart.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 from typing import TextIO
 
 _LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -26,12 +29,23 @@ _ROOT = "neuropaca"
 _configured = False
 
 
-def configure(level: str = "INFO", *, stream: TextIO | None = None) -> None:
-    """Attach one handler to the ``neuropaca`` logger. Idempotent.
+def configure(
+    level: str = "INFO",
+    *,
+    stream: TextIO | None = None,
+    file_path: str | None = None,
+) -> None:
+    """Attach handlers to the ``neuropaca`` logger. Idempotent.
 
-    Called once from the orchestrator at startup with ``Config.log_level``.
-    Calling it again re-points the handler (useful in tests) but never stacks
-    handlers, so records are not duplicated.
+    Called once from the orchestrator at startup with ``Config.log_level`` and,
+    when ``Config.log_to_file`` is on, ``Config.log_file_path``. Calling it again
+    re-points the handlers (useful in tests) but never stacks them, so records
+    are not duplicated.
+
+    ``file_path`` adds a plain ``FileHandler`` alongside the stream — plain, not
+    rotating, because logrotate owns rotation (B9/BL-4); two rotators on one file
+    is how logs get lost. A file sink that cannot be opened is logged and
+    skipped: a daemon must not fail to boot over its own logging.
     """
     global _configured
 
@@ -43,9 +57,22 @@ def configure(level: str = "INFO", *, stream: TextIO | None = None) -> None:
         logger.removeHandler(handler)
         handler.close()
 
+    formatter = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
     handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
-    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
+    handler.setFormatter(formatter)
     logger.addHandler(handler)
+
+    if file_path:
+        try:
+            path = Path(file_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(path, encoding="utf-8")
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+            # 0600: the log carries graph structure and process names (rules.md §6).
+            path.chmod(0o600)
+        except OSError as exc:
+            logger.error("cannot open log file %s (%r) — stream sink only", file_path, exc)
 
     _configured = True
 
