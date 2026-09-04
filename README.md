@@ -100,7 +100,7 @@ than queued, and apoptosis reaps every ephemeral node past
 | --- | --- |
 | `src/neuropaca/` | One package per architectural layer — `core/`, `sensing/`, `diagnosis/`, `learning/`, `drive/`, `idle/`, `action/`, `agents/`, `interface/`, `orchestration/` |
 | [`memory.md`](memory.md) | The current phase and next action — **always read this first** |
-| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), soak runners, and the `systemd/` unit templates they use |
+| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), soak runners, a tray widget mirroring the B9 soak's login popup, and the `systemd/` unit templates they use |
 | `spikes/` | Throwaway de-risking spikes (`b0_bitnet/`, `b2_5_activity/`) — never imported by the daemon |
 | `data/` | gitignored — `graph.json`, `idle_cache.db`, `actions.jsonl`, logs |
 
