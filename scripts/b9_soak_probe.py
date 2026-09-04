@@ -114,6 +114,11 @@ def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, A
         # path producing anything at all?
         "activity_edges": activity.get("transitions", 0),
         "app_switches": activity.get("switches", 0),
+        # L3's correlated-signal count. A signal means L2 collected a snapshot
+        # AND L3 correlated it, so it proves the sensing pipeline is producing
+        # without depending on the user having switched apps or walked away --
+        # the narrowness that failed the 2026-09-04 gate on a healthy box.
+        "signals": counters.get("diagnosis", {}).get("signals", 0),
         "pressure_events": drive.get("contributions", 0),
         "pressure_low": drive.get("low", 0),
         "pressure_high": drive.get("high", 0),

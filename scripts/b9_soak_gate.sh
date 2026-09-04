@@ -100,7 +100,20 @@ BEFORE="$("$PY" "$PROBE")"
 sleep $(( MINUTES * 60 ))
 AFTER="$("$PY" "$PROBE")"
 
-read -r ACTIVITY PRESSURE <<<"$("$PY" -c '
+# Liveness is asked THREE ways, not one. The desk-shaped check (idle edges and
+# app switches) stays, but it is no longer the only way to pass: it needs the
+# user to have switched app or walked away inside the window, and someone
+# working an hour in a single window produces neither. That failed a
+# demonstrably healthy daemon on 2026-09-04 -- 121 snapshots collected, 2
+# signals correlated, the graph advancing, and the gate still said "sensing is
+# dead". phases.md recorded the narrowness when the gate was written and named
+# this fix; this is it.
+#
+# Any ONE of the three proves L2/L3 are producing:
+#   desk   -- idle transitions + app switches   (the original check)
+#   graph  -- nodes or edges advancing          (L2/L3 wrote something)
+#   signal -- L3 correlated a signal            (L2 collected AND L3 ran)
+read -r DESK GRAPH SIGNALS PRESSURE <<<"$("$PY" -c '
 import json, sys
 before, after = json.loads(sys.argv[1]), json.loads(sys.argv[2])
 def moved(key):
@@ -108,16 +121,26 @@ def moved(key):
     # the honest count for the life that is still running, and is never negative.
     delta = after.get(key, 0) - before.get(key, 0)
     return after.get(key, 0) if delta < 0 else delta
-print(moved("activity_edges") + moved("app_switches"), moved("pressure_events"))
+print(
+    moved("activity_edges") + moved("app_switches"),
+    moved("graph_nodes") + moved("graph_edges"),
+    moved("signals"),
+    moved("pressure_events"),
+)
 ' "$BEFORE" "$AFTER")"
 
-echo "activity/idle edges + app switches: ${ACTIVITY}"
+ACTIVITY=$(( DESK + GRAPH + SIGNALS ))
+
+echo "idle edges + app switches:          ${DESK}"
+echo "graph nodes + edges added:          ${GRAPH}"
+echo "signals correlated by L3:           ${SIGNALS}"
 echo "pressure contributions:             ${PRESSURE}"
 
-[ "$ACTIVITY" -gt 0 ] || fail "zero sensing events in ${MINUTES} min — the
-  sensing path is not producing events, so a 7-day soak would prove nothing.
-  (Use the machine normally during the gate; an untouched box is legitimately
-  idle, and the gate cannot tell that apart from a dead collector.)"
+[ "$ACTIVITY" -gt 0 ] || fail "no sign of life in ${MINUTES} min — every one of
+  the three liveness signals stayed flat, so the sensing path really is not
+  producing and a 7-day soak would prove nothing.
+  (If the box was genuinely untouched AND idle for the whole window, that is
+  indistinguishable from a dead collector; use the machine and re-run.)"
 
 # The stamp is the gate's only durable output, and scripts/b9_soak_7day.sh
 # refuses to start without it. Writing it HERE -- after all five checks and not
@@ -130,6 +153,9 @@ mkdir -p "$(dirname "$STAMP_FILE")"
   echo "window_minutes ${MINUTES}"
   echo "daemon_pid ${PID}"
   echo "activity_edges ${ACTIVITY}"
+  echo "desk_events ${DESK}"
+  echo "graph_growth ${GRAPH}"
+  echo "signals ${SIGNALS}"
   echo "pressure_mentions ${PRESSURE}"
   echo "log ${OUT}"
 } > "$STAMP_FILE"
