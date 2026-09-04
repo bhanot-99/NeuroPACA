@@ -224,6 +224,12 @@ def _run_tray() -> None:
             )
             self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
             self.zenity_available = shutil.which("zenity") is not None
+            self._last_refresh = "never"
+            # ONE menu for the life of the process, exported over DBus once.
+            # `refresh()` repopulates its rows; it never swaps the object. See
+            # `_on_refresh_clicked` for what swapping it used to break.
+            self.menu = Gtk.Menu()
+            self.indicator.set_menu(self.menu)
             self.refresh()
             GLib.timeout_add_seconds(REFRESH_SECONDS, self._on_timer)
 
@@ -233,48 +239,74 @@ def _run_tray() -> None:
 
         def refresh(self) -> None:
             status = read_status()
+            self._last_refresh = datetime.now().strftime("%H:%M:%S")
             self.indicator.set_icon_full(status.icon_name, "B9 soak status")
             self.indicator.set_label(status.label, "100.0%")
-            self.indicator.set_menu(self._build_menu(status.text))
+            self._populate_menu(status.text)
 
-        def _build_menu(self, text: str) -> Gtk.Menu:
-            menu = Gtk.Menu()
+        def _on_refresh_clicked(self, *_args: object) -> None:
+            """Hand the work to the next idle turn instead of doing it here.
+
+            "Refresh now" lives *inside* the menu it refreshes. Rebuilding the
+            menu from within its own item's `activate` emission tears the menu
+            down while GTK is still dispatching the click on it, and the click
+            then does nothing visible -- which is exactly how this read as a
+            dead button. `idle_add` lets the emission finish and the menu close
+            first, so the repopulate lands on a menu nobody is inside.
+            """
+            GLib.idle_add(self._refresh_once)
+
+        def _refresh_once(self) -> bool:
+            self.refresh()
+            return GLib.SOURCE_REMOVE
+
+        def _populate_menu(self, text: str) -> None:
+            """Replace the rows of the existing menu, never the menu itself."""
+            for child in self.menu.get_children():
+                self.menu.remove(child)
 
             header = Gtk.MenuItem(label="NeuroPACA · B9 7-day soak")
             header.set_sensitive(False)
-            menu.append(header)
-            menu.append(Gtk.SeparatorMenuItem())
+            self.menu.append(header)
+            self.menu.append(Gtk.SeparatorMenuItem())
 
             # Same lines the popup shows, one per menu row -- nothing is
             # reworded or summarised-of-a-summary on the way into the tray.
             for line in text.splitlines():
                 item = Gtk.MenuItem(label=line if line else " ")
                 item.set_sensitive(False)
-                menu.append(item)
+                self.menu.append(item)
 
-            menu.append(Gtk.SeparatorMenuItem())
+            self.menu.append(Gtk.SeparatorMenuItem())
+
+            # Proof the refresh happened. Between two samples the summary text
+            # is byte-identical, so without a clock here a working refresh and
+            # a dead one look the same -- which is half of why this was
+            # reported as broken.
+            stamp = Gtk.MenuItem(label=f"last refreshed {self._last_refresh}")
+            stamp.set_sensitive(False)
+            self.menu.append(stamp)
 
             if self.zenity_available:
                 popup_item = Gtk.MenuItem(label="Show full popup")
                 popup_item.connect("activate", lambda *_: raise_popup(text))
-                menu.append(popup_item)
+                self.menu.append(popup_item)
             else:
                 dead = Gtk.MenuItem(label="(zenity not installed -- no popup)")
                 dead.set_sensitive(False)
-                menu.append(dead)
+                self.menu.append(dead)
 
             refresh_item = Gtk.MenuItem(label="Refresh now")
-            refresh_item.connect("activate", lambda *_: self.refresh())
-            menu.append(refresh_item)
+            refresh_item.connect("activate", self._on_refresh_clicked)
+            self.menu.append(refresh_item)
 
-            menu.append(Gtk.SeparatorMenuItem())
+            self.menu.append(Gtk.SeparatorMenuItem())
 
             quit_item = Gtk.MenuItem(label="Quit")
             quit_item.connect("activate", lambda *_: Gtk.main_quit())
-            menu.append(quit_item)
+            self.menu.append(quit_item)
 
-            menu.show_all()
-            return menu
+            self.menu.show_all()
 
     # No variable holds the instance -- `GLib.timeout_add_seconds` above
     # already keeps it alive via the bound `self._on_timer` reference, for as
