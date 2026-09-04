@@ -1,0 +1,58 @@
+# NeuroPACA B9 · 7-day soak tray widget -- systemd --user unit.
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-b9-soak-tray.service \
+#     > ~/.config/systemd/user/neuropaca-b9-soak-tray.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-b9-soak-tray
+#
+# WHAT THIS IS
+#
+# A tray icon (COSMIC's status-area applet, or any StatusNotifierItem host)
+# showing the same summary scripts/b9_soak_7day.sh's login popup shows --
+# see scripts/b9_soak_tray.py for why it can never disagree with the popup.
+# It only reads data/b9_soak/*; it does not open, close, or sample a soak
+# session, so it is safe to start, stop, or crash independently of
+# neuropaca-b9-soak.service.
+#
+# Uses SYSTEM python3, not __REPO__/.venv -- PyGObject/AyatanaAppIndicator3
+# are desktop-shell bindings (apt: gir1.2-ayatanaappindicator3-0.1), and the
+# project venv has no system site-packages. See b9_soak_tray.py's docstring.
+#
+# graphical-session.target, not default.target, for the same reason the soak
+# unit uses it: the compositor's session environment (WAYLAND_DISPLAY, the
+# tray host's D-Bus name) has to already be imported, or there is no panel to
+# put an icon in yet.
+#
+# Not Requires=neuropaca-b9-soak.service: the tray should stay up and show
+# "soak state unreadable" rather than disappear if the soak unit is down --
+# that is itself useful information, and matches b9_soak_tray.py's own
+# try/except around a bad read.
+
+[Unit]
+Description=NeuroPACA B9 7-day soak tray widget
+Documentation=file://__REPO__/phases.md
+After=graphical-session.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/python3 __REPO__/scripts/b9_soak_tray.py
+
+Restart=on-failure
+RestartSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=neuropaca-soak-tray
+
+Nice=10
+CPUWeight=10
+MemoryMax=256M
+
+[Install]
+WantedBy=graphical-session.target
