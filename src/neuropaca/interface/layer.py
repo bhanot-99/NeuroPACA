@@ -84,6 +84,18 @@ _QUERY_PREFIXES = frozenset({"$", "$?"})
 # query socket is never held open for the length of a human decision.
 _COMMAND_PREFIXES = frozenset({"$!", "$$"})
 _MAX_PENDING_NOTIFICATIONS = 50
+# Surface-once bookkeeping is the only state here that outlives the node it
+# describes: an INSIGHT / IDLE_THOUGHT is pruned at its 48 h TTL, but its id had
+# to stay remembered or the same thought could be surfaced twice. Remembering
+# them *forever* is what made this a leak — on a daemon that runs for months the
+# set only grows, and every id in it past the TTL refers to a node that no longer
+# exists. Bounded to the newest N in insertion order; anything older than that is
+# long past its TTL, so re-surfacing it is not a risk the cap creates.
+_MAX_SURFACED_IDS = 512
+# Insights queue here until a CLI client drains them. Nothing guarantees one ever
+# connects, so the queue needs its own ceiling — the graph node and the audit log
+# are the durable record, this is only what is waiting to be read out.
+_MAX_PENDING_INSIGHTS = 50
 # A prompt this far past its timeout is stale even if L7's completion event never
 # arrived; L9 stops offering it rather than accept an answer nobody awaits.
 _CONFIRMATION_GRACE = 5.0
@@ -118,7 +130,8 @@ class InterfaceLayer(BaseModule):
         self._pending_insights: list[Insight] = []
         self._pending_notifications: list[dict[str, Any]] = []
         self._pending_confirmations: dict[str, dict[str, Any]] = {}
-        self._surfaced_ids: set[str] = set()
+        # dict, not set: insertion-ordered, so trimming drops the oldest ids.
+        self._surfaced_ids: dict[str, None] = {}
         self._cap_day: date | None = None
         self._surfaced_today = 0
         self._queries = 0
@@ -160,7 +173,14 @@ class InterfaceLayer(BaseModule):
             if node_id.startswith(_SURFACEABLE_NODE_PREFIXES):
                 node = self._graph.get_node(node_id)
                 if node is not None and node.surfaced_at is not None:
-                    self._surfaced_ids.add(node_id)
+                    self._remember_surfaced(node_id)
+
+    def _remember_surfaced(self, node_id: str) -> None:
+        """Record an id as already surfaced, keeping only the newest N."""
+        self._surfaced_ids.pop(node_id, None)  # re-insert so it counts as newest
+        self._surfaced_ids[node_id] = None
+        while len(self._surfaced_ids) > _MAX_SURFACED_IDS:
+            self._surfaced_ids.pop(next(iter(self._surfaced_ids)))
 
     async def stop(self) -> None:
         if not self.is_running:
@@ -238,9 +258,11 @@ class InterfaceLayer(BaseModule):
         if self._surfaced_today >= _DAILY_INSIGHT_CAP:
             return
 
-        self._surfaced_ids.add(insight.node_id)
+        self._remember_surfaced(insight.node_id)
         self._surfaced_today += 1
         self._pending_insights.append(insight)
+        if len(self._pending_insights) > _MAX_PENDING_INSIGHTS:
+            del self._pending_insights[:-_MAX_PENDING_INSIGHTS]
 
         # Stamp the graph so surface-once survives a restart (schema v2). The
         # mutating module publishes MEMORY_UPDATED, never GraphMemory (D-5.3).

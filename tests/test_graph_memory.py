@@ -210,3 +210,145 @@ async def test_reset_isolates_the_graph(tmp_path) -> None:
     fresh = GraphMemory.get_instance(persistence_path=str(tmp_path / "b.json"))
     assert fresh.node_count == 0
     assert fresh is not gm
+
+
+# --------------------------------------------------------------- audit regressions
+# From the B9 optimisation audit: the single-pass rewrite of the DMN's graph jobs.
+# Each of these asserts behaviour the old per-merge / per-link rescan gave us, so
+# the speedup cannot quietly change the result.
+
+
+async def test_consolidate_collapses_a_chain_of_three_duplicates(tmp_path) -> None:
+    """Three nodes on one (type, label) key must collapse onto the single oldest
+    survivor in one sweep — not into two survivors, and not partially."""
+    gm = await _loaded_graph(tmp_path)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    for i, offset in enumerate((2, 0, 1)):  # b is oldest -> b survives
+        await gm.add_node(
+            f"n{i}",
+            NodeType.CONCEPT,
+            {"label": "Same Label", "created_at": base + timedelta(hours=offset)},
+        )
+    merged = await gm.consolidate()
+    assert merged == 2
+    survivors = [n for n in ("n0", "n1", "n2") if gm.get_node(n) is not None]
+    assert survivors == ["n1"]
+
+
+async def test_consolidate_is_case_insensitive_and_spares_hubs(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("a", NodeType.CONCEPT, {"label": "Refactor"})
+    await gm.add_node("b", NodeType.CONCEPT, {"label": "  refactor "})
+    await gm.add_node("c", NodeType.TASK, {"label": "Refactor"})  # different type
+    assert await gm.consolidate() == 1
+    assert gm.get_node("c") is not None, "a different node_type is not a duplicate"
+    for hub in HUB_NODE_IDS:
+        assert gm.get_node(hub) is not None
+
+
+async def test_link_orphan_nodes_links_every_orphan_and_is_idempotent(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    for i in range(25):
+        await gm.add_node(f"orphan:{i}", NodeType.TASK, {"label": f"t{i}"})
+    assert await gm.link_orphan_nodes() == 25
+    assert all(gm.get_edges(f"orphan:{i}") for i in range(25))
+    assert await gm.link_orphan_nodes() == 0  # a second pass finds nothing to do
+
+
+async def test_consolidate_and_link_survive_cancellation_mid_run(tmp_path) -> None:
+    """The lock is taken per mutation, so a cancellation lands *between* two of
+    them and the graph is never left half-merged (rules.md §3)."""
+    gm = await _loaded_graph(tmp_path)
+    for i in range(200):
+        await gm.add_node(f"d{i}a", NodeType.CONCEPT, {"label": f"dup{i}"})
+        await gm.add_node(f"d{i}b", NodeType.CONCEPT, {"label": f"dup{i}"})
+
+    task = asyncio.create_task(gm.consolidate())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Whatever it got through, every surviving node is still well-formed and the
+    # hubs are intact — then a fresh run finishes the job.
+    for node_id in gm.node_ids:
+        assert gm.get_node(node_id) is not None
+    await gm.consolidate()
+    assert await gm.consolidate() == 0
+
+
+async def test_top_nodes_by_score_ranks_and_excludes(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    for i in range(50):
+        await gm.add_node(f"f{i}", NodeType.FILE, {"label": f"f{i}", "relevance_score": float(i)})
+    await gm.add_node("ins", NodeType.INSIGHT, {"label": "ins", "relevance_score": 99.0})
+
+    top = gm.top_nodes_by_score(3)
+    assert [n.id for n in top] == ["ins", "f49", "f48"]
+
+    filtered = gm.top_nodes_by_score(3, exclude_types=frozenset({NodeType.INSIGHT}))
+    assert [n.id for n in filtered] == ["f49", "f48", "f47"]
+    assert all(n.id not in HUB_NODE_IDS for n in filtered)
+    assert gm.top_nodes_by_score(0) == []
+
+
+async def test_load_does_not_block_the_event_loop(tmp_path) -> None:
+    """`load()` reads and decodes in a worker thread (it used to do both inline,
+    holding `_lock`). Proof: the loop keeps ticking while a load is in flight."""
+    gm = await _loaded_graph(tmp_path)
+    for i in range(2000):
+        await gm.add_node(f"n{i}", NodeType.FILE, {"label": f"n{i}"})
+    await gm.save()
+
+    GraphMemory._reset_for_tests()
+    fresh = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    ticks = 0
+
+    async def tick() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0)
+            ticks += 1
+
+    ticker = asyncio.create_task(tick())
+    await fresh.load()
+    ticker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await ticker
+    assert fresh.node_count == 2011
+    assert ticks > 0, "the loop was starved for the whole of load()"
+
+
+async def test_a_cancelled_save_leaves_the_graph_dirty(tmp_path) -> None:
+    """`save()` clears `_dirty` before it streams, so a concurrent mutation can
+    re-flag it. A *cancelled* save must re-flag it too — otherwise the graph
+    looks clean, the scheduler skips it, and nothing is ever written. The DMN
+    hits this whenever activity cancels an idle cycle mid-save."""
+    gm = await _loaded_graph(tmp_path)
+    for i in range(3000):
+        await gm.add_node(f"n{i}", NodeType.FILE, {"label": f"n{i}"})
+
+    task = asyncio.create_task(gm.save())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert gm.dirty, "a cancelled save must leave the pending changes flagged"
+    await gm.save()  # the retry the scheduler will now actually make
+    assert not gm.dirty
+    assert gm.node_count == 3011
+
+
+async def test_a_failed_save_leaves_the_graph_dirty(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("n", NodeType.FILE, {"label": "n"})
+
+    def boom(_text: str) -> None:
+        raise GraphMemoryError("disk full")
+
+    gm._write_atomic = boom  # type: ignore[method-assign]
+    with pytest.raises(GraphMemoryError):
+        await gm.save()
+    assert gm.dirty

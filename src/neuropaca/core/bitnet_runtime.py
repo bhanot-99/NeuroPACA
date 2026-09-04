@@ -88,11 +88,6 @@ class BitNetRuntime:
     def interactive_loaded(self) -> bool:
         return self._interactive_backend is not None and self._interactive_backend.is_loaded
 
-    @property
-    def interactive_unavailable(self) -> bool:
-        """A load was attempted and failed — L9 stops trying and uses templates."""
-        return getattr(self._interactive_backend, "unavailable_reason", None) is not None
-
     # ------------------------------------------------------------------ lifecycle
     def load_model(self) -> None:
         """BLOCKING — startup / shutdown / tests only. Coroutines call

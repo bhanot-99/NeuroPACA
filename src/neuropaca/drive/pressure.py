@@ -404,12 +404,9 @@ class PressureAccumulator(BaseModule):
     # ------------------------------------------------------------- decay timer
     async def _decay_loop(self) -> None:
         interval = float(self.config.pressure_decay_interval_seconds)
-        try:
-            while True:
-                await self._clock.sleep(interval)
-                try:
-                    self.decay()
-                except Exception as exc:  # a timer tick never kills the daemon
-                    self._fail("decay tick", exc)
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await self._clock.sleep(interval)
+            try:
+                self.decay()
+            except Exception as exc:  # a timer tick never kills the daemon
+                self._fail("decay tick", exc)

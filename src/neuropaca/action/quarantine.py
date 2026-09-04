@@ -88,15 +88,6 @@ class Quarantine:
         shutil.copy2(blob, origin)
         return True
 
-    def origin_of(self, token: str) -> str | None:
-        sidecar = self._root / f"{token}.json"
-        if not sidecar.is_file():
-            return None
-        try:
-            return str(json.loads(sidecar.read_text(encoding="utf-8"))["origin"])
-        except (OSError, ValueError, KeyError):
-            return None
-
     async def purge_expired(self, now: datetime | None = None) -> int:
         """Delete expired pairs. Returns how many were swept."""
         return await asyncio.to_thread(self._purge, now or datetime.now(UTC))

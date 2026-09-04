@@ -33,12 +33,15 @@ as D-15 required.
 
 **How an ephemeral node is recognised — a deviation from D-16 worth knowing.**
 D-16 called for `is_ephemeral` / `spawned_by` in the attributes dict, to avoid a
-graph-schema bump. The attributes are set, but they cannot be the durable marker:
+graph-schema bump. They cannot be the durable marker:
 `GraphMemory._add_node_unsafe` builds its node data from the fixed `Node` field
 set, and `_node_record` / `_deserialise` serialise only those fields, so an extra
 key is dropped at creation and again on every `save()`. Selecting on it would
 mean that after one daemon restart every ephemeral node looked permanent and
-apoptosis reaped nothing — unbounded growth, silently.
+apoptosis reaped nothing — unbounded growth, silently. So the id prefix
+(`ephemeral:`) is the marker, and the two attributes are no longer written at
+all: nothing ever read them back, and setting them cost a second `_lock` cycle
+and a `_dirty` flip per spawned node to store something `save()` throws away.
 
 So the load-bearing marker is the **node id prefix** `ephemeral:`, which persists
 because ids do, and which follows the convention already used for exactly this
@@ -283,12 +286,6 @@ class AgentSupervisor(BaseModule):
 
             node_id = f"{EPHEMERAL_PREFIX}{facet}:{uuid4().hex[:12]}"
             await self._graph.add_node(node_id, NodeType.CONCEPT, {"label": label})
-            # D-16's markers. In-process introspection only — `_node_record`
-            # serialises the fixed `Node` fields, so these do not survive a
-            # save/load. The durable marker is the id prefix (module docstring).
-            await self._graph.update_node(
-                node_id, {"is_ephemeral": True, "spawned_by": "agent_supervisor"}
-            )
             self._nodes_created += 1
 
         # The edge is taken outside the cap lock: the node already exists and is

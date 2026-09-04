@@ -125,3 +125,76 @@ async def test_reset_for_tests_gives_a_fresh_bus() -> None:
     second = EventBus.get_instance()
     assert second is not first
     assert second.queue_depth == 0
+
+
+# --------------------------------------------------------------- audit regressions
+# The three below are regressions from the B9 optimisation audit. Each was a live
+# hang or a silent-death path, not a hypothetical.
+
+
+async def test_subscriber_cancellederror_does_not_kill_the_bus() -> None:
+    """A handler whose inner await was cancelled must be isolated like any other
+    failure. It used to propagate out of the dispatch loop and end it for good:
+    `is_running` kept reporting True while every module silently stopped
+    receiving events (rules.md §2)."""
+    bus = await _started_bus()
+    delivered: list[Event] = []
+
+    async def cancelled(_ev: Event) -> None:
+        raise asyncio.CancelledError
+
+    async def healthy(ev: Event) -> None:
+        delivered.append(ev)
+
+    bus.subscribe(EventType.METRIC_COLLECTED, cancelled)
+    bus.subscribe(EventType.METRIC_COLLECTED, healthy)
+
+    bus.publish(Event(event_type=EventType.METRIC_COLLECTED, source="test"))
+    await bus.join()
+    assert bus.is_dispatching, "the dispatch loop must survive a subscriber's cancellation"
+
+    # and it keeps delivering afterwards
+    bus.publish(Event(event_type=EventType.METRIC_COLLECTED, source="test2"))
+    await bus.join()
+    assert len(delivered) == 2
+    await bus.stop()
+
+
+async def test_dispatch_task_cancellation_still_propagates() -> None:
+    """The other half of the same rule: cancelling the *bus* must still stop it
+    (rules.md §1). Isolating subscriber cancellation must not swallow ours."""
+    bus = await _started_bus()
+    entered = asyncio.Event()
+
+    async def slow(_ev: Event) -> None:
+        entered.set()
+        await asyncio.sleep(30)
+
+    bus.subscribe(EventType.METRIC_COLLECTED, slow)
+    bus.publish(Event(event_type=EventType.METRIC_COLLECTED, source="test"))
+    await asyncio.wait_for(entered.wait(), 1.0)
+
+    task = bus._dispatch_task
+    assert task is not None
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not bus.is_dispatching
+
+
+async def test_join_does_not_hang_without_a_dispatch_loop() -> None:
+    """`Orchestrator.stop()` calls join() *before* saving the graph. Waiting on a
+    queue nobody drains meant the daemon never shut down and never persisted."""
+    bus = EventBus()  # never start()ed — nothing will ever drain it
+    bus.publish(Event(event_type=EventType.METRIC_COLLECTED, source="test"))
+    assert await asyncio.wait_for(bus.join(), 1.0) is False
+
+
+async def test_stop_does_not_hang_when_the_dispatch_loop_is_gone() -> None:
+    bus = EventBus()
+    await bus.start()
+    assert bus._dispatch_task is not None
+    bus._dispatch_task.cancel()  # simulate a loop that died under us
+    await asyncio.sleep(0)
+    bus.publish(Event(event_type=EventType.METRIC_COLLECTED, source="test"))
+    await asyncio.wait_for(bus.stop(), 1.0)

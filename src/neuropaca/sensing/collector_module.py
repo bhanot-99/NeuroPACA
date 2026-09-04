@@ -146,14 +146,11 @@ class XMetricCollector(BaseModule):
 
     # ------------------------------------------------------------------ internal
     async def _poll_collector(self, collector: BaseCollector) -> None:
-        try:
-            while self.is_running and collector.is_enabled:
-                await self._clock.sleep(collector.poll_interval_seconds)
-                if not (self.is_running and collector.is_enabled):
-                    return
-                await self._poll_once(collector)
-        except asyncio.CancelledError:
-            raise
+        while self.is_running and collector.is_enabled:
+            await self._clock.sleep(collector.poll_interval_seconds)
+            if not (self.is_running and collector.is_enabled):
+                return
+            await self._poll_once(collector)
 
     async def _poll_once(self, collector: BaseCollector) -> None:
         try:

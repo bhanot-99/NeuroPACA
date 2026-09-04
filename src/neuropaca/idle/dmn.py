@@ -37,7 +37,7 @@ from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType, NodeType, RelationType
 from neuropaca.core.event_bus import EventBus
-from neuropaca.core.graph_memory import HUB_NODE_IDS, GraphMemory
+from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, Node, system_error_event
 from neuropaca.learning.insight import Insight
@@ -143,10 +143,14 @@ class DefaultModeNetwork(BaseModule):
             async with asyncio.timeout(self.config.dmn_cycle_wall_clock_seconds):
                 reminiscence = await self._reminiscence()
                 made = await self._imagination()
+                # Inside the budget, not after it: the docstring promises the
+                # whole cycle is bounded, and a save on a large graph is the
+                # longest thing in it. A cancelled save now re-flags `_dirty`,
+                # so the scheduler still persists this work.
+                if self._graph.dirty:
+                    await self._graph.save()
             self._last_at = self._clock.now()
             self._last_summary = f"{reminiscence} · {made} thoughts"
-            if self._graph.dirty:
-                await self._graph.save()
         except asyncio.CancelledError:
             self._last_summary = "cancelled on activity"
             raise
@@ -197,15 +201,7 @@ class DefaultModeNetwork(BaseModule):
     def _top_nodes(self, k: int) -> list[Node]:
         """Top-K non-hub, non-thought nodes by `relevance_score`. A sync read —
         bounded dict work, inside the cycle's wall-clock budget."""
-        nodes = [
-            n
-            for n in (self._graph.get_node(nid) for nid in self._graph.node_ids)
-            if n is not None
-            and n.id not in HUB_NODE_IDS
-            and n.node_type not in _EXCLUDED_SEED_TYPES
-        ]
-        nodes.sort(key=lambda n: n.relevance_score, reverse=True)
-        return nodes[:k]
+        return self._graph.top_nodes_by_score(k, exclude_types=_EXCLUDED_SEED_TYPES)
 
     async def _one_thought(
         self, seeds: list[Node], rotation: int, seen: set[str]
