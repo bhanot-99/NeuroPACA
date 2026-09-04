@@ -32,14 +32,26 @@ LIVE_HEALTH = {
     "modules": [
         {"name": "sensing", "ok": True, "detail": "2/2 collectors up, buffer 2/720"},
         {"name": "activity", "ok": True, "detail": "idle✓ window✓ · 0 transitions · 3 switches"},
-        {"name": "diagnosis", "ok": True,
-         "detail": "4 patterns · 44 app-rules · 0 signals · 0 errors"},
-        {"name": "learning", "ok": True,
-         "detail": "model lazy · 0 insights · 0 dropped · 0 errors"},
-        {"name": "drive", "ok": True,
-         "detail": "0 tracked · 2 contributions · 1 low · 0 high · 0 errors"},
-        {"name": "action", "ok": True,
-         "detail": "dry-run · tiers safe · 5 proposed · 0 executed · 0 errors"},
+        {
+            "name": "diagnosis",
+            "ok": True,
+            "detail": "4 patterns · 44 app-rules · 0 signals · 0 errors",
+        },
+        {
+            "name": "learning",
+            "ok": True,
+            "detail": "model lazy · 0 insights · 0 dropped · 0 errors",
+        },
+        {
+            "name": "drive",
+            "ok": True,
+            "detail": "0 tracked · 2 contributions · 1 low · 0 high · 0 errors",
+        },
+        {
+            "name": "action",
+            "ok": True,
+            "detail": "dry-run · tiers safe · 5 proposed · 0 executed · 0 errors",
+        },
     ],
 }
 

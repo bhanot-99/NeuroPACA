@@ -138,9 +138,7 @@ def open_session(state: dict[str, Any], now: datetime | None = None) -> dict[str
     return session
 
 
-def close_session(
-    state: dict[str, Any], reason: str, now: datetime | None = None
-) -> None:
+def close_session(state: dict[str, Any], reason: str, now: datetime | None = None) -> None:
     now = now or _now()
     if not state["sessions"] or state["sessions"][-1].get("ended_utc"):
         return
@@ -285,13 +283,11 @@ def summarise(
     lines: list[str] = []
     if state["completed_utc"]:
         lines.append(
-            f"SOAK COMPLETE -- {_humanise(accrued)} accrued, "
-            f"finished {state['completed_utc']}."
+            f"SOAK COMPLETE -- {_humanise(accrued)} accrued, finished {state['completed_utc']}."
         )
     else:
         lines.append(
-            f"Session {len(sessions)} running. "
-            "This popup means the soak survived the reboot."
+            f"Session {len(sessions)} running. This popup means the soak survived the reboot."
         )
     lines.append("")
     lines.append(f"Progress    {pct:5.1f}%  ({_humanise(accrued)} of 7d accrued runtime)")
@@ -303,8 +299,7 @@ def summarise(
         # that gets switched off, and someone will otherwise ask why a soak
         # started last Tuesday is not done.
         lines.append(
-            f"Wall clock  {_humanise(wall)} since first start "
-            f"({state['first_started_utc']})"
+            f"Wall clock  {_humanise(wall)} since first start ({state['first_started_utc']})"
         )
 
     lines.append(f"Sessions    {len(sessions)} ({unclean} ended unclean)")

@@ -180,12 +180,26 @@ def test_the_popup_text_leads_with_progress_and_the_leak_number(state: dict) -> 
     is caught on day two or on day seven -- the B7 failure, restated."""
     soak.open_session(state, T0)
     samples = [
-        {"ts": "2026-09-04T09:00:00Z", "uptime_seconds": 60, "rss_mib": 1000,
-         "graph_nodes": 59, "graph_edges": 43, "activity_edges": 4,
-         "pressure_events": 1, "errors": 0},
-        {"ts": "2026-09-05T09:00:00Z", "uptime_seconds": 86460, "rss_mib": 1001,
-         "graph_nodes": 61, "graph_edges": 45, "activity_edges": 7,
-         "pressure_events": 2, "errors": 0},
+        {
+            "ts": "2026-09-04T09:00:00Z",
+            "uptime_seconds": 60,
+            "rss_mib": 1000,
+            "graph_nodes": 59,
+            "graph_edges": 43,
+            "activity_edges": 4,
+            "pressure_events": 1,
+            "errors": 0,
+        },
+        {
+            "ts": "2026-09-05T09:00:00Z",
+            "uptime_seconds": 86460,
+            "rss_mib": 1001,
+            "graph_nodes": 61,
+            "graph_edges": 45,
+            "activity_edges": 7,
+            "pressure_events": 2,
+            "errors": 0,
+        },
     ]
     text = soak.summarise(state, samples, T0 + timedelta(days=1))
 
@@ -193,7 +207,7 @@ def test_the_popup_text_leads_with_progress_and_the_leak_number(state: dict) -> 
     assert "of 7d accrued runtime" in text
     assert "Leak slope" in text
     assert "7 idle/active edges" in text  # the cumulative LATEST, not 4 + 7
-    assert "61 nodes, 45 edges" in text   # latest, not first
+    assert "61 nodes, 45 edges" in text  # latest, not first
 
 
 def test_an_empty_run_says_so_rather_than_looking_healthy(state: dict) -> None:
@@ -251,18 +265,26 @@ def test_the_leak_slope_is_measured_within_one_daemon_life() -> None:
     a fresh process from a week-old one and report a healthy negative slope for a
     daemon that had been leaking right up until it died."""
     leaking = [
-        {"ts": soak._iso(datetime(2026, 9, 4, 9, tzinfo=UTC) + timedelta(hours=i)),
-         "uptime_seconds": 3600 * (i + 1), "daemon_up": True, "rss_mib": 1000 + 10 * i}
+        {
+            "ts": soak._iso(datetime(2026, 9, 4, 9, tzinfo=UTC) + timedelta(hours=i)),
+            "uptime_seconds": 3600 * (i + 1),
+            "daemon_up": True,
+            "rss_mib": 1000 + 10 * i,
+        }
         for i in range(24)
     ]
     after_restart = [
-        {"ts": soak._iso(datetime(2026, 9, 5, 10, tzinfo=UTC)),
-         "uptime_seconds": 60, "daemon_up": True, "rss_mib": 1000},
+        {
+            "ts": soak._iso(datetime(2026, 9, 5, 10, tzinfo=UTC)),
+            "uptime_seconds": 60,
+            "daemon_up": True,
+            "rss_mib": 1000,
+        },
     ]
     trend = soak.rss_trend([*leaking, *after_restart])
 
     assert trend is not None
-    assert trend.delta_mib == 230          # the leak, not 0
+    assert trend.delta_mib == 230  # the leak, not 0
     assert trend.mib_per_day == pytest.approx(240.0, abs=1)
 
 
