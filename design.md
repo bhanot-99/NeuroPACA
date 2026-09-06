@@ -171,6 +171,24 @@ flowchart TD
 | `$!` | emergency — immediate autonomous action |
 | `$$` | safe — backup + verify before acting |
 
+### 7.1 The interactive shell (B10)
+
+`$` and `!` are hostile to a real shell — `$` opens a variable, `!` opens
+history expansion — so the prefixes above have to be quoted (`neuropaca "$! …"`).
+Running `neuropaca` with **no arguments** in a terminal opens a `neuropaca>`
+prompt where the line is read by us, not the shell, so the sigils are typed
+bare. It is pure sugar: every line is translated to the argv the console script
+already accepts and run through the same code path (`interface/repl.py` →
+`cli._run_once`). No new grammar, no daemon logic.
+
+| Typed in the shell | Runs |
+| --- | --- |
+| `$doctor`, `$health`, `$insights`, … | a `$` + verb → that verb |
+| `!ask what's slow` | a `!` + verb, then free text |
+| `?why is the disk full` | a leading `?` → `diagnose` |
+| `$ …`, `$? …`, `$! …`, `$$ …` | the raw prefixes, unquoted |
+| `help`, `quit` | the full guide (also `neuropaca help`) / leave |
+
 ---
 
 *Related: [PRD.md](PRD.md) · [Architecture.md](Architecture.md) · [rules.md](rules.md) · [phases.md](phases.md) · [memory.md](memory.md)*

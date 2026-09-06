@@ -188,12 +188,31 @@ Then:
 neuropacad                       # the daemon (reads $NEUROPACA_CONFIG, else ./neuropaca.toml)
 ```
 
+### Start the daemon automatically (recommended)
+
+One script installs `neuropacad` as a systemd `--user` service so it starts on
+every login, and — with lingering — at boot, before you log in:
+
+```bash
+scripts/install-user-service.sh            # install + enable + start + enable-linger
+scripts/install-user-service.sh --uninstall
+```
+
+It only touches `~/.config/systemd/user/` and your own `systemd --user` session
+— nothing system-wide, no root. Logs: `journalctl --user -u neuropacad -f`. The
+unit's ordering is load-bearing (it must start *after* the Wayland compositor
+imports the session environment) — see the header of
+[`scripts/systemd/neuropacad.service`](scripts/systemd/neuropacad.service).
+
 ### Using the CLI
 
 The CLI is a thin client over a Unix socket
 (`--socket PATH` > `$NEUROPACA_SOCKET` > `$XDG_RUNTIME_DIR/neuropaca.sock`).
 
 ```bash
+neuropaca                                     # no args → the interactive shell (below)
+neuropaca help                                # the full guide
+
 neuropaca ask "what's using my CPU"          # $  — grounded answer from your graph
 neuropaca diagnose "why is the disk full"    # $? — + a live system snapshot
 neuropaca health                             # daemon + module health
@@ -209,6 +228,24 @@ neuropaca doctor                              # offline diagnosis, no daemon nee
 neuropaca export <path> [--force]             # dump the graph out of data/
 neuropaca panic [--yes]                       # kill the daemon and wipe all state
 ```
+
+#### The interactive shell
+
+`$` and `!` fight the shell (variable expansion, history expansion), so the
+prefix forms above have to be quoted. Run `neuropaca` with **no arguments** to
+drop into a `neuropaca>` prompt where the sigils are typed bare:
+
+```
+neuropaca> $doctor                     # → the doctor verb
+neuropaca> $health                     # → the health verb
+neuropaca> !ask what's eating my CPU   # → ask "what's eating my CPU"
+neuropaca> ?why is the disk full       # → diagnose "…"
+neuropaca> $ how many meetings today   # the raw prefixes work unquoted in here
+neuropaca> help        quit
+```
+
+It adds no capability — each line is translated to the exact `neuropaca` argv
+and run through the same path (`src/neuropaca/interface/repl.py`).
 
 **The action layer ships inert.** `action_dry_run = True` and only the `safe` tier is enabled, so a
 fresh install describes what it *would* do and does nothing. Even turned on: a dangerous action

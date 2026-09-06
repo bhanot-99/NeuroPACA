@@ -5,6 +5,8 @@ opens the Unix socket, sends one JSONL request, renders one JSONL response with
 `rich` (design.md), and exits. **No daemon logic, no graph, no model** — every
 answer comes from the running daemon.
 
+    neuropaca                                 # no args → the interactive shell
+    neuropaca help                            # the full guide (interface/repl.py)
     neuropaca ask "what is using my CPU"      # $  — natural-language question
     neuropaca diagnose "why is the disk full" # $? — question + live snapshot
     neuropaca "$ how many meetings today"     # raw prefix form
@@ -232,9 +234,12 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
+def _run_once(raw_argv: list[str]) -> int:
+    """One verb: offline dispatch, else parse + one socket round-trip + render.
 
+    Shared by `main` and the interactive shell (`interface/repl.py`) so both
+    reach the daemon through exactly the same path.
+    """
     # The three offline verbs are handled before anything touches the socket
     # (B9/BL-7). `doctor` in particular exists for the case where the daemon is
     # not running, so it must not be routed through the daemon.
@@ -258,6 +263,33 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     return _render(request, resp)
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+
+    # `neuropaca help` / `--help` / `-h` / `-help` → the full guide, not the
+    # one-line usage a parse error prints. `-help` is accepted because that is
+    # the form the README tells a new user to try.
+    if raw_argv and raw_argv[0] in ("help", "--help", "-h", "-help"):
+        from neuropaca.interface import repl
+
+        repl.print_help()
+        return 0
+
+    # No verb + a real terminal → the interactive shell, where the `$`/`!`
+    # sigils are read by us instead of the surrounding shell (B10). A
+    # non-interactive stdin keeps the usage error, so a script that runs
+    # `neuropaca` with no args fails loudly instead of hanging on a prompt.
+    if not raw_argv:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            from neuropaca.interface import repl
+
+            return repl.run()
+        print(_USAGE, file=sys.stderr)
+        return 2
+
+    return _run_once(raw_argv)
 
 
 if __name__ == "__main__":

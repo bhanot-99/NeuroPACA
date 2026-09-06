@@ -568,6 +568,67 @@ def test_cli_reports_a_missing_daemon(capsys) -> None:
     assert "cannot reach the daemon" in capsys.readouterr().err
 
 
+# --------------------------------------------------------------------------- 4b
+# The interactive shell (B10 · terminal accessibility) — interface/repl.py.
+# Every REPL line must translate to argv `cli._parse` / `offline.dispatch`
+# already accept; the shell adds no new grammar.
+
+
+@pytest.mark.parametrize(
+    "line, argv",
+    [
+        ("$doctor", ["doctor"]),
+        ("$health", ["health"]),
+        ("$insights", ["insights"]),
+        ("!ask what is up", ["ask", "what is up"]),
+        ("!diagnose why slow", ["diagnose", "why slow"]),
+        ("?why is the disk full", ["diagnose", "why is the disk full"]),
+        # apostrophes in free text must not raise (no shlex on ask/diagnose)
+        ("!ask what's eating my CPU", ["ask", "what's eating my CPU"]),
+        ("ask what's up", ["ask", "what's up"]),
+        # raw prefixes pass straight through as one token, unquoted
+        ("$ how many meetings today", ["$ how many meetings today"]),
+        ("$? why slow", ["$? why slow"]),
+        ("$! pkill -f webpack", ["$! pkill -f webpack"]),
+        ("$$ systemctl --user restart x", ["$$ systemctl --user restart x"]),
+        # short aliases
+        ("status", ["health"]),
+        ("notes", ["notifications"]),
+        ("pending", ["confirmations"]),
+        ("confirm abc123 --deny", ["confirm", "abc123", "--deny"]),
+    ],
+)
+def test_repl_translate(line: str, argv: list[str]) -> None:
+    from neuropaca.interface import repl
+
+    assert repl._translate(line) == argv
+
+
+def test_repl_translations_all_reach_a_real_dispatcher() -> None:
+    """Whatever the shell emits, an offline verb or a clean `_parse` must take it."""
+    from neuropaca.interface import offline, repl
+
+    for line in ("$doctor", "$health", "!ask hi", "?why", "$ hello", "$? hi", "$! x", "$$ x"):
+        argv = repl._translate(line)
+        if argv and argv[0] in offline.OFFLINE_VERBS:
+            continue
+        cli._parse(argv)  # raises cli._CliError if the shell produced garbage
+
+
+def test_cli_help_prints_the_full_guide(capsys) -> None:
+    for form in (["help"], ["--help"], ["-h"], ["-help"]):
+        assert cli.main(form) == 0
+        out = capsys.readouterr().out
+        assert "interactive shell" in out
+        assert "raw prefixes" in out
+
+
+def test_cli_no_args_without_a_tty_is_a_usage_error(capsys, monkeypatch) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    assert cli.main([]) == 2
+    assert "usage: neuropaca" in capsys.readouterr().err
+
+
 async def test_cli_end_to_end_against_a_live_socket(tmp_path, capsys) -> None:
     w = await _wired(tmp_path)
     try:
