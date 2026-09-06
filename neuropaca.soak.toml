@@ -20,6 +20,10 @@ model_path = "models/bitnet-2b4t-tq2_0.gguf"
 interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
 inference_backend = "llama"
 
+# B11 · the L9 `chat` op — all defaults (see neuropaca.toml for the annotated list):
+#   knowledge_enabled = true · knowledge_paths = [] · knowledge_max_chars = 2400 ·
+#   chat_temperature = 0.3
+
 graph_db_path = "data/graph.json"
 action_log_path = "data/actions.jsonl"
 quarantine_path = "data/quarantine"

@@ -12,9 +12,11 @@ the line is read by *us*, so the sigils can be typed bare:
     neuropaca> ?why is the disk full        # -> diagnose "why is the disk full"
     neuropaca> $? why is the disk full      # the raw prefix form still works
 
-This adds **no capability**: every line is translated to the exact argv the
-`neuropaca` console script already accepts and run through the same
-`cli._run_once`. No daemon logic, no graph, no model live here either.
+Every line is translated to the exact argv the `neuropaca` console script
+already accepts and run through the same `cli._run_once` — the client stays
+thin. The one convenience beyond sigils: a line that is not a recognised verb
+and carries no sigil is sent as a ``chat`` question (B11), so you can just type
+``how is the graph stored`` and get an answer from the daemon.
 """
 
 from __future__ import annotations
@@ -38,7 +40,24 @@ _ALIASES = {
 _RAW_PREFIXES = ("$?", "$!", "$$", "$")
 _QUIT = {"quit", "exit", "q", ":q"}
 _HELP = {"help", "h", "?", "--help", "-h"}
-_FREE_TEXT = ("ask", "diagnose")
+_FREE_TEXT = ("ask", "diagnose", "chat")
+# Every verb the console script accepts. A line whose first word is none of these
+# (and carries no `$` / `!` / `?` sigil) is read as a `chat` question rather than
+# dumped back as a usage error (B11).
+_KNOWN_VERBS = {
+    "ask",
+    "chat",
+    "confirm",
+    "confirmations",
+    "diagnose",
+    "doctor",
+    "export",
+    "health",
+    "insights",
+    "notifications",
+    "panic",
+    *_ALIASES,
+}
 
 
 def _translate(line: str) -> list[str]:
@@ -61,10 +80,13 @@ def _translate(line: str) -> list[str]:
     head = _ALIASES.get(head, head)
     rest = rest.strip()
 
-    # `ask` / `diagnose` take free text — never shlex-split it, or an
+    # `ask` / `diagnose` / `chat` take free text — never shlex-split it, or an
     # apostrophe ("what's") raises ValueError on an unbalanced quote.
     if head in _FREE_TEXT:
         return [head, rest] if rest else [head]
+    # An unrecognised first word with no sigil is a plain question → `chat`.
+    if head not in _KNOWN_VERBS:
+        return ["chat", line]
     if not rest:
         return [head]
     try:
@@ -94,7 +116,7 @@ def _banner() -> None:
     console.print("[bold]neuropaca[/bold] · interactive shell")
     console.print(f"  daemon: {_daemon_status()}")
     console.print(
-        "  [dim]type[/dim] [cyan]help[/cyan] [dim]for commands,[/dim] "
+        "  [dim]type a question, or[/dim] [cyan]help[/cyan] [dim]for commands,[/dim] "
         "[cyan]quit[/cyan] [dim]to leave[/dim]\n"
     )
 
@@ -108,8 +130,8 @@ def print_help() -> None:
     console.print(
         "\n[bold]neuropaca[/bold] — a thin client for [bold]neuropacad[/bold], the local "
         "behavioural-graph daemon.\nEvery answer comes from the running daemon; this command "
-        "sends one request over a Unix\nsocket and renders the reply. Nothing here loads a "
-        "model or touches the graph directly.\n"
+        "sends one request over a Unix\nsocket and renders the reply. The daemon owns the "
+        "graph and the models — the client\nnever loads either.\n"
     )
 
     def _section(title: str, rows: list[tuple[str, str]]) -> None:
@@ -124,10 +146,11 @@ def print_help() -> None:
         console.print()
 
     _section(
-        "ask the graph",
+        "ask questions",
         [
-            ('ask "…"', "grounded answer from your graph  (prefix: $)"),
-            ('diagnose "…"', "same, plus a live system snapshot  (prefix: $?)"),
+            ('chat "…"', "project docs + general knowledge; a bare line works too"),
+            ('ask "…"', "grounded answer from your behavioural graph  (prefix: $)"),
+            ('diagnose "…"', "same as ask, plus a live system snapshot  (prefix: $?)"),
         ],
     )
     _section(
@@ -160,6 +183,7 @@ def print_help() -> None:
     _section(
         "interactive shell  (run `neuropaca` with no arguments)",
         [
+            ("how is the graph stored", "a bare line with no verb is a `chat` question"),
             ("$doctor   $health", "a `$` + verb runs that verb"),
             ("!ask what's slow", "a `!` + verb, then free text"),
             ("?why is disk full", "a leading `?` is diagnose"),

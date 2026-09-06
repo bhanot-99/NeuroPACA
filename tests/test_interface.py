@@ -187,7 +187,12 @@ class _Wired:
         return json.loads(line)
 
 
-async def _wired(tmp_path, *, clock: FakeClock | None = None, **cfg) -> _Wired:
+async def _wired(
+    tmp_path, *, clock: FakeClock | None = None, interactive: bool = True, **cfg
+) -> _Wired:
+    # The B11 doc corpus is off by default here — a chat test opts in with
+    # `knowledge_enabled=True, knowledge_paths=[...]` pointing at a tmp file.
+    cfg.setdefault("knowledge_enabled", False)
     bus = EventBus.get_instance()
     await bus.start()
     graph = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
@@ -197,7 +202,8 @@ async def _wired(tmp_path, *, clock: FakeClock | None = None, **cfg) -> _Wired:
     )
     sock = str(tmp_path / "np.sock")
     runtime = BitNetRuntime.get_instance(
-        FakeInferenceBackend(), create_interactive_backend(Config(inference_backend="fake"))
+        FakeInferenceBackend(),
+        create_interactive_backend(Config(inference_backend="fake")) if interactive else None,
     )
     layer = InterfaceLayer(
         bus,
@@ -596,6 +602,12 @@ def test_cli_reports_a_missing_daemon(capsys) -> None:
         ("notes", ["notifications"]),
         ("pending", ["confirmations"]),
         ("confirm abc123 --deny", ["confirm", "abc123", "--deny"]),
+        # B11: an unrecognised first word with no sigil is a chat question
+        ("how is the graph stored", ["chat", "how is the graph stored"]),
+        ("chat where do conversation turns live", ["chat", "where do conversation turns live"]),
+        ("chat what's the drive layer", ["chat", "what's the drive layer"]),
+        ("$chat how many nodes", ["chat", "how many nodes"]),
+        ("wat", ["chat", "wat"]),
     ],
 )
 def test_repl_translate(line: str, argv: list[str]) -> None:
@@ -768,3 +780,119 @@ async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -
         assert w.layer._pending_insights[-1].node_id.endswith(f"d{_MAX_PENDING_INSIGHTS + 19}")
     finally:
         await _teardown(w)
+
+
+# --------------------------------------------------------------- 4c
+# The conversational `chat` op (B11 · terminal accessibility) — project-doc +
+# general Q&A, distinct from the graph-grounded `$` / `$?` path.
+
+
+_DOC = """\
+# NeuroPACA notes
+
+## Graph storage
+
+The behavioural graph is a single JSON file at data/graph.json, written
+atomically: temp file, fsync, os.replace. GraphMemory owns every write behind
+one asyncio.Lock.
+
+## Something unrelated
+
+Filler about meetings and calendars.
+"""
+
+
+async def test_chat_answers_from_a_project_doc(tmp_path) -> None:
+    md = tmp_path / "notes.md"
+    md.write_text(_DOC)
+    w = await _wired(tmp_path, knowledge_enabled=True, knowledge_paths=[str(md)])
+    try:
+        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["grounded"] is True
+    assert resp["source"] == "model"
+    assert resp["answer"]
+    assert any("Graph storage" in c for c in resp["cited"])
+
+
+async def test_chat_flags_an_answer_with_no_project_or_graph_backing(tmp_path) -> None:
+    w = await _wired(tmp_path)  # corpus off; query matches no graph node
+    try:
+        resp = await w.request({"op": "chat", "text": "what is the capital of France"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["grounded"] is False
+    assert resp["source"] == "model-general"
+    assert resp["answer"]
+
+
+async def test_chat_falls_back_to_extractive_without_the_interactive_model(tmp_path) -> None:
+    md = tmp_path / "notes.md"
+    md.write_text(_DOC)
+    w = await _wired(
+        tmp_path, interactive=False, knowledge_enabled=True, knowledge_paths=[str(md)]
+    )
+    try:
+        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["source"].startswith("template")
+    assert resp["answer"]  # the top doc chunk, extractively
+    assert "graph.json" in resp["answer"]
+
+
+async def test_chat_without_a_model_and_without_retrieval_says_so(tmp_path) -> None:
+    w = await _wired(tmp_path, interactive=False)
+    try:
+        resp = await w.request({"op": "chat", "text": "what is the capital of France"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["source"] == "template-nomodel"
+    assert resp["grounded"] is False
+
+
+async def test_chat_op_does_not_publish_user_message(tmp_path) -> None:
+    """`chat` is a read-only Q&A turn — unlike `$` / `$?` it must not put a
+    USER_MESSAGE on the bus for the rest of the daemon to react to."""
+    w = await _wired(tmp_path)
+    seen: list[Event] = []
+
+    async def spy(event: Event) -> None:
+        seen.append(event)
+
+    w.bus.subscribe(EventType.USER_MESSAGE, spy)
+    try:
+        await w.request({"op": "chat", "text": "how does anything work"})
+        await w.bus.join()
+    finally:
+        await _teardown(w)
+    assert seen == []
+
+
+async def test_chat_empty_text_is_rejected(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request({"op": "chat", "text": "   "})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False
+
+
+def test_fake_backend_writes_a_chat_reply_naming_the_first_citation() -> None:
+    from neuropaca.learning.prompts import build_chat_prompt
+
+    prompt = build_chat_prompt(
+        "how is the graph stored",
+        doc_block="[design.md → Graph storage]\nthe graph is one JSON file",
+    )
+    out = FakeInferenceBackend().infer(prompt, 320, 0.3, None)
+    assert "design.md → Graph storage" in out

@@ -166,23 +166,37 @@ flowchart TD
 
 | Prefix | Meaning |
 | --- | --- |
-| `$` | ask — natural language |
-| `$?` | diagnose — question with project context + live snapshot |
+| `$` | ask — natural language, grounded in the behavioural graph |
+| `$?` | diagnose — same as `$`, plus a live system snapshot |
 | `$!` | emergency — immediate autonomous action |
 | `$$` | safe — backup + verify before acting |
 
-### 7.1 The interactive shell (B10)
+`ask` / `diagnose` answer **only** from the behavioural graph, behind a hard
+grounding gate. A question *about NeuroPaca itself* — how the graph is stored,
+what a layer does, where turns live — has nothing to match there. The `chat`
+verb (B11) is that path: retrieval over the repo's own Markdown docs
+(`interface/knowledge.py`, zero-inference lexical match) plus the graph plus a
+live snapshot line, answered by the interactive model free-decoded. An answer
+not backed by a doc or a graph node is **flagged** as general knowledge, never
+suppressed. `neuropaca chat "…"` from a normal shell; a bare line is `chat` in
+the interactive shell (below).
+
+### 7.1 The interactive shell (B10 · `chat` added B11)
 
 `$` and `!` are hostile to a real shell — `$` opens a variable, `!` opens
 history expansion — so the prefixes above have to be quoted (`neuropaca "$! …"`).
 Running `neuropaca` with **no arguments** in a terminal opens a `neuropaca>`
 prompt where the line is read by us, not the shell, so the sigils are typed
-bare. It is pure sugar: every line is translated to the argv the console script
-already accepts and run through the same code path (`interface/repl.py` →
-`cli._run_once`). No new grammar, no daemon logic.
+bare. Every line is translated to the argv the console script already accepts
+and run through the same code path (`interface/repl.py` → `cli._run_once`) — the
+client stays thin. The one convenience beyond the sigils: a line that is not a
+recognised verb and carries no sigil is sent as a `chat` question (B11), so you
+can just type `how is the graph stored` and get an answer from the daemon.
 
 | Typed in the shell | Runs |
 | --- | --- |
+| `how is the graph stored` | a bare line with no verb → `chat` |
+| `chat "…"` | project-doc + general Q&A, explicitly |
 | `$doctor`, `$health`, `$insights`, … | a `$` + verb → that verb |
 | `!ask what's slow` | a `!` + verb, then free text |
 | `?why is the disk full` | a leading `?` → `diagnose` |

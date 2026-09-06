@@ -7,8 +7,9 @@ answer comes from the running daemon.
 
     neuropaca                                 # no args → the interactive shell
     neuropaca help                            # the full guide (interface/repl.py)
-    neuropaca ask "what is using my CPU"      # $  — natural-language question
+    neuropaca ask "what is using my CPU"      # $  — graph-grounded question
     neuropaca diagnose "why is the disk full" # $? — question + live snapshot
+    neuropaca chat "how is the graph stored"  # project-doc + general Q&A (B11)
     neuropaca "$ how many meetings today"     # raw prefix form
     neuropaca "$! kill webpack"               # $! — emergency command (L7)
     neuropaca "$$ systemctl --user restart x" # $$ — same, with a state backup
@@ -48,7 +49,7 @@ _USAGE = (
 )
 _PREFIXES = ("$?", "$!", "$$", "$")  # longest-first so `$?` wins over `$`
 _CONNECT_TIMEOUT = 3.0
-_RESPONSE_TIMEOUT = 60.0  # a `$?` answer is a CPU inference — allow for it
+_RESPONSE_TIMEOUT = 75.0  # a `$?` / `chat` answer is a CPU inference — allow for it
 
 
 class _CliError(Exception):
@@ -100,6 +101,11 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
             raise _CliError(f"'{head}' needs a question")
         prefix = "$?" if head == "diagnose" else "$"
         return {"op": "query", "prefix": prefix, "text": text}, socket_override
+    if head == "chat":
+        text = " ".join(rest).strip()
+        if not text:
+            raise _CliError("'chat' needs a question")
+        return {"op": "chat", "text": text}, socket_override
 
     # raw prefix form: the whole thing is one string like "$? why ..."
     raw = " ".join(args).strip()
@@ -222,14 +228,21 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
         console.print(f"  [dim]{resp.get('note', '')}[/dim]")
         return 0
 
-    # a query answer
+    # a query (`ask` / `diagnose`) or `chat` answer
     console.print(f"[magenta]◆[/magenta] {resp.get('answer', '')}")
+    source = resp.get("source")
+    if source == "model-general":
+        console.print(
+            "  [yellow]⚠ general knowledge — not from NeuroPaca's docs or graph[/yellow]"
+        )
     cited = resp.get("cited", [])
     if cited:
-        console.print(f"  [dim]based on {' · '.join(cited)}[/dim]")
+        console.print(f"  [dim]based on {' · '.join(str(c) for c in cited)}[/dim]")
     tail = f"  [dim]confidence {resp.get('confidence')}"
-    if resp.get("source") == "template":
-        tail += " · extractive (no interactive model)"
+    if source == "template-nomodel":
+        tail += " · the interactive model is not loaded"
+    elif source == "template":
+        tail += " · extractive"
     console.print(tail + "[/dim]")
     return 0
 

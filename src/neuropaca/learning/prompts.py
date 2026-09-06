@@ -287,6 +287,109 @@ def parse_answer(
 
 
 # ============================================================================
+# L9 · the conversational `chat` answer (B11 · terminal accessibility).
+#
+# `ask` / `diagnose` retrieve from the behavioural graph and run a hard grounding
+# gate (`parse_answer`) — a question *about NeuroPaca itself* matches nothing.
+# `chat` is the other path: retrieval over the repo's own docs
+# (`interface/knowledge.py`) + the graph + a live snapshot line, answered by the
+# interactive Qwen model **free-decoded** (no GBNF). This is the one L9 call
+# exempt from rules.md §4.1's per-call grammar — see the carve-out there. It is
+# still bounded: `CHAT_MAX_TOKENS`, a wall-clock timeout, and `clean_chat_answer`
+# (strip echo, cap length). The model's prose is advisory: retrieval is
+# zero-inference and deterministic, `grounded` is set from whether *anything* was
+# retrieved, and an ungrounded answer is flagged to the user, never suppressed.
+# Model output stays untrusted — never executed, never a path, never published.
+# ============================================================================
+
+# The system preamble doubles as the marker `FakeInferenceBackend` keys on to
+# recognise a chat prompt (a free-decode call with no grammar).
+CHAT_SYSTEM = (
+    "You are NeuroPaca's local assistant. Answer the question below in at most "
+    "three sentences. Prefer the project notes and graph facts provided; if they "
+    "do not cover it, answer from general knowledge and say so in one clause. Do "
+    "not repeat the question, quote these instructions, or comment on your own "
+    "answer. Output prose only — no code fences, no headings."
+)
+# One paragraph, hard-capped so a drifting model cannot ramble (rules.md §4.1
+# spirit). ~320 tokens ≈ a tight paragraph.
+CHAT_MAX_TOKENS = 320
+# Post-generation length ceiling, applied at a sentence boundary.
+CHAT_ANSWER_CHAR_CAP = 700
+_CHAT_HISTORY_TURNS = 3
+
+
+def build_chat_prompt(
+    question: str,
+    *,
+    doc_block: str = "",
+    graph_block: str = "",
+    live_line: str | None = None,
+    history: Sequence[tuple[str, str]] = (),
+) -> str:
+    """Assemble the free-text `chat` prompt: system preamble, retrieved project
+    notes, distilled graph facts, an optional live-snapshot line, the last few
+    turns, then the question. All blocks are pre-rendered strings — this module
+    never imports L9 (`interface/knowledge.py` owns `DocChunk`)."""
+    parts = [CHAT_SYSTEM, ""]
+    parts += ["Project notes:", doc_block.strip() or "(none matched this question)", ""]
+    parts += ["Graph facts:", graph_block.strip() or "(none matched this question)", ""]
+    if live_line:
+        parts += [f"Live: {live_line}", ""]
+    recent = [(r, c) for r, c in history if c.strip()][-_CHAT_HISTORY_TURNS * 2 :]
+    if recent:
+        parts.append("Recent conversation:")
+        parts += [f"  {role}: {content.strip()}" for role, content in recent]
+        parts.append("")
+    parts += [f"Question: {question.strip()}", "Answer:"]
+    return "\n".join(parts)
+
+
+_CHAT_ECHO_RE = re.compile(r"^\s*(answer|assistant|response)\s*:\s*", re.IGNORECASE)
+_CHAT_SENTENCE_RE = re.compile(r"[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$")
+# Weak model tells — a trailing sentence that talks about the answer, not the
+# subject. Dropped if it is the last sentence.
+_CHAT_META_RE = re.compile(
+    r"\b(the (?:answer|response) (?:is|above)|as requested|as asked|"
+    r"i hope this helps|this (?:answer|response) is (?:clear|concise))\b",
+    re.IGNORECASE,
+)
+_CHAT_MAX_SENTENCES = 3
+
+
+def clean_chat_answer(raw: str) -> str | None:
+    """Trim the free-decode output to a presentable answer, or `None` if it is
+    empty / pure prompt-echo (the caller then falls back to an extractive
+    reply). Strips code fences, cuts anything past the model's turn, and keeps
+    the first few sentences."""
+    if not raw:
+        return None
+    text = raw.strip()
+    # Cut anything the model hallucinated past its turn.
+    for stop in ("\nQuestion:", "\nProject notes:", "\nGraph facts:", "\nUser:", "\nAnswer:"):
+        idx = text.find(stop)
+        if idx != -1:
+            text = text[:idx]
+    text = text.replace("```", " ").replace("`", "")
+    text = _CHAT_ECHO_RE.sub("", text)
+    text = " ".join(text.split())
+    if not text or text.lower() in {"null", "n/a", "none"}:
+        return None
+
+    sentences = [s.strip() for s in _CHAT_SENTENCE_RE.findall(text) if s.strip()]
+    if len(sentences) > 1 and _CHAT_META_RE.search(sentences[-1]):
+        sentences.pop()
+    if sentences:
+        text = " ".join(sentences[:_CHAT_MAX_SENTENCES])
+
+    if len(text) > CHAT_ANSWER_CHAR_CAP:
+        head = text[:CHAT_ANSWER_CHAR_CAP]
+        cut = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+        text = head[: cut + 1] if cut > CHAT_ANSWER_CHAR_CAP // 2 else head.rstrip() + "…"
+    return text or None
+
+
+# ============================================================================
 # L6 · the proactive idle thought (B6, D-13).
 #
 # `problems.md` 1.13 is open for L6: the 2B4T loop model cannot write a grounded

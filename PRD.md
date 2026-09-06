@@ -187,6 +187,15 @@ The only surface that talks to the human. Shell prefix grammar:
 | `$!` | **Emergency** — immediate autonomous action, skips L3 + L4 |
 | `$$` | **Safe** — full backup + verify before any action, never during tests |
 
+`$` / `$?` are **graph-only** and gated: a question about NeuroPaca itself
+matches nothing. **`chat`** (B11) covers that — retrieval over the repo's own
+docs (`KnowledgeIndex`, zero-inference lexical match) + the graph + a live
+snapshot, answered by the interactive model free-decoded. Project knowledge is
+preferred; an answer with no doc or graph backing is **flagged** as general
+knowledge, not withheld. `neuropaca chat "…"`, or just type a question in the
+interactive shell. B10 gave that shell: `neuropaca` with no args opens a
+`neuropaca>` prompt where the `$` / `!` sigils are typed bare.
+
 ### F10 · Scheduled graph maintenance
 During idle/sleep the DMN consolidates duplicate nodes, re-links orphans, recomputes `relevance_score`s, and purges raw sensor buffers past their TTL. **This is graph housekeeping, not model training** — the model is used as-is. Any weekly model adaptation belongs to the deferred pruning work ([`pruning.md`](pruning.md)).
 

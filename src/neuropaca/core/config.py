@@ -110,6 +110,18 @@ class Config:
     # system temp dir). Tests point this at a `tmp_path` so no test binds a
     # socket outside its sandbox (rules.md §8).
     interface_socket_path: str = ""
+    # B11 · L9 conversational `chat` op. Project-knowledge Q&A over the repo's own
+    # docs — a bare line in the `neuropaca>` shell, or `neuropaca chat "…"`.
+    # Retrieval is the same zero-inference lexical match as the graph path
+    # (interface/knowledge.py); the answer goes through the interactive model,
+    # free-decoded, and is flagged when it is not backed by a doc (rules.md §4.1).
+    # `knowledge_paths` empty => the repo-root doc set (Architecture.md, design.md,
+    # PRD.md, rules.md, README.md, RESEARCH_DOSSIER.md, phases.md, problems.md,
+    # pruning.md), resolved against the installed package's repo root.
+    knowledge_enabled: bool = True
+    knowledge_paths: list[str] = field(default_factory=list)
+    knowledge_max_chars: int = 2400
+    chat_temperature: float = 0.3
     # B6 · Idle Cognition (L6, D-13). Strict budgets on one DMN idle cycle:
     #   - dmn_cycle_wall_clock_seconds — `asyncio.timeout` ceiling for a whole
     #     cycle (reminiscence + imagination); an overrun is logged, not fatal.
@@ -210,6 +222,7 @@ class Config:
             "adaptation_buffer_size",
             "max_context_tokens",
             "interactive_model_context_tokens",
+            "knowledge_max_chars",
             "dmn_cycle_wall_clock_seconds",
             "dmn_max_inferences_per_cycle",
             "dmn_idle_thought_ttl_hours",
@@ -248,6 +261,8 @@ class Config:
             errs.append(f"agent_inference_budget must be >= 0, got {self.agent_inference_budget}")
         if self.top_process_count < 0:
             errs.append(f"top_process_count must be >= 0, got {self.top_process_count}")
+        if not 0.0 <= self.chat_temperature <= 1.0:
+            errs.append(f"chat_temperature must be in [0.0, 1.0], got {self.chat_temperature}")
 
         for key, val in self.poll_intervals.items():
             if val <= 0:

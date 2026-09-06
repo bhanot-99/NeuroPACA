@@ -213,6 +213,7 @@ The CLI is a thin client over a Unix socket
 neuropaca                                     # no args → the interactive shell (below)
 neuropaca help                                # the full guide
 
+neuropaca chat "how is the graph stored"     # project docs + general Q&A, docs first
 neuropaca ask "what's using my CPU"          # $  — grounded answer from your graph
 neuropaca diagnose "why is the disk full"    # $? — + a live system snapshot
 neuropaca health                             # daemon + module health
@@ -236,6 +237,7 @@ prefix forms above have to be quoted. Run `neuropaca` with **no arguments** to
 drop into a `neuropaca>` prompt where the sigils are typed bare:
 
 ```
+neuropaca> how is the behavioural graph stored   # a bare line is a chat question
 neuropaca> $doctor                     # → the doctor verb
 neuropaca> $health                     # → the health verb
 neuropaca> !ask what's eating my CPU   # → ask "what's eating my CPU"
@@ -244,8 +246,12 @@ neuropaca> $ how many meetings today   # the raw prefixes work unquoted in here
 neuropaca> help        quit
 ```
 
-It adds no capability — each line is translated to the exact `neuropaca` argv
-and run through the same path (`src/neuropaca/interface/repl.py`).
+Each line is translated to the exact `neuropaca` argv and run through the same
+path (`src/neuropaca/interface/repl.py`). The one convenience beyond the sigils:
+a line that is not a recognised verb is sent as a `chat` question, so the shell
+answers anything — questions about NeuroPaca's own internals (graph storage,
+monitoring, file handling) drawn from the repo docs, with anything not backed by
+a doc flagged as general knowledge.
 
 **The action layer ships inert.** `action_dry_run = True` and only the `safe` tier is enabled, so a
 fresh install describes what it *would* do and does nothing. Even turned on: a dangerous action
