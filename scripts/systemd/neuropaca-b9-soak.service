@@ -54,7 +54,24 @@ ExecStart=/usr/bin/systemd-inhibit --what=sleep:idle --who=NeuroPACA \
 
 KillSignal=SIGTERM
 TimeoutStopSec=45
-KillMode=mixed
+
+# control-group, NOT mixed -- and the difference is the whole reason B9's first
+# soak logged "3 of 4 sessions ended unclean" on a machine that was shut down
+# cleanly every time.
+#
+# ExecStart's main process is `systemd-inhibit`, not the driver: the driver runs
+# as its CHILD (systemd-inhibit forks+waits so the sleep-lock lives exactly as
+# long as the run). `KillMode=mixed` SIGTERMs the main process ONLY -- so the
+# inhibit wrapper got the signal and the bash driver, which is where
+# `trap ... TERM` lives, got nothing but a SIGKILL 45 s later. Its handler never
+# ran, no session was ever closed, and every next boot healed a dangling session
+# as `unclean`. (`neuropacad.service` keeps `mixed` correctly: its main process
+# IS the daemon, no wrapper in between.)
+#
+# `control-group` SIGTERMs every process in the unit, driver included, so
+# `finish sigterm` runs, writes the clean close + final summary, and the boot
+# after finds nothing to heal.
+KillMode=control-group
 
 # A soak that stops on its own after seven days has SUCCEEDED. Restarting it
 # would start an eighth day and overwrite the result with a fresh session, so

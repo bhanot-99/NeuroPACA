@@ -94,16 +94,24 @@ log "=== soak session opened ==="
 
 finish() {
   local reason="${1:-stopped}"
-  "$PY" "$STATE_TOOL" close --state "$STATE" --reason "$reason"
-  log "=== soak session closed (${reason}) ==="
-  "$PY" "$STATE_TOOL" summary --state "$STATE" --samples "$SAMPLES" | tee -a "$LOG"
+  # Every step best-effort. This runs from a signal handler while the machine is
+  # shutting down; a non-zero return under `set -e` would skip the steps after it
+  # and hand systemd a failure exit -> Restart=on-failure churns the sample file.
+  # The `close` is the one that matters -- a missed summary line is not worth an
+  # aborted shutdown.
+  "$PY" "$STATE_TOOL" close --state "$STATE" --reason "$reason" || true
+  log "=== soak session closed (${reason}) ===" || true
+  "$PY" "$STATE_TOOL" summary --state "$STATE" --samples "$SAMPLES" | tee -a "$LOG" || true
 }
 
 # SIGTERM is what systemd sends at shutdown and at `systemctl --user stop`.
 # Catching it is the difference between a session that is added to the total and
-# one the next boot has to heal from a heartbeat.
-trap 'finish sigterm; exit 0' TERM
-trap 'finish sigint; exit 0' INT
+# one the next boot has to heal from a heartbeat -- but the unit must use
+# `KillMode=control-group` for this trap to fire at all, because the driver runs
+# as a child of `systemd-inhibit` (see neuropaca-b9-soak.service). `|| true` so a
+# hiccup in finish() still reaches `exit 0`.
+trap 'finish sigterm || true; exit 0' TERM
+trap 'finish sigint || true; exit 0' INT
 
 # --- the popup ----------------------------------------------------------------
 show_popup() {
