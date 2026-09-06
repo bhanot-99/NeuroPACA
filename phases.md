@@ -69,6 +69,8 @@ flowchart TD
 | B7 | Drive & Action (L5 + L7) | ✅ merged (PR #9, `bd6215f`) — `PressureAccumulator` (two sources, exact half-life decay, set-test corroboration) + `SafetyGate` / sandbox / quarantine / JSONL audit / headless confirmation handshake + Notification·MemoryWrite·FileWrite·RunCommand; `$!` / `$$` live. **All 5 exit criteria met** — 1–4 on the target box; criterion 5 via the positive control (`spikes/b7_positive_control/`), the 24 h soak abandoned after 3 zero-proposal attempts (`HighLoadPattern`/Wayland blindspot). 288 pytest + 14 stress + 9 integration green |
 | B8 | Agents & structural plasticity (L8) | ✅ done (`b8-agents-structural-plasticity`, D-16) — `AgentSupervisor` + ephemeral sub-clusters + apoptosis + the `ACTION_PROPOSAL` decoupling. **All 5 exit criteria met on the target box** (`scripts/validate_b8_plasticity.py`). 311 pytest + stress + integration green |
 | B9 | Hardening | 🟡 in progress — 6 of 7 exit criteria met. Units installed and the daemon is live under the hardened unit (BL-1 confirmed on real systemd); the 1-hour gate ran 2026-09-03. Only the 7-day soak itself remains |
+| B10 | Terminal accessibility — interactive `neuropaca>` shell | ✅ done (`bc86c2a`) — sigils typed bare, one-command `help`, autostart installer |
+| B11 | Conversational `chat` — project-doc + general Q&A | ✅ done — daemon-side `chat` op, `KnowledgeIndex` lexical doc retrieval, free-decode interactive model, flagged-ungrounded fallback; a bare shell line is `chat` |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
 ---
@@ -234,6 +236,51 @@ Criteria 1–3 and 5–7 are met by the test suite. **Criterion 4 is the only on
 The health counters are **cumulative**, so the summary is reset-aware: a daemon restart is detected by `uptime_seconds` going backwards, totals are summed per daemon life, and the leak slope is measured within the longest single life — spanning a restart would subtract a fresh 40 MiB process from a week-old one and report a healthy negative slope for a daemon that had been leaking right up until it died. `tests/test_b9_soak_state.py` + `tests/test_b9_soak_probe.py` (22 + 7) pin all of it.
 
 **Soak methodology (BL-5).** B7 ran three soaks and L5 fired zero times; the recorded cause ("the collector cannot see Wayland under `systemd --user`") was wrong — measured 2026-09-03, `WAYLAND_DISPLAY` *is* in the manager environment and the daemon merely started before the compositor imported it. The unit now binds `graphical-session.target`. Because a soak that produces nothing looks identical to a soak of a working-but-idle system, the 7-day run is gated: `scripts/b9_soak_gate.sh` checks the live process environment (not the manager's), that the collector did not self-disable, that `neuropaca health` answers over the socket, and that real activity edges appear within an hour. Only then does the soak start — under `systemd-inhibit --what=sleep:idle`, because a suspending laptop accrues no runtime, which is exactly what ended the B2 soak at 11 h of 24.
+
+---
+
+### B10–B11 · Terminal accessibility (post-B9)
+
+Not on the original B0–B9 roadmap — accessibility work after the core system was
+dogfooded from a real terminal.
+
+**B10 · the interactive shell.** `$` and `!` are hostile to a real shell (`$`
+opens a variable, `!` opens history expansion), so every prefixed example had to
+be quoted. `neuropaca` with no args opens a `neuropaca>` prompt that reads the
+line itself, so the sigils are typed bare; `neuropaca help` prints the full
+guide; `scripts/install-user-service.sh` starts the daemon on every login. No
+new grammar — every line translates to argv the console script already accepts.
+
+**B11 · the `chat` op.** `ask` / `diagnose` answer only from the behavioural
+graph, behind a grounding gate — a question *about NeuroPaca itself* (graph
+storage, monitoring, file handling) matched nothing and the interactive model
+was never reached. `chat` is the project-aware path:
+
+- **`KnowledgeIndex`** (`interface/knowledge.py`) — the repo's Markdown docs,
+  chunked by heading with an `H1 → H2` breadcrumb, searched by the same
+  deliberately-dumb lexical match as `search_by_label` (stopword-filtered,
+  min-score cutoff). **Zero embeddings, zero inference.** Built at L9 `start()`
+  from `config.knowledge_paths` or the default repo-doc set; a build failure is
+  non-fatal, like the interactive model.
+- **Answer path** — retrieved doc chunks + a live snapshot line → the
+  interactive Qwen model, **free-decoded** (the one L9 call exempt from rules.md
+  §4.1's per-call GBNF; carve-out recorded there). The behavioural graph is not
+  searched — `search_by_label` is too loose and would cite a junk node on almost
+  every question. `clean_chat_answer` strips echo/fences and caps sentences; a
+  timeout or empty result falls back to
+  an extractive reply.
+- **Grounding is advisory** — `grounded` = "retrieval returned something". An
+  ungrounded answer is **flagged** (`⚠ general knowledge`), never suppressed —
+  the shell answers *anything*, project knowledge first. `chat` stores nothing
+  and does not publish `USER_MESSAGE`.
+- **Shell** — a bare line with no verb and no sigil is a `chat` question, so
+  `neuropaca> how is the graph stored` just works instead of printing usage.
+
+Validated on the target box against the real Qwen2.5-3B-Q4 model: grounded
+answers to questions about graph storage, the drive layer, and where
+conversation turns live; an off-topic general-knowledge question answered and
+flagged. Covered by `tests/test_knowledge.py` and the B11 section of
+`tests/test_interface.py`.
 
 ---
 

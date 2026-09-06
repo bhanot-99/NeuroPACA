@@ -51,13 +51,17 @@ from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.logging import redact
 from neuropaca.core.models import Event, Node, system_error_event
+from neuropaca.interface.knowledge import KnowledgeIndex, default_doc_paths
 from neuropaca.interface.message import Message
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
     ANSWER_MAX_TOKENS,
+    CHAT_MAX_TOKENS,
     alias_nodes,
     build_answer_grammar,
     build_answer_prompt,
+    build_chat_prompt,
+    clean_chat_answer,
     parse_answer,
 )
 from neuropaca.sensing.snapshot import MetricSnapshot
@@ -69,6 +73,7 @@ _MAX_HISTORY = 50  # conversation_history turns kept in RAM (blueprint max_histo
 _CONTEXT_SEEDS = 5
 _CONTEXT_NODES = 8
 _INFER_TIMEOUT = 30.0  # CPU interactive inference wall-clock ceiling (rules.md §1)
+_CHAT_INFER_TIMEOUT = 45.0  # B11 — a `chat` paragraph is a longer completion than a `$?` sentence
 _HEALTH_TIMEOUT = 2.0
 _INTERACTIVE_TEMPERATURE = 0.3  # rules.md §4.1 — ~0.4 allowed for $ / $? only
 
@@ -137,6 +142,7 @@ class InterfaceLayer(BaseModule):
         self._queries = 0
         self._errors = 0
         self._interactive_disabled = False  # set once the interactive model is proven absent
+        self._knowledge: KnowledgeIndex | None = None  # B11 · project-doc corpus, built at start()
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
@@ -163,8 +169,23 @@ class InterfaceLayer(BaseModule):
         with contextlib.suppress(OSError):
             os.chmod(self._socket_path, 0o600)  # owner-only (rules.md §6 spirit)
         self._rehydrate_surfaced_ids()
+        self._build_knowledge_index()
         self.is_running = True
         _log.info("L9 interface listening on %s", self._socket_path)
+
+    def _build_knowledge_index(self) -> None:
+        """B11 · load the project-doc corpus for `chat`. Optional, like the
+        interactive model — a build failure is logged and leaves `chat` running
+        on the graph + model alone; it never blocks startup."""
+        if not self.config.knowledge_enabled:
+            _log.info("L9 knowledge corpus disabled (knowledge_enabled=false)")
+            return
+        paths = self.config.knowledge_paths or default_doc_paths()
+        try:
+            self._knowledge = KnowledgeIndex.from_paths(paths)
+        except Exception:
+            _log.exception("L9 knowledge index build failed — chat falls back to graph + model")
+            self._knowledge = None
 
     def _rehydrate_surfaced_ids(self) -> None:
         """Surface-once survives a restart: any INSIGHT node already stamped
@@ -208,6 +229,7 @@ class InterfaceLayer(BaseModule):
             detail=(
                 f"socket {self._socket_path.name} · {self._queries} queries · "
                 f"{len(self._conversation_history)} turns · "
+                f"{len(self._knowledge) if self._knowledge else 0} doc chunks · "
                 f"{self._surfaced_today} insights surfaced today · "
                 f"{len(self._pending_confirmations)} confirmations waiting · "
                 f"{self._errors} errors"
@@ -450,6 +472,8 @@ class InterfaceLayer(BaseModule):
             prefix = str(req.get("prefix", "$"))
             text = str(req.get("text", "")).strip()
             return await self.on_user_input(prefix, text)
+        if op == "chat":
+            return await self._chat(str(req.get("text", "")).strip())
         return {"ok": False, "error": f"unknown op: {op!r}"}
 
     async def _request_health(self) -> dict[str, Any] | None:
@@ -504,6 +528,83 @@ class InterfaceLayer(BaseModule):
             "confidence": round(confidence, 3),
             "source": source,
         }
+
+    async def _chat(self, text: str) -> dict[str, Any]:
+        """B11 · the project-aware conversational answer.
+
+        Retrieval is the repo docs (`self._knowledge`) plus a live snapshot line
+        — zero-inference and deterministic. The **behavioural graph is not
+        searched here**: `search_by_label` matches on common words and would cite
+        an unrelated `idle:` / `app:` node on almost every question; graph
+        grounding is what `$` / `$?` are for. The interactive model writes the
+        prose **free-decoded** (the one L9 call exempt from rules.md §4.1's
+        per-call grammar). `grounded` is set from whether a doc matched; an
+        ungrounded answer is flagged (`source="model-general"`), never
+        suppressed. Unlike `$` / `$?` this does **not** publish `USER_MESSAGE` —
+        `chat` is a read-only Q&A turn."""
+        self._queries += 1
+        if not text:
+            return {"ok": False, "error": "empty question"}
+
+        history = [(m.role.value, m.content) for m in self._conversation_history[-4:]]
+        self._store_message(MessageRole.USER, text)
+
+        doc_chunks = (
+            self._knowledge.search(text, max_chars=self.config.knowledge_max_chars)
+            if self._knowledge is not None
+            else []
+        )
+        grounded = bool(doc_chunks)
+        cited = [c.cite for c in doc_chunks]
+
+        prompt = build_chat_prompt(
+            text,
+            doc_block="\n\n".join(f"[{c.cite}]\n{c.text}" for c in doc_chunks),
+            live_line=self._live_snapshot_line(),
+            history=history,
+        )
+
+        answer: str | None = None
+        if await self._ensure_interactive_model():
+            raw = await self._infer(
+                prompt,
+                None,
+                temperature=self.config.chat_temperature,
+                max_tokens=CHAT_MAX_TOKENS,
+                wall_clock_s=_CHAT_INFER_TIMEOUT,
+            )
+            answer = clean_chat_answer(raw) if raw is not None else None
+
+        if answer is not None:
+            source = "model" if grounded else "model-general"
+            confidence = 0.7 if grounded else 0.3
+        else:
+            answer, source, confidence = self._chat_fallback(doc_chunks)
+
+        self._store_message(MessageRole.ASSISTANT, answer, tuple(cited))
+        return {
+            "ok": True,
+            "answer": answer,
+            "cited": cited,
+            "confidence": round(confidence, 3),
+            "source": source,
+            "grounded": grounded,
+        }
+
+    @staticmethod
+    def _chat_fallback(doc_chunks: list[Any]) -> tuple[str, str, float]:
+        """No interactive model, or it returned nothing usable. Answer
+        extractively from the top doc chunk, or say plainly that the model is
+        needed."""
+        if doc_chunks:
+            top = doc_chunks[0]
+            return (f"{top.cite}: {top.snippet()}", "template", 0.4)
+        return (
+            "I can't answer that without the interactive model, and it isn't loaded "
+            "— see `neuropaca health`.",
+            "template-nomodel",
+            0.0,
+        )
 
     def _relay_command(self, prefix: str, text: str) -> dict[str, Any]:
         """Hand `$!` / `$$` to L7 over the bus. L9 holds no gate of its own — it
@@ -600,16 +701,27 @@ class InterfaceLayer(BaseModule):
             _log.warning("L9 interactive model unavailable — answering from templates")
         return loaded
 
-    async def _infer(self, prompt: str, grammar: str, *, temperature: float) -> str | None:
+    async def _infer(
+        self,
+        prompt: str,
+        grammar: str | None,
+        *,
+        temperature: float,
+        max_tokens: int = ANSWER_MAX_TOKENS,
+        wall_clock_s: float = _INFER_TIMEOUT,
+    ) -> str | None:
         try:
             return await asyncio.wait_for(
                 self._runtime.infer_async(
-                    prompt, ANSWER_MAX_TOKENS, temperature, grammar, interactive=True
+                    prompt, max_tokens, temperature, grammar, interactive=True
                 ),
-                _INFER_TIMEOUT,
+                wall_clock_s,
             )
         except TimeoutError:
-            _log.warning("L9 interactive inference timed out after %ss", _INFER_TIMEOUT)
+            _log.warning("L9 interactive inference timed out after %ss", wall_clock_s)
+            return None
+        except Exception:  # a model crash (context overflow, backend fault) → fall back, don't 500
+            _log.exception("L9 interactive inference failed — falling back to a template answer")
             return None
 
     @staticmethod

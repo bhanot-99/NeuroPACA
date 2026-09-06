@@ -25,6 +25,13 @@ model_path = "models/bitnet-2b4t-tq2_0.gguf"
 interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
 inference_backend = "llama"
 
+# B11 · the L9 `chat` op — project-aware Q&A over the repo's own Markdown docs.
+# All defaults; listed here for visibility.
+#   knowledge_enabled   = true          # off => `chat` uses the graph + model only
+#   knowledge_paths      = []            # [] => the repo-root doc set
+#   knowledge_max_chars = 2400           # retrieval context budget handed to the model
+#   chat_temperature     = 0.3           # free-decode; rules.md §4.1 allows ~0.4 for L9
+
 graph_db_path = "data/graph.json"
 action_log_path = "data/actions.jsonl"
 quarantine_path = "data/quarantine"

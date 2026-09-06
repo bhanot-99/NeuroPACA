@@ -187,7 +187,12 @@ class _Wired:
         return json.loads(line)
 
 
-async def _wired(tmp_path, *, clock: FakeClock | None = None, **cfg) -> _Wired:
+async def _wired(
+    tmp_path, *, clock: FakeClock | None = None, interactive: bool = True, **cfg
+) -> _Wired:
+    # The B11 doc corpus is off by default here — a chat test opts in with
+    # `knowledge_enabled=True, knowledge_paths=[...]` pointing at a tmp file.
+    cfg.setdefault("knowledge_enabled", False)
     bus = EventBus.get_instance()
     await bus.start()
     graph = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
@@ -197,7 +202,8 @@ async def _wired(tmp_path, *, clock: FakeClock | None = None, **cfg) -> _Wired:
     )
     sock = str(tmp_path / "np.sock")
     runtime = BitNetRuntime.get_instance(
-        FakeInferenceBackend(), create_interactive_backend(Config(inference_backend="fake"))
+        FakeInferenceBackend(),
+        create_interactive_backend(Config(inference_backend="fake")) if interactive else None,
     )
     layer = InterfaceLayer(
         bus,
@@ -568,6 +574,73 @@ def test_cli_reports_a_missing_daemon(capsys) -> None:
     assert "cannot reach the daemon" in capsys.readouterr().err
 
 
+# --------------------------------------------------------------------------- 4b
+# The interactive shell (B10 · terminal accessibility) — interface/repl.py.
+# Every REPL line must translate to argv `cli._parse` / `offline.dispatch`
+# already accept; the shell adds no new grammar.
+
+
+@pytest.mark.parametrize(
+    "line, argv",
+    [
+        ("$doctor", ["doctor"]),
+        ("$health", ["health"]),
+        ("$insights", ["insights"]),
+        ("!ask what is up", ["ask", "what is up"]),
+        ("!diagnose why slow", ["diagnose", "why slow"]),
+        ("?why is the disk full", ["diagnose", "why is the disk full"]),
+        # apostrophes in free text must not raise (no shlex on ask/diagnose)
+        ("!ask what's eating my CPU", ["ask", "what's eating my CPU"]),
+        ("ask what's up", ["ask", "what's up"]),
+        # raw prefixes pass straight through as one token, unquoted
+        ("$ how many meetings today", ["$ how many meetings today"]),
+        ("$? why slow", ["$? why slow"]),
+        ("$! pkill -f webpack", ["$! pkill -f webpack"]),
+        ("$$ systemctl --user restart x", ["$$ systemctl --user restart x"]),
+        # short aliases
+        ("status", ["health"]),
+        ("notes", ["notifications"]),
+        ("pending", ["confirmations"]),
+        ("confirm abc123 --deny", ["confirm", "abc123", "--deny"]),
+        # B11: an unrecognised first word with no sigil is a chat question
+        ("how is the graph stored", ["chat", "how is the graph stored"]),
+        ("chat where do conversation turns live", ["chat", "where do conversation turns live"]),
+        ("chat what's the drive layer", ["chat", "what's the drive layer"]),
+        ("$chat how many nodes", ["chat", "how many nodes"]),
+        ("wat", ["chat", "wat"]),
+    ],
+)
+def test_repl_translate(line: str, argv: list[str]) -> None:
+    from neuropaca.interface import repl
+
+    assert repl._translate(line) == argv
+
+
+def test_repl_translations_all_reach_a_real_dispatcher() -> None:
+    """Whatever the shell emits, an offline verb or a clean `_parse` must take it."""
+    from neuropaca.interface import offline, repl
+
+    for line in ("$doctor", "$health", "!ask hi", "?why", "$ hello", "$? hi", "$! x", "$$ x"):
+        argv = repl._translate(line)
+        if argv and argv[0] in offline.OFFLINE_VERBS:
+            continue
+        cli._parse(argv)  # raises cli._CliError if the shell produced garbage
+
+
+def test_cli_help_prints_the_full_guide(capsys) -> None:
+    for form in (["help"], ["--help"], ["-h"], ["-help"]):
+        assert cli.main(form) == 0
+        out = capsys.readouterr().out
+        assert "interactive shell" in out
+        assert "raw prefixes" in out
+
+
+def test_cli_no_args_without_a_tty_is_a_usage_error(capsys, monkeypatch) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    assert cli.main([]) == 2
+    assert "usage: neuropaca" in capsys.readouterr().err
+
+
 async def test_cli_end_to_end_against_a_live_socket(tmp_path, capsys) -> None:
     w = await _wired(tmp_path)
     try:
@@ -707,3 +780,198 @@ async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -
         assert w.layer._pending_insights[-1].node_id.endswith(f"d{_MAX_PENDING_INSIGHTS + 19}")
     finally:
         await _teardown(w)
+
+
+# --------------------------------------------------------------- 4c
+# The conversational `chat` op (B11 · terminal accessibility) — project-doc +
+# general Q&A, distinct from the graph-grounded `$` / `$?` path.
+
+
+_DOC = """\
+# NeuroPACA notes
+
+## Graph storage
+
+The behavioural graph is a single JSON file at data/graph.json, written
+atomically: temp file, fsync, os.replace. GraphMemory owns every write behind
+one asyncio.Lock.
+
+## Something unrelated
+
+Filler about meetings and calendars.
+"""
+
+
+async def test_chat_answers_from_a_project_doc(tmp_path) -> None:
+    md = tmp_path / "notes.md"
+    md.write_text(_DOC)
+    w = await _wired(tmp_path, knowledge_enabled=True, knowledge_paths=[str(md)])
+    try:
+        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["grounded"] is True
+    assert resp["source"] == "model"
+    assert resp["answer"]
+    assert any("Graph storage" in c for c in resp["cited"])
+
+
+async def test_chat_flags_an_answer_with_no_project_or_graph_backing(tmp_path) -> None:
+    w = await _wired(tmp_path)  # corpus off; query matches no graph node
+    try:
+        resp = await w.request({"op": "chat", "text": "what is the capital of France"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["grounded"] is False
+    assert resp["source"] == "model-general"
+    assert resp["answer"]
+
+
+async def test_chat_falls_back_to_extractive_without_the_interactive_model(tmp_path) -> None:
+    md = tmp_path / "notes.md"
+    md.write_text(_DOC)
+    w = await _wired(tmp_path, interactive=False, knowledge_enabled=True, knowledge_paths=[str(md)])
+    try:
+        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["source"].startswith("template")
+    assert resp["answer"]  # the top doc chunk, extractively
+    assert "graph.json" in resp["answer"]
+
+
+async def test_chat_without_a_model_and_without_retrieval_says_so(tmp_path) -> None:
+    w = await _wired(tmp_path, interactive=False)
+    try:
+        resp = await w.request({"op": "chat", "text": "what is the capital of France"})
+    finally:
+        await _teardown(w)
+
+    assert resp["ok"] is True
+    assert resp["source"] == "template-nomodel"
+    assert resp["grounded"] is False
+
+
+async def test_chat_op_does_not_publish_user_message(tmp_path) -> None:
+    """`chat` is a read-only Q&A turn — unlike `$` / `$?` it must not put a
+    USER_MESSAGE on the bus for the rest of the daemon to react to."""
+    w = await _wired(tmp_path)
+    seen: list[Event] = []
+
+    async def spy(event: Event) -> None:
+        seen.append(event)
+
+    w.bus.subscribe(EventType.USER_MESSAGE, spy)
+    try:
+        await w.request({"op": "chat", "text": "how does anything work"})
+        await w.bus.join()
+    finally:
+        await _teardown(w)
+    assert seen == []
+
+
+async def test_chat_empty_text_is_rejected(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request({"op": "chat", "text": "   "})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False
+
+
+def test_fake_backend_writes_a_chat_reply_naming_the_first_citation() -> None:
+    from neuropaca.learning.prompts import build_chat_prompt
+
+    prompt = build_chat_prompt(
+        "how is the graph stored",
+        doc_block="[design.md → Graph storage]\nthe graph is one JSON file",
+    )
+    out = FakeInferenceBackend().infer(prompt, 320, 0.3, None)
+    assert "design.md → Graph storage" in out
+
+
+class _RaisingBackend(FakeInferenceBackend):
+    def infer(self, *_a: object, **_kw: object) -> str:
+        raise RuntimeError("llama.cpp context overflow")
+
+
+async def test_chat_survives_an_interactive_model_that_raises(tmp_path) -> None:
+    """A backend fault (context overflow, crashed process) must degrade to a
+    template answer, not break the socket connection."""
+    md = tmp_path / "notes.md"
+    md.write_text(_DOC)
+    bus = EventBus.get_instance()
+    await bus.start()
+    graph = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    await graph.load()
+    runtime = BitNetRuntime.get_instance(FakeInferenceBackend(), _RaisingBackend())
+    layer = InterfaceLayer(
+        bus,
+        Config(inference_backend="fake", knowledge_enabled=True, knowledge_paths=[str(md)]),
+        graph,
+        runtime,
+        clock=FakeClock(),
+        socket_path=str(tmp_path / "np.sock"),
+    )
+    await layer.initialize()
+    await layer.start()
+    w = _Wired(layer, bus, graph, str(tmp_path / "np.sock"))
+    try:
+        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["source"].startswith("template")
+    assert resp["answer"]
+
+
+async def test_chat_answer_with_brackets_is_rendered_not_swallowed(tmp_path, capsys) -> None:
+    """A `chat` answer is free model text — a `[node:id]` in it must not be eaten
+    as rich markup, and a stray `[/]` must not crash the render."""
+    from neuropaca.interface import cli
+
+    resp = {
+        "ok": True,
+        "answer": "Node ids look like [app:code] and [file:/x]; a slash [/] is fine.",
+        "cited": ["design.md → §8.1 [draft]"],
+        "confidence": 0.7,
+        "source": "model",
+        "grounded": True,
+    }
+    code = cli._render({"op": "chat"}, resp)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "[app:code]" in out and "[file:/x]" in out and "[/]" in out
+    assert "draft" in out
+
+
+def test_clean_chat_answer_edge_cases() -> None:
+    from neuropaca.learning.prompts import clean_chat_answer
+
+    assert clean_chat_answer("") is None
+    assert clean_chat_answer("   \n  ") is None
+    assert clean_chat_answer("null") is None
+    assert clean_chat_answer("Answer: The graph is a JSON file.") == "The graph is a JSON file."
+    assert "```" not in (clean_chat_answer("```python\nx=1\n```") or "")
+    # stops at a hallucinated next turn
+    assert (
+        clean_chat_answer("It is stored on disk.\nQuestion: and then?") == "It is stored on disk."
+    )
+    # caps at a few sentences
+    long = " ".join(f"Sentence number {i}." for i in range(12))
+    assert (clean_chat_answer(long) or "").count(".") <= 3
+
+
+def test_build_chat_prompt_stays_bounded(tmp_path) -> None:
+    from neuropaca.learning.prompts import build_chat_prompt
+
+    huge_docs = "x " * 20000
+    huge_history = [("user", "q " * 5000), ("assistant", "a " * 5000)] * 4
+    prompt = build_chat_prompt("what is going on", doc_block=huge_docs, history=huge_history)
+    assert len(prompt) < 8000  # the notes-clip + per-turn clip keep it under n_ctx

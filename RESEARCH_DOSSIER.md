@@ -58,7 +58,7 @@
 | Not this | Why |
 | --- | --- |
 | A cloud assistant | Zero egress. CI **affirmatively proves** it — the egress test runs in a network namespace with only loopback and asserts that HTTP and raw TCP both raise. |
-| A general chatbot | It answers about *your machine and your work*. Ungrounded answers are rejected by a post-generation gate, not by prompt politeness. |
+| A general chatbot | Its focus is *your machine and your work*. `$` / `$?` reject an ungrounded answer at a post-generation gate; `chat` will answer a general question but labels it `⚠ general knowledge` rather than passing it off as grounded. |
 | A screen recorder or keylogger | It reads aggregate system counters and application identifiers. Window-title text is read transiently for a focus event and **never persisted**. |
 | A multi-user / fleet product | Single user, single machine, single graph. That is a stated scope boundary, and also a stated research limitation (§16). |
 | A GPU project | CPU-only inference is the *premise*, not a compromise. |
@@ -229,9 +229,38 @@ flowchart LR
 | `$?` | **Diagnose** | Same, plus a **live** system snapshot merged into the context |
 | `$!` | **Emergency** | Immediate action path; skips L3 and L4; still passes the safety gate |
 | `$$` | **Safe** | Same as `$!` but with a full state backup taken first |
+| `chat` | **Chat** (B11) | Project-doc + general Q&A; grounding is advisory, not a gate |
+
+`$` / `$?` are graph-only behind a hard grounding gate — deliberately, so an
+answer is never a guess. That leaves *questions about NeuroPACA itself*
+unanswerable: nothing about graph storage, monitoring, or file handling lives in
+the behavioural graph. **`chat`** (B11) fills the gap with a small design that
+keeps the project's discipline:
+
+- **Retrieval is zero-inference** — `KnowledgeIndex` chunks the repo's own
+  Markdown by heading and matches on non-stopword term overlap, the same
+  "deliberately dumb" lexical approach as `search_by_label`. No embeddings,
+  no vector store, no model in the retrieval path.
+- **The answer is free-decoded** — the one place the interactive model is *not*
+  behind a per-call GBNF grammar. Bounded instead by a token cap, a wall-clock
+  timeout, and a post-process that strips echo/fences and caps sentences; a
+  failure falls back to an extractive reply.
+- **Grounding becomes a label, not a filter** — `grounded` is set from whether a
+  doc matched, and an ungrounded answer is shown with a `⚠ general knowledge`
+  flag rather than discarded. The rejected alternative — extend the `$` grounding
+  gate to doc citations — was dropped because it would make "answer anything"
+  impossible, which was the whole point of the feature.
+- **The behavioural graph is not in `chat` retrieval.** An early version searched
+  it alongside the docs; `search_by_label` matches on common words with no
+  stopword filter, so it cited an unrelated `idle:` / `app:` node on nearly every
+  question. Graph grounding stays with `$` / `$?`, where the `parse_answer` gate
+  catches a bad citation.
+- **It stays inert** — `chat` stores nothing and publishes no `USER_MESSAGE`; it
+  is a read-only Q&A turn.
 
 ```bash
 neuropacad                                  # the daemon
+neuropaca chat "how is the graph stored"    # project docs first, general knowledge flagged
 neuropaca ask "what's using my CPU"         # $
 neuropaca diagnose "why is the disk full"   # $?
 neuropaca health                            # daemon + per-module health

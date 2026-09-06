@@ -104,6 +104,24 @@ flowchart TD
 | One synthetic few-shot example | Per prompt, matching the grammar exactly. Synthetic/fictional data only — prompts must stay shippable. |
 | Fallbacks — only if the B0 spike shows constrained 2B4T isn't enough | micro-decompose `$?` into ≤ 2 sequential grammar-constrained prompts (never the background loop); or use a ~3B Q4 model for `$?` only (`BitNetRuntime` is backend-pluggable). |
 
+**Carve-out — the L9 `chat` op (B11).** `chat` answers a free question about
+NeuroPaca itself, so it is the one call that runs the interactive model
+**free-decoded** (no GBNF). It stays bounded and safe by other means:
+
+- **Retrieval is still zero-inference** — `interface/knowledge.py`, a lexical
+  match over the repo docs, nothing more. The behavioural graph is not searched
+  (`search_by_label` is too loose for a free question). The model never chooses
+  what context it gets.
+- **Bounded output** — `CHAT_MAX_TOKENS`, a wall-clock timeout, and
+  `clean_chat_answer` (strip echo/fences, cap sentences). A timeout or empty
+  result falls back to an extractive reply, never a raw model string.
+- **Grounding is advisory, not a gate** — `grounded` is set from whether a doc
+  matched; an ungrounded answer is **flagged** to the user
+  (`source="model-general"`), not discarded. `chat` makes no decision and stores
+  nothing.
+- **Output stays untrusted** — never executed, never a path, never published to
+  the bus (`chat` does not emit `USER_MESSAGE`).
+
 ## 5. Action layer safety
 
 | # | Rule |

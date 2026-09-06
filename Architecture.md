@@ -566,7 +566,8 @@ InterfaceLayer «Module»  (B5)              Message «dataclass»
 `$XDG_RUNTIME_DIR/neuropaca.sock`), **JSONL framing** — one JSON request per
 line, one JSON response per line. The thin CLI (`interface/cli.py`, the
 `neuropaca` console script; the daemon is now `neuropacad`) is the only client.
-Ops: `query` (`prefix` ∈ `$` `$?` `$!` `$$`), `health`, `insights`.
+Ops: `query` (`prefix` ∈ `$` `$?` `$!` `$$`), `chat` (B11), `health`, `insights`,
+`notifications`, `confirmations`, `confirm`.
 
 ```mermaid
 flowchart LR
@@ -591,6 +592,21 @@ flowchart LR
   (`rules.md §4.1`); one tighter retry for `$?`; any failure → extractive
   template, never a raw model string. `$?` also injects a one-line live system
   snapshot (L9 keeps the latest `METRIC_COLLECTED`).
+- **`chat` (B11) — project-aware Q&A.** `$` / `$?` only match the behavioural
+  graph, so a question about NeuroPaca itself has nothing to cite. `chat`
+  retrieves over the repo's own Markdown docs — `KnowledgeIndex`
+  (`interface/knowledge.py`), a heading-chunked lexical index built at `start()`
+  from `config.knowledge_paths` or the default repo-doc set, **zero inference**,
+  optional (a build failure never blocks startup) — plus a live snapshot line.
+  The behavioural graph is **not** searched here: `search_by_label` matches on
+  common words and would cite an unrelated `idle:` / `app:` node on nearly every
+  question — graph grounding is what `$` / `$?` are for. The interactive model
+  then answers **free-decoded** (the one L9 call exempt from the per-call GBNF of
+  rules.md §4.1). `grounded` is set from whether a doc matched; an ungrounded
+  answer is **flagged** (`source="model-general"`), never suppressed; a timeout
+  or empty result falls back to an extractive reply. `chat` stores nothing and —
+  unlike `$` / `$?` — does **not** publish `USER_MESSAGE`; it is a read-only Q&A
+  turn. The index is a start-time snapshot: editing a doc needs a daemon restart.
 - `$!` / `$$` are **live from B7 (D-14)**: L9 parses them, publishes
   `USER_MESSAGE`, and returns `queued` immediately — it never executes anything.
   L7 owns their meaning: both are `RunCommandAction`s at the **dangerous** tier,

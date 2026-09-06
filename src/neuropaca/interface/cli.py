@@ -5,8 +5,11 @@ opens the Unix socket, sends one JSONL request, renders one JSONL response with
 `rich` (design.md), and exits. **No daemon logic, no graph, no model** — every
 answer comes from the running daemon.
 
-    neuropaca ask "what is using my CPU"      # $  — natural-language question
+    neuropaca                                 # no args → the interactive shell
+    neuropaca help                            # the full guide (interface/repl.py)
+    neuropaca ask "what is using my CPU"      # $  — graph-grounded question
     neuropaca diagnose "why is the disk full" # $? — question + live snapshot
+    neuropaca chat "how is the graph stored"  # project-doc + general Q&A (B11)
     neuropaca "$ how many meetings today"     # raw prefix form
     neuropaca "$! kill webpack"               # $! — emergency command (L7)
     neuropaca "$$ systemctl --user restart x" # $$ — same, with a state backup
@@ -46,7 +49,7 @@ _USAGE = (
 )
 _PREFIXES = ("$?", "$!", "$$", "$")  # longest-first so `$?` wins over `$`
 _CONNECT_TIMEOUT = 3.0
-_RESPONSE_TIMEOUT = 60.0  # a `$?` answer is a CPU inference — allow for it
+_RESPONSE_TIMEOUT = 75.0  # a `$?` / `chat` answer is a CPU inference — allow for it
 
 
 class _CliError(Exception):
@@ -98,6 +101,11 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
             raise _CliError(f"'{head}' needs a question")
         prefix = "$?" if head == "diagnose" else "$"
         return {"op": "query", "prefix": prefix, "text": text}, socket_override
+    if head == "chat":
+        text = " ".join(rest).strip()
+        if not text:
+            raise _CliError("'chat' needs a question")
+        return {"op": "chat", "text": text}, socket_override
 
     # raw prefix form: the whole thing is one string like "$? why ..."
     raw = " ".join(args).strip()
@@ -143,13 +151,14 @@ async def _call(request: dict[str, Any], socket_path: str) -> dict[str, Any]:
 
 def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
     from rich.console import Console
+    from rich.markup import escape as _e
     from rich.table import Table
 
     console = Console()
     err_console = Console(stderr=True)
 
     if not resp.get("ok"):
-        err_console.print(f"[red]✕[/red] {resp.get('error', 'unknown error')}")
+        err_console.print(f"[red]✕[/red] {_e(str(resp.get('error', 'unknown error')))}")
         return 1
 
     op = request.get("op")
@@ -162,7 +171,9 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
                 table.add_row(key, str(health[key]))
         for mod in health.get("modules", []):
             mark = "[green]✓[/green]" if mod.get("ok") else "[red]✕[/red]"
-            table.add_row(f"  {mod.get('name', '?')}", f"{mark} {mod.get('detail', '')}")
+            name = _e(str(mod.get("name", "?")))
+            detail = _e(str(mod.get("detail", "")))
+            table.add_row(f"  {name}", f"{mark} {detail}")
         console.print(table)
         return 0
 
@@ -172,9 +183,9 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             console.print("[dim]no new insights[/dim]")
             return 0
         for ins in insights:
-            console.print(f"[magenta]◆[/magenta] {ins.get('text', '')}")
+            console.print(f"[magenta]◆[/magenta] {_e(str(ins.get('text', '')))}")
             meta = f"{ins.get('category')} · confidence {ins.get('confidence')}"
-            console.print(f"  [dim]{meta}[/dim]")
+            console.print(f"  [dim]{_e(meta)}[/dim]")
         return 0
 
     if op == "notifications":
@@ -184,12 +195,12 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             return 0
         for note in notifications:
             mark = "[yellow]▲[/yellow]" if note.get("dry_run") else "[cyan]▶[/cyan]"
-            console.print(f"{mark} {note.get('text', '')}")
-            tail = note.get("reason", "")
+            console.print(f"{mark} {_e(str(note.get('text', '')))}")
+            tail = str(note.get("reason", ""))
             if note.get("dry_run"):
                 tail = f"{tail} · dry-run (nothing was executed)" if tail else "dry-run"
             if tail:
-                console.print(f"  [dim]{tail}[/dim]")
+                console.print(f"  [dim]{_e(tail)}[/dim]")
         return 0
 
     if op == "confirmations":
@@ -199,42 +210,56 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             return 0
         for pending in confirmations:
             console.print(
-                f"[red]⚠[/red] {pending.get('action', '?')} "
-                f"[dim]({pending.get('tier', '?')})[/dim] — {pending.get('summary', '')}"
+                f"[red]⚠[/red] {_e(str(pending.get('action', '?')))} "
+                f"[dim]({_e(str(pending.get('tier', '?')))})[/dim] — "
+                f"{_e(str(pending.get('summary', '')))}"
             )
-            console.print(f"  [dim]{pending.get('reason', '')}[/dim]")
+            console.print(f"  [dim]{_e(str(pending.get('reason', '')))}[/dim]")
             console.print(
-                f"  [dim]approve:[/dim] neuropaca confirm {pending.get('request_id', '')}"
+                f"  [dim]approve:[/dim] neuropaca confirm {_e(str(pending.get('request_id', '')))}"
                 f"   [dim]refuse:[/dim] neuropaca confirm "
-                f"{pending.get('request_id', '')} --deny"
+                f"{_e(str(pending.get('request_id', '')))} --deny"
             )
         return 0
 
     if op == "confirm":
         verdict = "[green]approved[/green]" if resp.get("approved") else "[yellow]denied[/yellow]"
-        console.print(f"{verdict} {resp.get('action', '')} ({resp.get('request_id', '')})")
+        console.print(
+            f"{verdict} {_e(str(resp.get('action', '')))} ({_e(str(resp.get('request_id', '')))})"
+        )
         return 0
 
     if resp.get("queued"):
-        console.print(f"[cyan]▶[/cyan] {resp.get('prefix', '')} handed to the action layer")
-        console.print(f"  [dim]{resp.get('note', '')}[/dim]")
+        prefix = _e(str(resp.get("prefix", "")))
+        console.print(f"[cyan]▶[/cyan] {prefix} handed to the action layer")
+        console.print(f"  [dim]{_e(str(resp.get('note', '')))}[/dim]")
         return 0
 
-    # a query answer
-    console.print(f"[magenta]◆[/magenta] {resp.get('answer', '')}")
+    # a query (`ask` / `diagnose`) or `chat` answer. The `chat` answer is free
+    # model text — escape it, or a stray `[...]` is eaten as rich markup (or a
+    # `[/]` raises MarkupError and crashes the render).
+    console.print(f"[magenta]◆[/magenta] {_e(str(resp.get('answer', '')))}")
+    source = resp.get("source")
+    if source == "model-general":
+        console.print("  [yellow]⚠ general knowledge — not from NeuroPaca's docs or graph[/yellow]")
     cited = resp.get("cited", [])
     if cited:
-        console.print(f"  [dim]based on {' · '.join(cited)}[/dim]")
+        console.print(f"  [dim]based on {_e(' · '.join(str(c) for c in cited))}[/dim]")
     tail = f"  [dim]confidence {resp.get('confidence')}"
-    if resp.get("source") == "template":
-        tail += " · extractive (no interactive model)"
+    if source == "template-nomodel":
+        tail += " · the interactive model is not loaded"
+    elif source == "template":
+        tail += " · extractive"
     console.print(tail + "[/dim]")
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
+def _run_once(raw_argv: list[str]) -> int:
+    """One verb: offline dispatch, else parse + one socket round-trip + render.
 
+    Shared by `main` and the interactive shell (`interface/repl.py`) so both
+    reach the daemon through exactly the same path.
+    """
     # The three offline verbs are handled before anything touches the socket
     # (B9/BL-7). `doctor` in particular exists for the case where the daemon is
     # not running, so it must not be routed through the daemon.
@@ -257,7 +282,39 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✕ {exc}", file=sys.stderr)
         return 1
 
-    return _render(request, resp)
+    try:
+        return _render(request, resp)
+    except Exception as exc:  # a rendering bug must not swallow the daemon's answer
+        print(f"✕ could not render the response ({exc})", file=sys.stderr)
+        print(json.dumps(resp, indent=2, default=str), file=sys.stderr)
+        return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+
+    # `neuropaca help` / `--help` / `-h` / `-help` → the full guide, not the
+    # one-line usage a parse error prints. `-help` is accepted because that is
+    # the form the README tells a new user to try.
+    if raw_argv and raw_argv[0] in ("help", "--help", "-h", "-help"):
+        from neuropaca.interface import repl
+
+        repl.print_help()
+        return 0
+
+    # No verb + a real terminal → the interactive shell, where the `$`/`!`
+    # sigils are read by us instead of the surrounding shell (B10). A
+    # non-interactive stdin keeps the usage error, so a script that runs
+    # `neuropaca` with no args fails loudly instead of hanging on a prompt.
+    if not raw_argv:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            from neuropaca.interface import repl
+
+            return repl.run()
+        print(_USAGE, file=sys.stderr)
+        return 2
+
+    return _run_once(raw_argv)
 
 
 if __name__ == "__main__":

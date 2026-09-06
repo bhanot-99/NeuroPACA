@@ -57,6 +57,25 @@ def _fake_answer(prompt: str, grammar: str) -> str:
     return _GRACEFUL_ANSWER_ABSTAIN
 
 
+_CHAT_MARKER = "NeuroPaca's local assistant"
+_CHAT_CITE_RE = re.compile(r"^[-*\s]*([^\n]+ → [^\n]+)$", re.MULTILINE)
+_CHAT_FACT_RE = re.compile(r"\[[^\]]+\]\s+(.+?)\s+·")
+
+
+def _fake_chat(prompt: str) -> str:
+    """Deterministic `chat` reply for `FakeInferenceBackend` (B11). Names the
+    first retrieved project-note citation (or graph fact) so the `grounded`
+    bookkeeping and any label check downstream see a plausible answer; falls back
+    to a generic sentence when nothing was retrieved."""
+    cite = _CHAT_CITE_RE.search(prompt)
+    if cite:
+        return f"Per {cite.group(1).strip()}, that is how NeuroPaca handles it."
+    fact = _CHAT_FACT_RE.search(prompt)
+    if fact:
+        return f"{fact.group(1).strip()} is the most relevant piece here."
+    return "The project notes do not cover that; from general knowledge, it depends."
+
+
 def _fake_proactive(prompt: str, grammar: str) -> str:
     """Deterministic proactive idle-thought for `FakeInferenceBackend` (D-13).
     Picks the first one or two aliases the grammar allows that also appear in the
@@ -135,6 +154,8 @@ class FakeInferenceBackend:
             if "cited_nodes" in grammar:  # $? answer schema (L9, B5)
                 return _fake_answer(prompt, grammar)
             return _GRACEFUL_ABSTAIN
+        if _CHAT_MARKER in prompt:  # B11 · free-decode L9 chat prompt
+            return _fake_chat(prompt)
         digest = hashlib.sha256(f"{prompt}|{max_tokens}|{temperature}".encode()).hexdigest()
         return f"fake-response:{digest[:16]}"
 
