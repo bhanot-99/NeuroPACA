@@ -262,10 +262,12 @@ was never reached. `chat` is the project-aware path:
   min-score cutoff). **Zero embeddings, zero inference.** Built at L9 `start()`
   from `config.knowledge_paths` or the default repo-doc set; a build failure is
   non-fatal, like the interactive model.
-- **Answer path** — retrieved doc chunks + graph nodes + a live snapshot line →
-  the interactive Qwen model, **free-decoded** (the one L9 call exempt from
-  rules.md §4.1's per-call GBNF; carve-out recorded there). `clean_chat_answer`
-  strips echo/fences and caps sentences; a timeout or empty result falls back to
+- **Answer path** — retrieved doc chunks + a live snapshot line → the
+  interactive Qwen model, **free-decoded** (the one L9 call exempt from rules.md
+  §4.1's per-call GBNF; carve-out recorded there). The behavioural graph is not
+  searched — `search_by_label` is too loose and would cite a junk node on almost
+  every question. `clean_chat_answer` strips echo/fences and caps sentences; a
+  timeout or empty result falls back to
   an extractive reply.
 - **Grounding is advisory** — `grounded` = "retrieval returned something". An
   ungrounded answer is **flagged** (`⚠ general knowledge`), never suppressed —
@@ -275,10 +277,10 @@ was never reached. `chat` is the project-aware path:
   `neuropaca> how is the graph stored` just works instead of printing usage.
 
 Validated on the target box against the real Qwen2.5-3B-Q4 model: grounded
-answers to "how does NeuroPaca store the behavioural graph", "how does the drive
-layer accumulate pressure", "where are conversation turns stored"; "what is the
-capital of France" answered and flagged `general knowledge`. `tests/test_knowledge.py`
-(9) + the B11 section of `tests/test_interface.py`.
+answers to questions about graph storage, the drive layer, and where
+conversation turns live; an off-topic general-knowledge question answered and
+flagged. Covered by `tests/test_knowledge.py` and the B11 section of
+`tests/test_interface.py`.
 
 ---
 

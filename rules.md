@@ -108,16 +108,17 @@ flowchart TD
 NeuroPaca itself, so it is the one call that runs the interactive model
 **free-decoded** (no GBNF). It stays bounded and safe by other means:
 
-- **Retrieval is still zero-inference** — `interface/knowledge.py` and
-  `search_by_label`, a lexical match, nothing more. The model never chooses what
-  context it gets.
+- **Retrieval is still zero-inference** — `interface/knowledge.py`, a lexical
+  match over the repo docs, nothing more. The behavioural graph is not searched
+  (`search_by_label` is too loose for a free question). The model never chooses
+  what context it gets.
 - **Bounded output** — `CHAT_MAX_TOKENS`, a wall-clock timeout, and
   `clean_chat_answer` (strip echo/fences, cap sentences). A timeout or empty
   result falls back to an extractive reply, never a raw model string.
-- **Grounding is advisory, not a gate** — `grounded` is set from whether
-  retrieval returned anything; an ungrounded answer is **flagged** to the user
+- **Grounding is advisory, not a gate** — `grounded` is set from whether a doc
+  matched; an ungrounded answer is **flagged** to the user
   (`source="model-general"`), not discarded. `chat` makes no decision and stores
-  nothing in the graph.
+  nothing.
 - **Output stays untrusted** — never executed, never a path, never published to
   the bus (`chat` does not emit `USER_MESSAGE`).
 

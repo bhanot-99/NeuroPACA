@@ -151,13 +151,14 @@ async def _call(request: dict[str, Any], socket_path: str) -> dict[str, Any]:
 
 def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
     from rich.console import Console
+    from rich.markup import escape as _e
     from rich.table import Table
 
     console = Console()
     err_console = Console(stderr=True)
 
     if not resp.get("ok"):
-        err_console.print(f"[red]✕[/red] {resp.get('error', 'unknown error')}")
+        err_console.print(f"[red]✕[/red] {_e(str(resp.get('error', 'unknown error')))}")
         return 1
 
     op = request.get("op")
@@ -170,7 +171,9 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
                 table.add_row(key, str(health[key]))
         for mod in health.get("modules", []):
             mark = "[green]✓[/green]" if mod.get("ok") else "[red]✕[/red]"
-            table.add_row(f"  {mod.get('name', '?')}", f"{mark} {mod.get('detail', '')}")
+            name = _e(str(mod.get("name", "?")))
+            detail = _e(str(mod.get("detail", "")))
+            table.add_row(f"  {name}", f"{mark} {detail}")
         console.print(table)
         return 0
 
@@ -180,9 +183,9 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             console.print("[dim]no new insights[/dim]")
             return 0
         for ins in insights:
-            console.print(f"[magenta]◆[/magenta] {ins.get('text', '')}")
+            console.print(f"[magenta]◆[/magenta] {_e(str(ins.get('text', '')))}")
             meta = f"{ins.get('category')} · confidence {ins.get('confidence')}"
-            console.print(f"  [dim]{meta}[/dim]")
+            console.print(f"  [dim]{_e(meta)}[/dim]")
         return 0
 
     if op == "notifications":
@@ -192,12 +195,12 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             return 0
         for note in notifications:
             mark = "[yellow]▲[/yellow]" if note.get("dry_run") else "[cyan]▶[/cyan]"
-            console.print(f"{mark} {note.get('text', '')}")
-            tail = note.get("reason", "")
+            console.print(f"{mark} {_e(str(note.get('text', '')))}")
+            tail = str(note.get("reason", ""))
             if note.get("dry_run"):
                 tail = f"{tail} · dry-run (nothing was executed)" if tail else "dry-run"
             if tail:
-                console.print(f"  [dim]{tail}[/dim]")
+                console.print(f"  [dim]{_e(tail)}[/dim]")
         return 0
 
     if op == "confirmations":
@@ -207,37 +210,41 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
             return 0
         for pending in confirmations:
             console.print(
-                f"[red]⚠[/red] {pending.get('action', '?')} "
-                f"[dim]({pending.get('tier', '?')})[/dim] — {pending.get('summary', '')}"
+                f"[red]⚠[/red] {_e(str(pending.get('action', '?')))} "
+                f"[dim]({_e(str(pending.get('tier', '?')))})[/dim] — "
+                f"{_e(str(pending.get('summary', '')))}"
             )
-            console.print(f"  [dim]{pending.get('reason', '')}[/dim]")
+            console.print(f"  [dim]{_e(str(pending.get('reason', '')))}[/dim]")
             console.print(
-                f"  [dim]approve:[/dim] neuropaca confirm {pending.get('request_id', '')}"
+                f"  [dim]approve:[/dim] neuropaca confirm {_e(str(pending.get('request_id', '')))}"
                 f"   [dim]refuse:[/dim] neuropaca confirm "
-                f"{pending.get('request_id', '')} --deny"
+                f"{_e(str(pending.get('request_id', '')))} --deny"
             )
         return 0
 
     if op == "confirm":
         verdict = "[green]approved[/green]" if resp.get("approved") else "[yellow]denied[/yellow]"
-        console.print(f"{verdict} {resp.get('action', '')} ({resp.get('request_id', '')})")
+        console.print(
+            f"{verdict} {_e(str(resp.get('action', '')))} ({_e(str(resp.get('request_id', '')))})"
+        )
         return 0
 
     if resp.get("queued"):
-        console.print(f"[cyan]▶[/cyan] {resp.get('prefix', '')} handed to the action layer")
-        console.print(f"  [dim]{resp.get('note', '')}[/dim]")
+        prefix = _e(str(resp.get("prefix", "")))
+        console.print(f"[cyan]▶[/cyan] {prefix} handed to the action layer")
+        console.print(f"  [dim]{_e(str(resp.get('note', '')))}[/dim]")
         return 0
 
-    # a query (`ask` / `diagnose`) or `chat` answer
-    console.print(f"[magenta]◆[/magenta] {resp.get('answer', '')}")
+    # a query (`ask` / `diagnose`) or `chat` answer. The `chat` answer is free
+    # model text — escape it, or a stray `[...]` is eaten as rich markup (or a
+    # `[/]` raises MarkupError and crashes the render).
+    console.print(f"[magenta]◆[/magenta] {_e(str(resp.get('answer', '')))}")
     source = resp.get("source")
     if source == "model-general":
-        console.print(
-            "  [yellow]⚠ general knowledge — not from NeuroPaca's docs or graph[/yellow]"
-        )
+        console.print("  [yellow]⚠ general knowledge — not from NeuroPaca's docs or graph[/yellow]")
     cited = resp.get("cited", [])
     if cited:
-        console.print(f"  [dim]based on {' · '.join(str(c) for c in cited)}[/dim]")
+        console.print(f"  [dim]based on {_e(' · '.join(str(c) for c in cited))}[/dim]")
     tail = f"  [dim]confidence {resp.get('confidence')}"
     if source == "template-nomodel":
         tail += " · the interactive model is not loaded"
@@ -275,7 +282,12 @@ def _run_once(raw_argv: list[str]) -> int:
         print(f"✕ {exc}", file=sys.stderr)
         return 1
 
-    return _render(request, resp)
+    try:
+        return _render(request, resp)
+    except Exception as exc:  # a rendering bug must not swallow the daemon's answer
+        print(f"✕ could not render the response ({exc})", file=sys.stderr)
+        print(json.dumps(resp, indent=2, default=str), file=sys.stderr)
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:

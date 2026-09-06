@@ -44,7 +44,7 @@ from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.context import build_context_from_nodes, format_node_line
+from neuropaca.core.context import format_node_line
 from neuropaca.core.enums import EventType, MessageRole, NodeType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
@@ -532,19 +532,21 @@ class InterfaceLayer(BaseModule):
     async def _chat(self, text: str) -> dict[str, Any]:
         """B11 · the project-aware conversational answer.
 
-        Retrieval — repo docs (`self._knowledge`) + the behavioural graph + a
-        live snapshot line — is zero-inference and deterministic. The interactive
-        model writes the prose **free-decoded** (the one L9 call exempt from
-        rules.md §4.1's per-call grammar). `grounded` is set from whether
-        retrieval returned anything; an ungrounded answer is flagged
-        (`source="model-general"`), never suppressed. Unlike `$` / `$?` this does
-        **not** publish `USER_MESSAGE` — `chat` is a read-only Q&A turn, not part
-        of the `$`-grammar the rest of the daemon listens to."""
+        Retrieval is the repo docs (`self._knowledge`) plus a live snapshot line
+        — zero-inference and deterministic. The **behavioural graph is not
+        searched here**: `search_by_label` matches on common words and would cite
+        an unrelated `idle:` / `app:` node on almost every question; graph
+        grounding is what `$` / `$?` are for. The interactive model writes the
+        prose **free-decoded** (the one L9 call exempt from rules.md §4.1's
+        per-call grammar). `grounded` is set from whether a doc matched; an
+        ungrounded answer is flagged (`source="model-general"`), never
+        suppressed. Unlike `$` / `$?` this does **not** publish `USER_MESSAGE` —
+        `chat` is a read-only Q&A turn."""
         self._queries += 1
         if not text:
             return {"ok": False, "error": "empty question"}
 
-        history = [(m.role.value, m.content) for m in self._conversation_history[-6:]]
+        history = [(m.role.value, m.content) for m in self._conversation_history[-4:]]
         self._store_message(MessageRole.USER, text)
 
         doc_chunks = (
@@ -552,14 +554,12 @@ class InterfaceLayer(BaseModule):
             if self._knowledge is not None
             else []
         )
-        graph_nodes = self._build_context(text)
-        grounded = bool(doc_chunks or graph_nodes)
-        cited = [c.cite for c in doc_chunks] + [n.id for n in graph_nodes]
+        grounded = bool(doc_chunks)
+        cited = [c.cite for c in doc_chunks]
 
         prompt = build_chat_prompt(
             text,
             doc_block="\n\n".join(f"[{c.cite}]\n{c.text}" for c in doc_chunks),
-            graph_block=build_context_from_nodes(graph_nodes) if graph_nodes else "",
             live_line=self._live_snapshot_line(),
             history=history,
         )
@@ -579,7 +579,7 @@ class InterfaceLayer(BaseModule):
             source = "model" if grounded else "model-general"
             confidence = 0.7 if grounded else 0.3
         else:
-            answer, source, confidence = self._chat_fallback(doc_chunks, graph_nodes)
+            answer, source, confidence = self._chat_fallback(doc_chunks)
 
         self._store_message(MessageRole.ASSISTANT, answer, tuple(cited))
         return {
@@ -592,18 +592,13 @@ class InterfaceLayer(BaseModule):
         }
 
     @staticmethod
-    def _chat_fallback(
-        doc_chunks: list[Any], graph_nodes: list[Node]
-    ) -> tuple[str, str, float]:
+    def _chat_fallback(doc_chunks: list[Any]) -> tuple[str, str, float]:
         """No interactive model, or it returned nothing usable. Answer
-        extractively from whatever retrieval found, or say plainly that the
-        model is needed."""
+        extractively from the top doc chunk, or say plainly that the model is
+        needed."""
         if doc_chunks:
             top = doc_chunks[0]
             return (f"{top.cite}: {top.snippet()}", "template", 0.4)
-        if graph_nodes:
-            text, _cited, conf, _src = InterfaceLayer._template_answer(graph_nodes)
-            return (text, "template", conf)
         return (
             "I can't answer that without the interactive model, and it isn't loaded "
             "— see `neuropaca health`.",
@@ -724,6 +719,9 @@ class InterfaceLayer(BaseModule):
             )
         except TimeoutError:
             _log.warning("L9 interactive inference timed out after %ss", wall_clock_s)
+            return None
+        except Exception:  # a model crash (context overflow, backend fault) → fall back, don't 500
+            _log.exception("L9 interactive inference failed — falling back to a template answer")
             return None
 
     @staticmethod

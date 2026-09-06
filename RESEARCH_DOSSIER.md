@@ -245,13 +245,18 @@ keeps the project's discipline:
   behind a per-call GBNF grammar. Bounded instead by a token cap, a wall-clock
   timeout, and a post-process that strips echo/fences and caps sentences; a
   failure falls back to an extractive reply.
-- **Grounding becomes a label, not a filter** — `grounded` is set from whether
-  retrieval returned anything, and an ungrounded answer is shown with a
-  `⚠ general knowledge` flag rather than discarded. The rejected alternative —
-  extend the `$` grounding gate to doc citations — was dropped because it would
-  make "answer anything" impossible, which was the whole point of the feature.
-- **It stays inert** — `chat` stores nothing in the graph and publishes no
-  `USER_MESSAGE`; it is a read-only Q&A turn.
+- **Grounding becomes a label, not a filter** — `grounded` is set from whether a
+  doc matched, and an ungrounded answer is shown with a `⚠ general knowledge`
+  flag rather than discarded. The rejected alternative — extend the `$` grounding
+  gate to doc citations — was dropped because it would make "answer anything"
+  impossible, which was the whole point of the feature.
+- **The behavioural graph is not in `chat` retrieval.** An early version searched
+  it alongside the docs; `search_by_label` matches on common words with no
+  stopword filter, so it cited an unrelated `idle:` / `app:` node on nearly every
+  question. Graph grounding stays with `$` / `$?`, where the `parse_answer` gate
+  catches a bad citation.
+- **It stays inert** — `chat` stores nothing and publishes no `USER_MESSAGE`; it
+  is a read-only Q&A turn.
 
 ```bash
 neuropacad                                  # the daemon

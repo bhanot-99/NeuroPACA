@@ -175,11 +175,10 @@ flowchart TD
 grounding gate. A question *about NeuroPaca itself* — how the graph is stored,
 what a layer does, where turns live — has nothing to match there. The `chat`
 verb (B11) is that path: retrieval over the repo's own Markdown docs
-(`interface/knowledge.py`, zero-inference lexical match) plus the graph plus a
-live snapshot line, answered by the interactive model free-decoded. An answer
-not backed by a doc or a graph node is **flagged** as general knowledge, never
-suppressed. `neuropaca chat "…"` from a normal shell; a bare line is `chat` in
-the interactive shell (below).
+(`interface/knowledge.py`, zero-inference lexical match) plus a live snapshot
+line, answered by the interactive model free-decoded. An answer not backed by a
+doc is **flagged** as general knowledge, never suppressed. `neuropaca chat "…"`
+from a normal shell; a bare line is `chat` in the interactive shell (below).
 
 ### 7.1 The interactive shell (B10 · `chat` added B11)
 

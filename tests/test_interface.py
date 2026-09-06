@@ -834,9 +834,7 @@ async def test_chat_flags_an_answer_with_no_project_or_graph_backing(tmp_path) -
 async def test_chat_falls_back_to_extractive_without_the_interactive_model(tmp_path) -> None:
     md = tmp_path / "notes.md"
     md.write_text(_DOC)
-    w = await _wired(
-        tmp_path, interactive=False, knowledge_enabled=True, knowledge_paths=[str(md)]
-    )
+    w = await _wired(tmp_path, interactive=False, knowledge_enabled=True, knowledge_paths=[str(md)])
     try:
         resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
     finally:
@@ -896,3 +894,84 @@ def test_fake_backend_writes_a_chat_reply_naming_the_first_citation() -> None:
     )
     out = FakeInferenceBackend().infer(prompt, 320, 0.3, None)
     assert "design.md → Graph storage" in out
+
+
+class _RaisingBackend(FakeInferenceBackend):
+    def infer(self, *_a: object, **_kw: object) -> str:
+        raise RuntimeError("llama.cpp context overflow")
+
+
+async def test_chat_survives_an_interactive_model_that_raises(tmp_path) -> None:
+    """A backend fault (context overflow, crashed process) must degrade to a
+    template answer, not break the socket connection."""
+    md = tmp_path / "notes.md"
+    md.write_text(_DOC)
+    bus = EventBus.get_instance()
+    await bus.start()
+    graph = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    await graph.load()
+    runtime = BitNetRuntime.get_instance(FakeInferenceBackend(), _RaisingBackend())
+    layer = InterfaceLayer(
+        bus,
+        Config(inference_backend="fake", knowledge_enabled=True, knowledge_paths=[str(md)]),
+        graph,
+        runtime,
+        clock=FakeClock(),
+        socket_path=str(tmp_path / "np.sock"),
+    )
+    await layer.initialize()
+    await layer.start()
+    w = _Wired(layer, bus, graph, str(tmp_path / "np.sock"))
+    try:
+        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["source"].startswith("template")
+    assert resp["answer"]
+
+
+async def test_chat_answer_with_brackets_is_rendered_not_swallowed(tmp_path, capsys) -> None:
+    """A `chat` answer is free model text — a `[node:id]` in it must not be eaten
+    as rich markup, and a stray `[/]` must not crash the render."""
+    from neuropaca.interface import cli
+
+    resp = {
+        "ok": True,
+        "answer": "Node ids look like [app:code] and [file:/x]; a slash [/] is fine.",
+        "cited": ["design.md → §8.1 [draft]"],
+        "confidence": 0.7,
+        "source": "model",
+        "grounded": True,
+    }
+    code = cli._render({"op": "chat"}, resp)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "[app:code]" in out and "[file:/x]" in out and "[/]" in out
+    assert "draft" in out
+
+
+def test_clean_chat_answer_edge_cases() -> None:
+    from neuropaca.learning.prompts import clean_chat_answer
+
+    assert clean_chat_answer("") is None
+    assert clean_chat_answer("   \n  ") is None
+    assert clean_chat_answer("null") is None
+    assert clean_chat_answer("Answer: The graph is a JSON file.") == "The graph is a JSON file."
+    assert "```" not in (clean_chat_answer("```python\nx=1\n```") or "")
+    # stops at a hallucinated next turn
+    assert (
+        clean_chat_answer("It is stored on disk.\nQuestion: and then?") == "It is stored on disk."
+    )
+    # caps at a few sentences
+    long = " ".join(f"Sentence number {i}." for i in range(12))
+    assert (clean_chat_answer(long) or "").count(".") <= 3
+
+
+def test_build_chat_prompt_stays_bounded(tmp_path) -> None:
+    from neuropaca.learning.prompts import build_chat_prompt
+
+    huge_docs = "x " * 20000
+    huge_history = [("user", "q " * 5000), ("assistant", "a " * 5000)] * 4
+    prompt = build_chat_prompt("what is going on", doc_block=huge_docs, history=huge_history)
+    assert len(prompt) < 8000  # the notes-clip + per-turn clip keep it under n_ctx
