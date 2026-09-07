@@ -1026,6 +1026,31 @@ The original concept had the system retrain weekly on your data. Cut (D-3) becau
 | An `is_ephemeral` node attribute | Ad-hoc attributes are discarded on save; apoptosis would silently stop working after one restart. Node-id prefixes persist. |
 | Overloading `prune_stale_nodes()` with a second TTL | It is a whole-graph sweep on one global TTL, already owned by L6 at 48 h. Two layers would fight over one call. Apoptosis calls `delete_node()` directly instead. |
 
+### 15.9 B13 · resource-aware sensing — the alternatives not taken (D-19)
+
+The B9 soak's "zero insights in three days" (§15.5) has two independent causes:
+inert Idle/Distraction patterns, and CPU being the wrong primary signal for
+"what is this person doing" — it is bursty and mostly ~0, while **RAM footprint**
+is the stable indicator of what is loaded and being worked with. B13 fixes both.
+The rejected alternatives, recorded for the paper:
+
+| Rejected | Why |
+| --- | --- |
+| `NodeType.PROCESS` distinct from `NodeType.APP` | Fragments the graph — a focused app and a heavy app become two nodes — and costs a schema-enum change for no analytic gain. An id-prefix convention (`app:<name>`) carries the semantics, the B8 precedent. |
+| PSS/USS memory accounting from day one | `memory_full_info().uss` is 10–50× slower and sometimes privileged; PSS via `/proc/<pid>/smaps_rollup` is ~5–15× slower. Summed RSS double-counts shared libraries (a 15-process browser looks larger than it is) but is fast and loop-safe. RSS validates the *shape*; the soak says whether precision matters, and PSS is the documented follow-up. |
+| Special-casing L4/L5 to accept node-less signals (a global `__system__` pressure bucket) | Fights the node-keyed architecture throughout L5. Attaching real nodes to Idle/Distraction is in the grain of the design. |
+| Idle → `YOU` | Semantically muddy, and floods the one hub `find_related` refuses to traverse through. Idle → the last-active `app:<id>` instead ("you went idle after working in X"). |
+| Idle → a `SESSION` node now | The right long-term model, but needs a correlator-side "what happened since last idle" accumulator — its own phase. |
+| Feeding `ram_mb` into `relevance_score` | Changes what the graph *means*: importance would track memory footprint, not behavioural salience. Out of scope; its own design discussion. |
+| Generalising `HighLoadPattern` to fire on CPU **or** memory | One class doing two jobs with a forked confidence calculation. Kept separate: `HighLoadPattern` (CPU) untouched, `MemoryPressurePattern` new and standalone. |
+| A 100 MB census threshold | Below the idle footprint of a single Electron renderer (200–500 MB each) — produces 40+ rows of renderer shards. 200 MB grouped-total instead. |
+| Full self + tooling exclusion in round 1 | The operator wants the unfiltered census first — the round-1 graph carries `python` / `node` / `claude` noise, which is recoverable and informative (it proves the census works). The round-2 exclusion list is a soak *output*, not a guess. |
+
+The unattended soak is **not** expected to produce insights even after B13 — once
+the daemon's own work is set aside, an idle box has nothing behaviourally rich
+left. B13 makes the loop work under real interactive dogfooding and narrows the
+soak's job to plumbing, restart-safety, decay, bounded growth, and cost.
+
 ---
 
 ## 16. Open problems and honest limitations
@@ -1282,7 +1307,7 @@ flowchart TD
 
 ## Appendix A — decision log index
 
-Seventeen numbered rulings, each recorded so no future session re-litigates it. Full text in `memory.md`.
+Nineteen numbered rulings, each recorded so no future session re-litigates it. Full text in `memory.md`.
 
 | # | Decision, in one line |
 | --- | --- |
@@ -1303,6 +1328,7 @@ Seventeen numbered rulings, each recorded so no future session re-litigates it. 
 | **D-15** | The truncated diagram is permanent; `Architecture.md §11b` is authoritative by ruling |
 | **D-16** | L8 holds **no** gate — it publishes `ACTION_PROPOSAL`; apoptosis selects on the **node-id prefix**, not an attribute |
 | **D-17** | The ten B9 blockers ruled together — `ReadWritePaths=%t`, quarantine-and-boot-degraded, `schema_version` actually read, affirmative egress CI |
+| **D-19** | **B13 resource-aware sensing** — reuse `NodeType.APP` (no `PROCESS` type); RSS not PSS for round 1; no census exclusions in round 1; idle → last active app; new `SignalType.WORKING_SET_CHANGE` (schema v3); 200 MB name-grouped census threshold; CPU and memory stay separate patterns |
 
 ---
 

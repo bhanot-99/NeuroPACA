@@ -37,7 +37,7 @@ def test_enum_members_match_the_blueprint() -> None:
     # bump (D-16).
     assert len(NodeType) == 11  # +IDLE_THOUGHT (B6, D-13)
     assert len(RelationType) == 8
-    assert len(SignalType) == 7
+    assert len(SignalType) == 8  # +WORKING_SET_CHANGE (B13-B4, D-19(e))
     assert len(InterfaceChannel) == 3
     assert len(MessageRole) == 3  # B5
 

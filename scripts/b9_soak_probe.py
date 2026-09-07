@@ -114,6 +114,10 @@ def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, A
         # path producing anything at all?
         "activity_edges": activity.get("transitions", 0),
         "app_switches": activity.get("switches", 0),
+        # B13-B2 · the latest per-app census group count, from the sensing
+        # module's health detail ("... census N groups"). 0 until the process
+        # collector has produced a snapshot.
+        "census_groups": counters.get("sensing", {}).get("groups", 0),
         # L3's correlated-signal count. A signal means L2 collected a snapshot
         # AND L3 correlated it, so it proves the sensing pipeline is producing
         # without depending on the user having switched apps or walked away --

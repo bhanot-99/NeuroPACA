@@ -31,12 +31,20 @@ def _utcnow() -> datetime:
 class NodeSpec:
     """A node a pattern wants ensured in the graph, plus any edges *out* of it.
     Every edge target must be another spec in the same draft or a routing hub —
-    `add_edge` on a missing node creates an attribute-less phantom (D-8)."""
+    `add_edge` on a missing node creates an attribute-less phantom (D-8).
+
+    `attributes` (B13-B3, D-19): extra fields the correlator passes straight
+    through to `upsert_node` — `ram_mb`, `cpu_percent`, `first_seen_at`,
+    `last_seen_at` for an `app:<id>` node when the pattern saw a matching row in
+    the concurrent `process` census. Empty for every pattern that has no census
+    data. `_upsert_node_unsafe`'s protected set still guards `first_seen_at`
+    (write-once) and never lets these touch `relevance_score`."""
 
     node_id: str
     node_type: NodeType
     label: str
     edges: tuple[tuple[str, RelationType], ...] = ()
+    attributes: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

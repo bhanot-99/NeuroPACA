@@ -147,7 +147,18 @@ async def test_distraction_trace_fires_distraction_once_and_no_focus(tmp_path: P
     correlator, signals, errors = await _replay(generate_b2_5_traces.TRACE_DISTRACTION, tmp_path)
 
     assert _types(signals) == [SignalType.DISTRACTION]
-    assert signals.signals[0].related_node_ids == ()
+    # B13-A: the distraction signal now attaches the distinct thrashed apps
+    # (was nodeless through B2.5b), so L4/L5 have something to act on.
+    assert set(signals.signals[0].related_node_ids) == {
+        "app:a.Alpha",
+        "app:b.Bravo",
+        "app:c.Charlie",
+        "app:d.Delta",
+        "app:e.Echo",
+        "app:f.Foxtrot",
+    }
+    for node_id in signals.signals[0].related_node_ids:
+        assert correlator._graph.get_node(node_id) is not None
     assert errors.events == []
     assert correlator._errors == 0
 

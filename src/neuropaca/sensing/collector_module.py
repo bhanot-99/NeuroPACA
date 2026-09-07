@@ -83,6 +83,7 @@ class XMetricCollector(BaseModule):
         self._tasks: list[asyncio.Task[None]] = []
         self._buffer: deque[MetricSnapshot] = deque(maxlen=max(1, config.snapshot_buffer_size))
         self._idle_watcher = _IdleWatcher()
+        self._last_census_groups: int | None = None  # B13-B2: latest `process` group count
         # B2.5 (D-9): the real ActivityCollector supersedes this CPU-derived idle
         # stand-in — build_modules passes False when activity_enabled.
         self._emit_idle_from_cpu = emit_idle_from_cpu
@@ -134,13 +135,16 @@ class XMetricCollector(BaseModule):
 
     def health(self) -> ModuleHealth:
         enabled = [c for c in self._collectors if c.is_enabled]
+        detail = (
+            f"{len(enabled)}/{len(self._collectors)} collectors up, "
+            f"buffer {len(self._buffer)}/{self._buffer.maxlen}"
+        )
+        if self._last_census_groups is not None:
+            detail += f", census {self._last_census_groups} groups"
         return ModuleHealth(
             name=self.name,
             ok=self.is_running and len(enabled) > 0,
-            detail=(
-                f"{len(enabled)}/{len(self._collectors)} collectors up, "
-                f"buffer {len(self._buffer)}/{self._buffer.maxlen}"
-            ),
+            detail=detail,
             last_event_at=self._buffer[-1].timestamp if self._buffer else None,
         )
 
@@ -179,6 +183,10 @@ class XMetricCollector(BaseModule):
                 payload={"snapshot": snapshot},
             )
         )
+        if collector.name == "process":
+            groups = snapshot.data.get("group_count")
+            if isinstance(groups, int):
+                self._last_census_groups = groups
         if collector.name == "system" and self._emit_idle_from_cpu:
             raw = snapshot.data.get("cpu_percent")
             cpu = float(raw) if isinstance(raw, (int, float)) else None

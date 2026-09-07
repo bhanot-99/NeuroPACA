@@ -80,7 +80,9 @@ class Config:
     # without the daemon log beside it when reconstructing an incident.
     log_to_file: bool = True
     log_file_path: str = "data/neuropaca.log"
-    poll_intervals: dict[str, float] = field(default_factory=lambda: {"system": 60.0})
+    poll_intervals: dict[str, float] = field(
+        default_factory=lambda: {"system": 60.0, "process": 60.0}
+    )
     graph_save_interval_seconds: int = 300
     bitnet_max_tokens: int = 256
     # B4 · Learning (L4, D-11). model_context_tokens = llama.cpp n_ctx (the
@@ -162,6 +164,29 @@ class Config:
     # top_process_count = top-N process-by-CPU rows in each system snapshot (0 = off).
     activity_enabled: bool = False
     top_process_count: int = 5
+    # B13-B2 · ProcessCollector (D-19). A per-process RAM/CPU/runtime census
+    # grouped by app name. On by default — RAM footprint is the stable "what is
+    # this person working with" signal (Architecture.md §4). Names only, never
+    # cmdline. `process_min_rss_mb` is the grouped-total threshold to census an
+    # app (200 MB — an Electron renderer idles at 200-500 MB, D-19(f)).
+    # `process_exclude_names` is the round-2 name-based exclusion list; empty in
+    # round 1 (D-19(c) — the operator wants the unfiltered census first).
+    process_collector_enabled: bool = True
+    process_min_rss_mb: float = 200.0
+    process_exclude_names: list[str] = field(default_factory=list)
+    # B13-B1 · MemoryPressurePattern (D-19). Fires when `system.mem_percent`
+    # z-scores above `mem_pressure_z` OR `mem_available_mb` drops below
+    # `mem_pressure_floor_mb`, sustained `mem_pressure_sustain_seconds` (shorter
+    # than HighLoad's 300 s — a memory ceiling is a slower, more meaningful
+    # event than a CPU spike).
+    mem_pressure_z: float = 2.0
+    mem_pressure_floor_mb: float = 1024.0
+    mem_pressure_sustain_seconds: float = 180.0
+    # B13 · raw-data CSV (operator request, this session). Empty => disabled.
+    # A path => `RawMetricsRecorder` appends one row per collector reading
+    # (system metrics wide + one row per censused app). Soak / dogfood only;
+    # append-only, no rotation — point it somewhere you will sweep.
+    raw_metrics_csv_path: str = ""
     watch_paths: list[str] = field(default_factory=list)
     filesystem_ignore_globs: list[str] = field(
         default_factory=lambda: [
@@ -246,6 +271,16 @@ class Config:
             errs.append(f"agent_inference_budget must be >= 0, got {self.agent_inference_budget}")
         if self.top_process_count < 0:
             errs.append(f"top_process_count must be >= 0, got {self.top_process_count}")
+        if self.process_min_rss_mb < 0:
+            errs.append(f"process_min_rss_mb must be >= 0, got {self.process_min_rss_mb}")
+        if self.mem_pressure_z <= 0:
+            errs.append(f"mem_pressure_z must be > 0, got {self.mem_pressure_z}")
+        if self.mem_pressure_floor_mb < 0:
+            errs.append(f"mem_pressure_floor_mb must be >= 0, got {self.mem_pressure_floor_mb}")
+        if self.mem_pressure_sustain_seconds <= 0:
+            errs.append(
+                f"mem_pressure_sustain_seconds must be > 0, got {self.mem_pressure_sustain_seconds}"
+            )
         if not 0.0 <= self.explain_temperature <= 1.0:
             errs.append(
                 f"explain_temperature must be in [0.0, 1.0], got {self.explain_temperature}"

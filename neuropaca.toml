@@ -45,7 +45,18 @@ log_file_path = "data/neuropaca.log"
 # soak gate checks for, and the one whose silence cost B7 three soaks.
 activity_enabled = true
 top_process_count = 5
-poll_intervals = { system = 60.0, filesystem = 60.0 }
+# B13-B2 (D-19) · the per-app RAM/CPU/runtime census. On by default; spelled out
+# here for visibility. `process_exclude_names` is empty in round 1 — the census
+# is unfiltered, and the round-2 exclusion list is a soak output.
+process_collector_enabled = true
+process_min_rss_mb = 200.0
+process_exclude_names = []
+poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
+
+# B13 (operator request) · append-only raw-data CSV — one row per collector
+# reading (system metrics wide + one row per censused app). Personal-visibility
+# / soak instrument, not part of the loop. No rotation: sweep data/ periodically.
+raw_metrics_csv_path = "data/raw_metrics.csv"
 
 # Both the L2 filesystem-sensing scope and the L7 write allowlist (D-14).
 # Deliberately just this repo: real edit activity, and the only root that could

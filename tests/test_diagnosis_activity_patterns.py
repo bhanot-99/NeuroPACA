@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
-from neuropaca.core.enums import RelationType, SignalType
+from neuropaca.core.enums import NodeType, RelationType, SignalType
 from neuropaca.diagnosis.patterns import DistractionPattern, FocusSessionPattern
 from neuropaca.sensing.snapshot import MetricSnapshot
 
@@ -115,7 +115,9 @@ def test_distraction_fires_on_six_switches_in_two_minutes() -> None:
     draft = p.evaluate(_win(activity=activity), _NoBaseline())
     assert draft is not None
     assert draft.signal_type is SignalType.DISTRACTION
-    assert draft.node_specs == ()
+    # B13-A: attaches the distinct thrashed apps, order stable, no edges
+    assert [s.node_id for s in draft.node_specs] == [f"app:app{i}" for i in range(6)]
+    assert all(s.node_type is NodeType.APP and s.edges == () for s in draft.node_specs)
     assert "6 app switches" in draft.reason
 
 

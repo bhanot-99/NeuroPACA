@@ -100,6 +100,11 @@ class SignalType(StrEnum):
     FILE_ACTIVITY = auto()
     APP_SWITCH = auto()
     USER_RETURN = auto()
+    # B13-B4 (D-19(e)). A memory-heavy app group first crossed the census
+    # threshold — "a big app appeared" (a VM, Blender, Docker came up). Distinct
+    # from HIGH_LOAD: a transient CPU episode vs a working-set change, different
+    # confidence math, different node attribution. Enum add => schema v3 bump.
+    WORKING_SET_CHANGE = auto()
 
 
 class InterfaceChannel(StrEnum):

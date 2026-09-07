@@ -1,0 +1,63 @@
+# B13 · resource-aware sensing soak (B13_PLAN.md §B13-C, D-19).
+#
+# The config the B13 re-validation soak runs under. It is `neuropaca.soak.toml`
+# plus the three B13 switches:
+#
+#   process_collector_enabled = true   -> the per-app RAM/CPU/runtime census
+#   process_min_rss_mb        = 200     -> census an app at >= 200 MB grouped RSS
+#   raw_metrics_csv_path      = ...     -> the append-only raw-data CSV
+#
+# Everything cognitive stays at the shipped defaults so the soak measures the
+# system that runs. `action_dry_run = true` — nothing executes.
+#
+#   NEUROPACA_CONFIG=neuropaca.b13.toml neuropacad
+#
+# The census carries NO exclusion list in round 1 (D-19(c)): the operator wants
+# the unfiltered picture first — expect `python` / `node` / `claude` rows and the
+# daemon's own footprint in the graph and the CSV. The round-2 exclusion list is
+# a soak *output*, not a guess.
+
+model_path = "models/bitnet-2b4t-tq2_0.gguf"
+interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
+inference_backend = "llama"
+
+graph_db_path = "data/graph.json"
+action_log_path = "data/actions.jsonl"
+quarantine_path = "data/quarantine"
+log_level = "INFO"
+log_to_file = true
+log_file_path = "data/neuropaca.log"
+
+# L2 · sensing. Activity on (FocusSession / Distraction), plus the B13 census.
+activity_enabled = true
+top_process_count = 5
+process_collector_enabled = true
+process_min_rss_mb = 200.0
+process_exclude_names = []
+poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
+
+# B13 · the raw-data CSV. One row per reading: system metrics wide, plus one row
+# per censused app. Append-only, no rotation — sweep data/ between soak runs.
+raw_metrics_csv_path = "data/raw_metrics.csv"
+
+# B13-B1 · memory-pressure pattern, shipped defaults.
+mem_pressure_z = 2.0
+mem_pressure_floor_mb = 1024.0
+mem_pressure_sustain_seconds = 180.0
+
+watch_paths = ["/home/bhanot/NeuroPaca"]
+
+# L5 · drive. Shipped gradient, unmodified.
+pressure_low_threshold = 1.0
+pressure_high_threshold = 3.0
+pressure_decay_half_life_seconds = 60
+pressure_decay_interval_seconds = 10
+
+# L7 · action. Dry-run ON, safe tier only — same stance as neuropaca.toml.
+action_dry_run = true
+action_enabled_tiers = ["safe"]
+action_confirmation_timeout_seconds = 60
+quarantine_ttl_hours = 168
+
+api_call_enabled = false
+api_allowlist = []
