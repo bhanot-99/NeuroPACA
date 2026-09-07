@@ -173,7 +173,6 @@ score = normalize(
 - model             : Any
 - tokenizer         : Any
 - model_path        : str
-- max_context_tokens: int
 - is_loaded         : bool
 - _inference_lock   : asyncio.Lock
 - temperature       : float
@@ -184,19 +183,20 @@ score = normalize(
 + load_model_async()                                      : Awaitable[bool]  «async»  (B4 lazy load, dedicated executor)
 + infer(prompt, max_tokens, temperature, grammar=None, *, interactive=False)    : str        ← BLOCKING
 + infer_async(prompt, max_tokens, temperature=0.0, grammar=None, *, interactive=False) : Awaitable[str]  «async»
-+ load_interactive_model_async()                          : Awaitable[bool]  «async»  (B5 D-12 — lazy Qwen2.5-3B Q4 for $ / $?)
++ load_interactive_model_async()                          : Awaitable[bool]  «async»  (B5 D-12 — lazy Qwen2.5-3B Q4; B12 — `tell --explain` only)
 + build_context_from_nodes(nodes: List[Node])             : str
 + get_ram_usage_mb()                                      : float
 ```
 
-**Dual model (B5, D-12).** A second, optional backend serves the interactive
-`$` / `$?` path — a Qwen2.5-3B Q4 GGUF that can write a grounded sentence where
-2B4T cannot (`problems.md` 1.13). `infer[_async](interactive=True)` routes to it;
-it lazy-loads on the first such call (a `gc.collect()` runs first) and is
-resident concurrently with the loop model (**~4.7 GB peak measured on the 16 GB
-box**, PRD §9). **The single `_inference_lock` still serialises every call
-system-wide** — the two models never run at once. Absent
-`interactive_model_path`, `$?` falls back to L9's extractive template.
+**Dual model (B5, D-12; re-scoped B12).** A second, optional backend — a
+Qwen2.5-3B Q4 GGUF that can write plain prose where 2B4T cannot (`problems.md`
+1.13). Since B12 its only caller is the L9 `explain` op (`neuropaca tell <path>
+--explain`). `infer[_async](interactive=True)` routes to it; it lazy-loads on the
+first such call (a `gc.collect()` runs first) and is resident concurrently with
+the loop model (**~4.7 GB peak measured on the 16 GB box**, PRD §9). **The single
+`_inference_lock` still serialises every call system-wide** — the two models
+never run at once. Absent `interactive_model_path`, `tell --explain` just shows
+the deterministic block.
 
 - Owns `model` + `tokenizer` **in-process via llama.cpp** — not an HTTP call to Ollama. See §11.
 - `infer_async()` acquires `_inference_lock`, then `run_in_executor`. **One inference at a time, system-wide.**
@@ -222,9 +222,9 @@ correlation_window_seconds  : int = 1800       (B3 — L3 per-collector deque bo
 app_map_path                : str = "data/app_map.default.toml"  (B2.5b — activity→domain rules)
 model_context_tokens        : int = 2048       (B4 — llama.cpp n_ctx)
 adaptation_buffer_size      : int = 64         (B4 — L4 (Signal, Insight) deque + novelty set)
-max_context_tokens          : int = 512        (B5 — L9 retrieval context, char-truncated at tokens*4)
-interactive_model_path      : str = ""         (B5 D-12 — Qwen GGUF for $ / $?; empty => template fallback)
-interactive_model_context_tokens : int = 2048  (B5 — interactive model n_ctx; ~300-token prompt, keep it small for RAM)
+interactive_model_path      : str = ""         (B5 D-12 — Qwen GGUF; B12 — `tell --explain` only; empty => deterministic block only)
+interactive_model_context_tokens : int = 2048  (B5 — interactive model n_ctx; short prompt, keep it small for RAM)
+explain_temperature         : float = 0.3      (B12 — the one free-decode L9 call, rules.md §4.1)
 interface_socket_path       : str = ""         (B5 — empty => $XDG_RUNTIME_DIR/neuropaca.sock)
 ```
 
@@ -548,71 +548,49 @@ flowchart TD
 ## 9. L9 · Interface (V)
 
 ```
-InterfaceLayer «Module»  (B5)              Message «dataclass»
+InterfaceLayer «Module»  (B5, re-scoped B12)   Message «dataclass»
   - event_bus / graph_memory / bitnet_runtime  role             : MessageRole  (B5 — not str)
   - clock               : Clock               content          : str
   - conversation_history: List[Message]        related_node_ids : tuple[str,...]  (D-5 — not UUID)
   - _server             : asyncio.Server       timestamp        : datetime
   - _socket_path        : Path
-  + on_user_input(prefix, text)          : dict «async»
+  - _relay_command(prefix, text)         : dict          # `run` → L7
+  - _explain(target, summary)            : dict «async»  # `tell --explain`
   + on_insight_generated(event)          : None «async»
-  - _build_context(query)                : List[Node]
-  - _generate_response(query, ctx, *, diagnose) : (text, cited, conf, source) «async»
   + send_to_user(message)                : None
   - _store_message(role, content, ids)   : None
 ```
 
-**Shape (B5).** A **Unix-domain socket** at `interface_socket_path` (default
-`$XDG_RUNTIME_DIR/neuropaca.sock`), **JSONL framing** — one JSON request per
-line, one JSON response per line. The thin CLI (`interface/cli.py`, the
-`neuropaca` console script; the daemon is now `neuropacad`) is the only client.
-Ops: `query` (`prefix` ∈ `$` `$?` `$!` `$$`), `chat` (B11), `health`, `insights`,
-`notifications`, `confirmations`, `confirm`.
-
-```mermaid
-flowchart LR
-    Q["$ what's using my CPU"] --> C1["search_by_label() → seed nodes"]
-    C1 --> C2["find_related(depth=1)"]
-    C2 --> C3["rank by relevance_score"]
-    C3 --> C4["keep within max_context_tokens*4 chars (B4)"]
-    C4 --> GEN["_generate_response() — interactive model, GBNF, grounding gate"]
-    GEN -->|grounded| OUT["answer citing real node labels"]
-    GEN -->|ungrounded / timeout / no model| TPL["extractive template"]
-```
+**Shape (B5, re-scoped B12).** A **Unix-domain socket** at `interface_socket_path`
+(default `$XDG_RUNTIME_DIR/neuropaca.sock`), **JSONL framing** — one JSON request
+per line, one JSON response per line. The thin CLI (`interface/cli.py`, the
+`neuropaca` console script; the daemon is `neuropacad`) is the only client.
+Socket ops: `health`, `insights`, `notifications`, `confirmations`, `confirm`,
+`run`, `explain`. `tell` / `overview` never reach the daemon — they are answered
+deterministically on the client from the source tree (`interface/describe.py`,
+`ast` only).
 
 - The only module that talks to the human. `conversation_history` is a
   `list[Message]` in **RAM only** — never disk, graph, or log; every IPC payload
   is `redact()`-ed before it reaches a log line (rules.md §6).
-- `_build_context()` retrieval: `search_by_label` → `find_related` → rank by
-  `relevance_score` → keep what fits `max_context_tokens * 4` chars. **Zero
-  inference in retrieval.**
-- `_generate_response()` routes `$` / `$?` to `BitNetRuntime.infer_async(
-  interactive=True)` behind a per-call GBNF grammar
-  (`{insight, cited_nodes, confidence}`) and the `parse_answer` grounding gate
-  (`rules.md §4.1`); one tighter retry for `$?`; any failure → extractive
-  template, never a raw model string. `$?` also injects a one-line live system
-  snapshot (L9 keeps the latest `METRIC_COLLECTED`).
-- **`chat` (B11) — project-aware Q&A.** `$` / `$?` only match the behavioural
-  graph, so a question about NeuroPaca itself has nothing to cite. `chat`
-  retrieves over the repo's own Markdown docs — `KnowledgeIndex`
-  (`interface/knowledge.py`), a heading-chunked lexical index built at `start()`
-  from `config.knowledge_paths` or the default repo-doc set, **zero inference**,
-  optional (a build failure never blocks startup) — plus a live snapshot line.
-  The behavioural graph is **not** searched here: `search_by_label` matches on
-  common words and would cite an unrelated `idle:` / `app:` node on nearly every
-  question — graph grounding is what `$` / `$?` are for. The interactive model
-  then answers **free-decoded** (the one L9 call exempt from the per-call GBNF of
-  rules.md §4.1). `grounded` is set from whether a doc matched; an ungrounded
-  answer is **flagged** (`source="model-general"`), never suppressed; a timeout
-  or empty result falls back to an extractive reply. `chat` stores nothing and —
-  unlike `$` / `$?` — does **not** publish `USER_MESSAGE`; it is a read-only Q&A
-  turn. The index is a start-time snapshot: editing a doc needs a daemon restart.
-- `$!` / `$$` are **live from B7 (D-14)**: L9 parses them, publishes
-  `USER_MESSAGE`, and returns `queued` immediately — it never executes anything.
-  L7 owns their meaning: both are `RunCommandAction`s at the **dangerous** tier,
-  so both need a recorded confirmation; `$!` forces the tier (the human's
-  instruction replaces accumulated pressure) and skips L3/L4, `$$` additionally
-  quarantines the daemon's own state before running.
+- **No natural-language query of the graph.** The `$` / `$?` (`ask` / `diagnose`)
+  and `chat` paths — retrieval + interactive model + grounding gate — were
+  removed in B12. `GraphMemory.search_by_label` / `find_related` stay; L9 just no
+  longer fronts them with a model. See `RESEARCH_DOSSIER.md`.
+- **`run` (B7, D-14)** — the CLI verb `run` / `run --backup`; internally
+  `_relay_command` publishes `USER_MESSAGE` with `prefix` ∈ `$!` `$$` (the wire
+  enum L7 dispatches on) and returns `queued` immediately. L7 owns the meaning:
+  both are `RunCommandAction`s at the **dangerous** tier, so both need a recorded
+  confirmation; `$!` forces the tier (the human's instruction replaces
+  accumulated pressure) and skips L3/L4, `$$` additionally quarantines the
+  daemon's own state before running. L9 never executes anything.
+- **`explain` (B12) — the one free-decode call** (rules.md §4.1 carve-out).
+  `neuropaca tell <path>` already answered from the file's docstring + top-level
+  defs with no model; `--explain` sends that first-party summary to
+  `BitNetRuntime.infer_async(interactive=True)` for a plain-words paraphrase.
+  Bounded (`EXPLAIN_MAX_TOKENS`, wall clock, `clean_explain_answer`), advisory
+  (shown below the facts, flagged), never executed / stored / published. A
+  missing interactive model just means no paraphrase.
 - **Confirmation relay (B7):** L9 holds `ACTION_CONFIRMATION_REQUEST`s
   (`confirmations`), publishes the human's verdict as
   `ACTION_CONFIRMATION_RESPONSE` (`confirm`), and retires a prompt as soon as L7
@@ -629,18 +607,15 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Q["$ what's using my CPU"] --> C1[query → candidate nodes]
-    C1 --> C2["find_related()"]
-    C2 --> C3["rank by relevance_score"]
-    C3 --> C4["truncate to max_context_tokens"]
-    C4 --> GEN["_generate_response()"]
-    GEN --> OUT["answer citing real node labels"]
+    T["neuropaca tell <path>"] --> D1["describe.resolve() → a repo path"]
+    D1 --> D2["ast: module docstring + top-level defs + layer"]
+    D2 --> OUT["deterministic block (no daemon, no model)"]
+    OUT -.->|--explain| EX["explain op → interactive model paraphrase (flagged)"]
 ```
 
-- The only module that talks to the human. Filters noise, delivers smart notifications, formats `$` responses, drives a tray icon and a daily report.
+- The only module that talks to the human. Filters noise, delivers smart notifications, relays `run` to L7, drives a tray icon and a daily report.
 - `conversation_history` is **RAM-only** — never persisted.
-- `_build_context()` is retrieval: query → candidate nodes → `find_related()` → rank by `relevance_score` → truncate to `max_context_tokens`.
-- Shell prefixes: `$` ask · `$?` diagnose (project context + live snapshot) · `$!` emergency (skips Y + Z, immediate action) · `$$` safe (backup + verify, never during tests).
+- Commands: `tell` / `overview` (deterministic project guide), `health` / `insights` / `notifications` / `confirmations` / `confirm` (daemon state), `run` / `run --backup` (the L7 action relay; `$!` / `$$` are the internal wire enum), `doctor` / `export` / `panic` (offline, B9).
 
 ---
 
@@ -794,7 +769,7 @@ flowchart LR
 | `ACTION_CONFIRMATION_REQUEST` | L7 | L9 | `{request_id, action, tier, summary, reason, requested_at}` (B7, D-14) |
 | `ACTION_CONFIRMATION_RESPONSE` | L9 | L7 | `{request_id, approved}` (B7 — silence past the timeout = refusal) |
 | `MEMORY_UPDATED` | the mutating module (L3 / L6 / L9) | L9 (optional) | `{node_ids: List[str], operation: str}` |
-| `USER_MESSAGE` | L9 | **L7** (`$!` / `$$` only, B7) | `{text, prefix}` |
+| `USER_MESSAGE` | L9 | **L7** (B7) | `{text, prefix}` — `prefix` ∈ `$!` `$$`, the internal wire enum for `neuropaca run` / `run --backup` (B12) |
 | `AGENT_SPAWNED` | L8 | — (unsubscribed; surfaced via `neuropaca health`) | `{payload: AgentSpawnedPayload}` — `{agent_id, trigger_node}` (B8, D-16) |
 | `AGENT_COMPLETED` | L8 | — (unsubscribed; surfaced via `neuropaca health`) | `{payload: AgentCompletedPayload}` — `{agent_id, nodes_spawned, outcome}` (B8, D-16) |
 | `ACTION_PROPOSAL` | L8 | **L7** | `{proposal_id, action_type, kwargs, reason, trigger}` (B8, D-16 — a *description*, never a live `BaseAction`) |

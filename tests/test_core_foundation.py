@@ -123,7 +123,7 @@ def test_llama_backend_requires_existing_model_path() -> None:
         ),
         ({"inference_backend": "fake", "max_concurrent_agents": -1}, "max_concurrent_agents"),
         ({"inference_backend": "fake", "poll_intervals": {"system": 0.0}}, "poll_intervals"),
-        ({"inference_backend": "fake", "max_context_tokens": 0}, "max_context_tokens"),
+        ({"inference_backend": "fake", "explain_temperature": 1.5}, "explain_temperature"),
         (
             {"inference_backend": "fake", "interactive_model_context_tokens": -1},
             "interactive_model_context_tokens",

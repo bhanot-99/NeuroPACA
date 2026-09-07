@@ -28,7 +28,7 @@ flowchart LR
 | **5 · Comms** | L9 | Filter, notify only when needed, format `$` responses, tray icon, daily report. |
 
 - **Feedback loop:** action result → L4 score update → graph → next retrieval and next idle cycle reflect the outcome.
-- **Override channels:** `$` / `$?` / `$!` (skips L3+L4) / `$$` (full backup + verify).
+- **Override channels:** `neuropaca run "<cmd>"` (skips L3+L4) / `run --backup "<cmd>"` (full backup + verify). Internally `USER_MESSAGE` with `prefix` ∈ `$!` `$$`.
 
 ---
 
@@ -69,8 +69,9 @@ flowchart TD
 | B7 | Drive & Action (L5 + L7) | ✅ merged (PR #9, `bd6215f`) — `PressureAccumulator` (two sources, exact half-life decay, set-test corroboration) + `SafetyGate` / sandbox / quarantine / JSONL audit / headless confirmation handshake + Notification·MemoryWrite·FileWrite·RunCommand; `$!` / `$$` live. **All 5 exit criteria met** — 1–4 on the target box; criterion 5 via the positive control (`spikes/b7_positive_control/`), the 24 h soak abandoned after 3 zero-proposal attempts (`HighLoadPattern`/Wayland blindspot). 288 pytest + 14 stress + 9 integration green |
 | B8 | Agents & structural plasticity (L8) | ✅ done (`b8-agents-structural-plasticity`, D-16) — `AgentSupervisor` + ephemeral sub-clusters + apoptosis + the `ACTION_PROPOSAL` decoupling. **All 5 exit criteria met on the target box** (`scripts/validate_b8_plasticity.py`). 311 pytest + stress + integration green |
 | B9 | Hardening | 🟡 in progress — 6 of 7 exit criteria met. Units installed and the daemon is live under the hardened unit (BL-1 confirmed on real systemd); the 1-hour gate ran 2026-09-03. Only the 7-day soak itself remains |
-| B10 | Terminal accessibility — interactive `neuropaca>` shell | ✅ done (`bc86c2a`) — sigils typed bare, one-command `help`, autostart installer |
-| B11 | Conversational `chat` — project-doc + general Q&A | ✅ done — daemon-side `chat` op, `KnowledgeIndex` lexical doc retrieval, free-decode interactive model, flagged-ungrounded fallback; a bare shell line is `chat` |
+| B10 | Terminal accessibility — interactive `neuropaca>` shell | ✅ done (`bc86c2a`) — **superseded by B12** (the shell stays as a command menu; the bare-sigil forms are gone) |
+| B11 | Conversational `chat` — project-doc + general Q&A | ✅ done — **withdrawn in B12** (`chat` / `KnowledgeIndex` removed; rationale in `RESEARCH_DOSSIER.md §4.1`) |
+| B12 | Terminal reconceived — read-only project guide | ✅ done — `neuropaca tell <path>` / `overview` (deterministic, `ast`-based, `interface/describe.py`); `$` / `?` / `!` grammar removed; `$!` / `$$` → `neuropaca run` / `run --backup`; `--explain` keeps an optional flagged model paraphrase |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
 ---
@@ -239,7 +240,7 @@ The health counters are **cumulative**, so the summary is reset-aware: a daemon 
 
 ---
 
-### B10–B11 · Terminal accessibility (post-B9)
+### B10–B12 · Terminal accessibility (post-B9)
 
 Not on the original B0–B9 roadmap — accessibility work after the core system was
 dogfooded from a real terminal.
@@ -247,40 +248,43 @@ dogfooded from a real terminal.
 **B10 · the interactive shell.** `$` and `!` are hostile to a real shell (`$`
 opens a variable, `!` opens history expansion), so every prefixed example had to
 be quoted. `neuropaca` with no args opens a `neuropaca>` prompt that reads the
-line itself, so the sigils are typed bare; `neuropaca help` prints the full
-guide; `scripts/install-user-service.sh` starts the daemon on every login. No
-new grammar — every line translates to argv the console script already accepts.
+line itself. *(B12 keeps the shell as a command menu; the bare-sigil forms are
+gone.)*
 
-**B11 · the `chat` op.** `ask` / `diagnose` answer only from the behavioural
-graph, behind a grounding gate — a question *about NeuroPaca itself* (graph
-storage, monitoring, file handling) matched nothing and the interactive model
-was never reached. `chat` is the project-aware path:
+**B11 · the `chat` op.** A daemon-side `chat` op retrieved over the repo's
+Markdown (`KnowledgeIndex`, a zero-inference lexical match) and had the
+interactive model free-decode a paragraph; grounding was advisory (an unmatched
+answer flagged `⚠ general knowledge`, not withheld). **Withdrawn in B12** — see
+the rejected-alternative record in `RESEARCH_DOSSIER.md §4.1`. In short: a 3B-Q4
+model paraphrasing a retrieved chunk is not reproducible, and ~70% off-topic
+rejection is fine for a convenience but not for the *first* guide to a codebase.
 
-- **`KnowledgeIndex`** (`interface/knowledge.py`) — the repo's Markdown docs,
-  chunked by heading with an `H1 → H2` breadcrumb, searched by the same
-  deliberately-dumb lexical match as `search_by_label` (stopword-filtered,
-  min-score cutoff). **Zero embeddings, zero inference.** Built at L9 `start()`
-  from `config.knowledge_paths` or the default repo-doc set; a build failure is
-  non-fatal, like the interactive model.
-- **Answer path** — retrieved doc chunks + a live snapshot line → the
-  interactive Qwen model, **free-decoded** (the one L9 call exempt from rules.md
-  §4.1's per-call GBNF; carve-out recorded there). The behavioural graph is not
-  searched — `search_by_label` is too loose and would cite a junk node on almost
-  every question. `clean_chat_answer` strips echo/fences and caps sentences; a
-  timeout or empty result falls back to
-  an extractive reply.
-- **Grounding is advisory** — `grounded` = "retrieval returned something". An
-  ungrounded answer is **flagged** (`⚠ general knowledge`), never suppressed —
-  the shell answers *anything*, project knowledge first. `chat` stores nothing
-  and does not publish `USER_MESSAGE`.
-- **Shell** — a bare line with no verb and no sigil is a `chat` question, so
-  `neuropaca> how is the graph stored` just works instead of printing usage.
+**B12 · terminal reconceived — a read-only project guide.** The terminal is now
+command-only: no free text, no `$` / `?` / `!` sigils.
 
-Validated on the target box against the real Qwen2.5-3B-Q4 model: grounded
-answers to questions about graph storage, the drive layer, and where
-conversation turns live; an off-topic general-knowledge question answered and
-flagged. Covered by `tests/test_knowledge.py` and the B11 section of
-`tests/test_interface.py`.
+- **`neuropaca tell <path>`** (`interface/describe.py`) — resolves a file or
+  folder (forgiving about the form: `root/…`, `src/neuropaca/…`, a bare
+  basename, a directory), reads its **module docstring** and top-level
+  classes/functions via `ast` (no import, no execution), names the layer, prints
+  it. Fully deterministic and offline — works with no daemon, like `doctor`.
+- **`neuropaca overview`** — a curated map: what NeuroPACA is, what it watches,
+  the L1–L10 layer table, where to look next. Assembled from a static
+  `LAYER_MAP`.
+- **`tell <path> --explain`** — one optional step on top: the daemon's `explain`
+  op has the interactive model paraphrase the deterministic summary in plain
+  words. Bounded, flagged, shown *after* the facts; the one L9 call exempt from
+  the per-call GBNF of rules.md §4.1 (carve-out re-pointed there). A missing
+  interactive model just drops the paraphrase.
+- **`$!` / `$$` → `neuropaca run` / `run --backup`.** The action relay is
+  unchanged; `$!` / `$$` survive only as the internal `USER_MESSAGE` `prefix`
+  enum L7 dispatches on — L7 and `tests/test_action.py` needed no changes.
+- **The `neuropaca>` menu** accepts the same verbs unquoted; a non-verb line is a
+  short error, never a usage dump.
+
+Removed: `ask` / `diagnose` / `chat` verbs, `$` `$?` `$!` `$$` as a user grammar,
+`interface/knowledge.py` + `KnowledgeIndex`, the `$`/`$?` interactive-query
+pipeline in L9, `config.{knowledge_*, chat_temperature, max_context_tokens}`.
+Covered by `tests/test_describe.py` and the reworked `tests/test_interface.py`.
 
 ---
 

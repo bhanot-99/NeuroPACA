@@ -229,7 +229,16 @@ flowchart LR
 
 **Mitigation — L4 (D-11): the extractive pivot.** Stop asking for a sentence. The insight grammar emits exactly `{"cited_node_id": <one of the K aliases | null>, "insight_category": "routine"|"anomaly"|"distraction"}`. The model does one classification + one selection, both enum-constrained — the two jobs it *can* do (valid-parse 0.95–1.0 at K≥3). The human-readable insight string is a **template** filled from the cited node's label + the signal type, never generated. `null` cited node = abstain = discard.
 
-**L9 `$?` — RESOLVED (D-12, B5, 2026-09-01, validated on the target box).** Dual-model routing: **Qwen2.5-3B-Instruct Q4_K_M** serves the interactive `$` / `$?` path (`BitNetRuntime` gained an optional second backend, one `_inference_lock`); 2B4T stays on the always-on loop. `$?` runs behind a per-call GBNF grammar (`{insight, cited_nodes, confidence}`, `ws ::= " "?`) and a hard `parse_answer` grounding gate — ungrounded → extractive template. **`scripts/validate_b5_real_model.py` on the 16 GB target box:** Qwen wrote `"esbuild-service is using the most CPU right now."` (conf 0.94, grounded, exact label) — coherent where 2B4T parrots the few-shot. Cost: ~3.1 tok/s, +3.25 GB resident (~4.7 GB concurrent — PRD §9).
+**L9 `$?` — RESOLVED (D-12, B5), then the problem itself was removed (B12).** D-12
+solved it with dual-model routing: **Qwen2.5-3B-Instruct Q4_K_M** wrote the
+interactive `$` / `$?` answer behind a per-call GBNF grammar and a hard
+`parse_answer` grounding gate, coherent where 2B4T parrots the few-shot (conf
+0.94, grounded, on the 16 GB target box). **B12 then removed the `$` / `$?` /
+`chat` natural-language paths from the terminal entirely** — the terminal is a
+read-only command set now (`RESEARCH_DOSSIER.md §4.1`). The interactive Qwen model
+survives only for `neuropaca tell <path> --explain`, a plain-words paraphrase of
+a *deterministic* file summary — so the "model must reason over graph context"
+problem no longer applies to L9 at all.
 
 **Mitigation — L6 idle thoughts (D-13, B6).** Resolved by going fully extractive, same shape as D-11 — *not* the interactive Qwen model (L6 is background, on the always-on loop). The DMN's "imagination" asks the loop model for `{"subject": alias, "object": alias|null, "query_template": <closed enum>}`; the follow-up question is rendered from a Python template (`PROACTIVE_TEMPLATES`), never generated. A relational template without a distinct object is discarded. Stored as an `IDLE_THOUGHT` node, surfaced once by L9. The model only selects — the two jobs the B0 ablation showed it *can* do.
 

@@ -1,30 +1,34 @@
-"""L9 · the thin CLI client — the `$` shell grammar, terminal-side (B5, B2).
+"""L9 · the thin CLI client — a read-only project guide, terminal-side (B5, B12).
 
-`neuropaca` (the console script) is a *thin* client: it parses the prefix,
-opens the Unix socket, sends one JSONL request, renders one JSONL response with
-`rich` (design.md), and exits. **No daemon logic, no graph, no model** — every
-answer comes from the running daemon.
+`neuropaca` (the console script) is a *thin* client. Two kinds of command:
 
-    neuropaca                                 # no args → the interactive shell
-    neuropaca help                            # the full guide (interface/repl.py)
-    neuropaca ask "what is using my CPU"      # $  — graph-grounded question
-    neuropaca diagnose "why is the disk full" # $? — question + live snapshot
-    neuropaca chat "how is the graph stored"  # project-doc + general Q&A (B11)
-    neuropaca "$ how many meetings today"     # raw prefix form
-    neuropaca "$! kill webpack"               # $! — emergency command (L7)
-    neuropaca "$$ systemctl --user restart x" # $$ — same, with a state backup
-    neuropaca health                          # daemon health (non-inference)
-    neuropaca insights                        # drain surfaced insights
-    neuropaca notifications                   # drain what L7 wants to tell you
-    neuropaca confirmations                   # dangerous actions awaiting you
-    neuropaca confirm <id> [--deny]           # answer one of them
-    neuropaca doctor                          # offline diagnosis (B9, no daemon)
-    neuropaca export <path>                   # dump the graph out of data/ (B9)
-    neuropaca panic                           # kill the daemon, wipe state (B9)
+- **deterministic, offline** — `tell` / `overview` (this repo's own docstrings,
+  `interface/describe.py`) and `doctor` / `export` / `panic` (`interface/offline.py`).
+  No daemon, no model.
+- **daemon state** — `health`, `insights`, `notifications`, `confirmations`,
+  `confirm`, `run`: parse, open the Unix socket, send one JSONL request, render
+  one JSONL response with `rich`, exit. **No daemon logic, no graph, no model**
+  here — the answer comes from the running daemon.
+
+    neuropaca                                  # no args → the command menu
+    neuropaca help                             # the full guide (interface/repl.py)
+    neuropaca tell src/neuropaca/interface/cli.py   # what a file / folder does
+    neuropaca tell drive/pressure.py --explain  # + a plain-words model paraphrase
+    neuropaca overview                         # what NeuroPACA is + the layer map
+    neuropaca health                           # daemon + module health
+    neuropaca insights                         # drain surfaced insights
+    neuropaca notifications                    # drain what L7 wants to tell you
+    neuropaca confirmations                    # dangerous actions awaiting you
+    neuropaca confirm <id> [--deny]            # answer one of them
+    neuropaca run "pkill -f webpack"           # hand a command to the action layer
+    neuropaca run --backup "systemctl --user restart x"   # same, state backed up first
+    neuropaca doctor                           # offline diagnosis (B9, no daemon)
+    neuropaca export <path>                    # dump the graph out of data/ (B9)
+    neuropaca panic                            # kill the daemon, wipe state (B9)
 
 Socket: ``--socket PATH`` > ``$NEUROPACA_SOCKET`` > ``$XDG_RUNTIME_DIR/neuropaca.sock``.
-Non-inference commands (`health`, `insights`, a refused prefix) never touch the
-model and return in well under 100 ms against a warm daemon.
+`health` / `insights` and the like never touch a model and return in well under
+100 ms against a warm daemon.
 """
 
 from __future__ import annotations
@@ -36,20 +40,21 @@ import os
 import sys
 from typing import Any
 
-from neuropaca.interface import offline
+from neuropaca.interface import describe, offline
 from neuropaca.interface.layer import default_socket_path
 
 _USAGE = (
-    "usage: neuropaca (ask|diagnose|health|insights|notifications|confirmations) [text]\n"
+    "usage: neuropaca (health|insights|notifications|confirmations)\n"
     "       neuropaca confirm <request-id> [--deny]\n"
-    '       neuropaca "$ <question>" | "$? <question>" | "$! <command>" | "$$ <command>"\n'
-    "       neuropaca doctor                  # offline diagnosis (no daemon needed)\n"
-    "       neuropaca export <path> [--force] # dump the graph out of data/\n"
-    "       neuropaca panic [--yes]           # kill the daemon and wipe all state\n"
+    "       neuropaca tell <path> [--explain]    # what a file or folder does\n"
+    "       neuropaca overview                   # what NeuroPACA is + the layer map\n"
+    '       neuropaca run [--backup] "<command>" # hand a command to the action layer\n'
+    "       neuropaca doctor                     # offline diagnosis (no daemon needed)\n"
+    "       neuropaca export <path> [--force]    # dump the graph out of data/\n"
+    "       neuropaca panic [--yes]              # kill the daemon and wipe all state\n"
 )
-_PREFIXES = ("$?", "$!", "$$", "$")  # longest-first so `$?` wins over `$`
 _CONNECT_TIMEOUT = 3.0
-_RESPONSE_TIMEOUT = 75.0  # a `$?` / `chat` answer is a CPU inference — allow for it
+_RESPONSE_TIMEOUT = 75.0  # a `tell --explain` paraphrase is a CPU inference — allow for it
 
 
 class _CliError(Exception):
@@ -60,6 +65,7 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
     """Return (request, socket_override)."""
     socket_override: str | None = None
     deny = False
+    backup = False
     args: list[str] = []
     it = iter(argv)
     for tok in it:
@@ -69,6 +75,8 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
                 raise _CliError("--socket needs a path")
         elif tok == "--deny":
             deny = True
+        elif tok == "--backup":
+            backup = True
         elif tok in ("-h", "--help"):
             raise _CliError(_USAGE)
         else:
@@ -95,26 +103,14 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
             {"op": "confirm", "request_id": rest[0], "approved": not deny},
             socket_override,
         )
-    if head in ("ask", "diagnose"):
-        text = " ".join(rest).strip()
-        if not text:
-            raise _CliError(f"'{head}' needs a question")
-        prefix = "$?" if head == "diagnose" else "$"
-        return {"op": "query", "prefix": prefix, "text": text}, socket_override
-    if head == "chat":
-        text = " ".join(rest).strip()
-        if not text:
-            raise _CliError("'chat' needs a question")
-        return {"op": "chat", "text": text}, socket_override
+    if head == "run":
+        cmd = " ".join(rest).strip()
+        if not cmd:
+            raise _CliError("'run' needs a command, e.g. neuropaca run \"pkill -f webpack\"")
+        # `$!` / `$$` stay the internal wire enum L7 dispatches on (layer.py);
+        # the user surface is just `run` / `run --backup`.
+        return {"op": "run", "cmd": cmd, "backup": backup}, socket_override
 
-    # raw prefix form: the whole thing is one string like "$? why ..."
-    raw = " ".join(args).strip()
-    for prefix in _PREFIXES:
-        if raw == prefix or raw.startswith(prefix + " "):
-            return (
-                {"op": "query", "prefix": prefix, "text": raw[len(prefix) :].strip()},
-                socket_override,
-            )
     raise _CliError(_USAGE)
 
 
@@ -229,43 +225,107 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
         )
         return 0
 
-    if resp.get("queued"):
-        prefix = _e(str(resp.get("prefix", "")))
-        console.print(f"[cyan]▶[/cyan] {prefix} handed to the action layer")
+    if resp.get("queued"):  # a `run` command handed to L7
+        console.print("[cyan]▶[/cyan] handed to the action layer")
         console.print(f"  [dim]{_e(str(resp.get('note', '')))}[/dim]")
         return 0
 
-    # a query (`ask` / `diagnose`) or `chat` answer. The `chat` answer is free
-    # model text — escape it, or a stray `[...]` is eaten as rich markup (or a
-    # `[/]` raises MarkupError and crashes the render).
-    console.print(f"[magenta]◆[/magenta] {_e(str(resp.get('answer', '')))}")
-    source = resp.get("source")
-    if source == "model-general":
-        console.print("  [yellow]⚠ general knowledge — not from NeuroPaca's docs or graph[/yellow]")
-    cited = resp.get("cited", [])
-    if cited:
-        console.print(f"  [dim]based on {_e(' · '.join(str(c) for c in cited))}[/dim]")
-    tail = f"  [dim]confidence {resp.get('confidence')}"
-    if source == "template-nomodel":
-        tail += " · the interactive model is not loaded"
-    elif source == "template":
-        tail += " · extractive"
-    console.print(tail + "[/dim]")
+    # anything else with an `answer` field (an `explain` paraphrase reached
+    # through the socket rather than the `tell` fast path).
+    answer = str(resp.get("answer", "")).strip()
+    if answer:
+        console.print(f"[magenta]◆[/magenta] {_e(answer)}")
+        console.print(f"  [dim]confidence {resp.get('confidence')}[/dim]")
+    return 0
+
+
+def _describe_dispatch(raw_argv: list[str]) -> int | None:
+    """`tell` / `overview` — deterministic and offline (B12). Returns an exit
+    code, or None to let the next dispatcher take the argv.
+
+    `tell <path> --explain` prints the deterministic block, then makes ONE socket
+    call for the model paraphrase; a missing daemon just drops the paraphrase.
+    """
+    if not raw_argv or raw_argv[0] not in ("tell", "overview"):
+        return None
+
+    from rich.console import Console
+
+    console = Console()
+    err = Console(stderr=True)
+
+    # Peel the flags this command understands; whatever is left is positional.
+    want_explain = False
+    socket_override: str | None = None
+    positional: list[str] = []
+    it = iter(raw_argv[1:])
+    for tok in it:
+        if tok == "--explain":
+            want_explain = True
+        elif tok == "--socket":
+            socket_override = next(it, None)
+        else:
+            positional.append(tok)
+
+    if raw_argv[0] == "overview":
+        console.print(describe.render_overview())
+        return 0
+
+    if len(positional) != 1:
+        err.print("usage: neuropaca tell <path> [--explain]")
+        return 2
+    try:
+        path = describe.resolve(positional[0])
+        console.print(describe.render_tell(path))
+        if want_explain:
+            target, summary = describe.deterministic_summary(path)
+    except describe.DescribeError as exc:
+        err.print(f"[red]✕[/red] {exc}")
+        return 2
+
+    if not want_explain:
+        return 0
+
+    socket_path = (
+        socket_override or os.environ.get("NEUROPACA_SOCKET") or str(default_socket_path())
+    )
+    try:
+        resp = asyncio.run(
+            _call({"op": "explain", "target": target, "summary": summary}, socket_path)
+        )
+    except _CliError:
+        console.print(
+            "\n[dim](--explain needs the daemon running — showed the summary above)[/dim]"
+        )
+        return 0
+    answer = str(resp.get("answer", "")).strip() if resp.get("ok") else ""
+    if answer:
+        from rich.markup import escape as _e
+
+        console.print(f"\n[magenta]◆ in plain words[/magenta]  {_e(answer)}")
+        conf = resp.get("confidence")
+        console.print(f"  [dim]confidence {conf} · a model paraphrase, not the facts above[/dim]")
+    else:
+        console.print("\n[dim](--explain needs the daemon running with an interactive model)[/dim]")
     return 0
 
 
 def _run_once(raw_argv: list[str]) -> int:
-    """One verb: offline dispatch, else parse + one socket round-trip + render.
+    """One verb: offline / describe dispatch, else parse + one socket round-trip
+    + render.
 
     Shared by `main` and the interactive shell (`interface/repl.py`) so both
     reach the daemon through exactly the same path.
     """
-    # The three offline verbs are handled before anything touches the socket
-    # (B9/BL-7). `doctor` in particular exists for the case where the daemon is
-    # not running, so it must not be routed through the daemon.
+    # Offline verbs are handled before anything touches the socket (B9/BL-7):
+    # `doctor` in particular exists for when the daemon will not start, and
+    # `tell` / `overview` answer from the source tree with no daemon at all.
     offline_result = offline.dispatch(raw_argv)
     if offline_result is not None:
         return offline_result
+    described = _describe_dispatch(raw_argv)
+    if described is not None:
+        return described
 
     try:
         request, socket_override = _parse(raw_argv)

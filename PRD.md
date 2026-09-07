@@ -178,23 +178,23 @@ Every effect runs behind a safety-check gate: **sandboxed execution, backup befo
 The EventBus can `spawn_node()` and `kill_node()` dynamically. A CPU spike spawns a temporary cluster of sub-sensing nodes (e.g. thermal watchers); when they haven't fired for 14 days they undergo **apoptosis**. The architecture shapes itself around active projects rather than a fixed blueprint.
 
 ### F9 · Terminal-native interface
-The only surface that talks to the human. Shell prefix grammar:
+The only surface that talks to the human — **command-only** since B12, no free
+text and no `$` / `?` / `!` sigils.
 
-| Prefix | Meaning |
+| Command | Meaning |
 | --- | --- |
-| `$` | **Ask** — natural language, graph context injected |
-| `$?` | **Diagnose** — question using current project context + live snapshot |
-| `$!` | **Emergency** — immediate autonomous action, skips L3 + L4 |
-| `$$` | **Safe** — full backup + verify before any action, never during tests |
+| `neuropaca tell <path> [--explain]` | what a file or folder does — its docstring + top-level defs + layer, read from source (deterministic, offline); `--explain` adds a flagged model paraphrase |
+| `neuropaca overview` | what NeuroPACA is, what it watches, the L1-L10 layer map |
+| `health` · `insights` · `notifications` | daemon + module state |
+| `confirmations` · `confirm <id> [--deny]` | the L7 dangerous-action handshake |
+| `run "<cmd>"` · `run --backup "<cmd>"` | hand a command to L7 (needs confirmation); `--backup` quarantines daemon state first |
+| `doctor` · `export` · `panic` | offline verbs (B9) |
 
-`$` / `$?` are **graph-only** and gated: a question about NeuroPaca itself
-matches nothing. **`chat`** (B11) covers that — retrieval over the repo's own
-docs (`KnowledgeIndex`, zero-inference lexical match) plus a live snapshot,
-answered by the interactive model free-decoded. Project knowledge is
-preferred; an answer with no doc or graph backing is **flagged** as general
-knowledge, not withheld. `neuropaca chat "…"`, or just type a question in the
-interactive shell. B10 gave that shell: `neuropaca` with no args opens a
-`neuropaca>` prompt where the `$` / `!` sigils are typed bare.
+`neuropaca` with no args opens a `neuropaca>` menu that accepts the same verbs
+unquoted — a non-verb line is a short error, never a free-text question. The
+earlier `$` / `$?` graph Q&A and the `chat` doc-retrieval path were removed in
+B12 (`RESEARCH_DOSSIER.md`); the behavioural graph and its retrieval primitives
+are unchanged.
 
 ### F10 · Scheduled graph maintenance
 During idle/sleep the DMN consolidates duplicate nodes, re-links orphans, recomputes `relevance_score`s, and purges raw sensor buffers past their TTL. **This is graph housekeeping, not model training** — the model is used as-is. Any weekly model adaptation belongs to the deferred pruning work ([`pruning.md`](pruning.md)).
@@ -233,7 +233,7 @@ Two models, each **lazy-loaded** and independently self-disabling (D-12):
 | Model | Role | Quant | Resident | Throughput | Source |
 | --- | --- | --- | --- | --- | --- |
 | **BitNet b1.58 2B4T** | always-on loop — L4 extractive insight, L6 idle thoughts | GGUF `tq2_0` | ~1.37 GB after load, ~1.55 GB after 30 min | ~17 tok/s | B0 spike 2026-08-30 (D-11) |
-| **Qwen2.5-3B-Instruct** | interactive only — L9 `$` / `$?` grounded sentence | GGUF Q4_K_M | **~3.25 GB** (`n_ctx=2048`, `n_batch=128`) | **~3.1–3.5 tok/s** | B5 validation 2026-09-01 (D-12) |
+| **Qwen2.5-3B-Instruct** | interactive only — L9 `tell --explain` paraphrase (B12) | GGUF Q4_K_M | **~3.25 GB** (`n_ctx=2048`, `n_batch=128`) | **~3.1–3.5 tok/s** | B5 validation 2026-09-01 (D-12) |
 
 | Metric (2B4T) | Value | Source |
 | --- | --- | --- |
@@ -241,7 +241,7 @@ Two models, each **lazy-loaded** and independently self-disabling (D-12):
 | Package temp | 66–72 °C (no thermal throttle) | B0 spike |
 | A conventional 2B model in float32 | ≈ 8 GB | for comparison |
 
-**Concurrent peak ≈ 4.7 GB** *(measured on the 16 GB target box, `scripts/validate_b5_real_model.py`, 2026-09-01 — the earlier ~3.4 GB was an unvalidated estimate)* — both models resident once a `$?` has been asked in a session that has also produced an L4 insight. That is **~29 % of the 16 GB target machine**, leaving ~11 GB for the daemon and a normal dev session. A single `_inference_lock` still serialises every call system-wide: the two models never *run* at once, they only *reside* at once. The 2B4T model is not loaded until a signal passes L4 gating; the Qwen model is not loaded until the first `$` / `$?` (`gc.collect()` runs first); an idle session pays neither tax. If `interactive_model_path` is unset the `$?` path falls back to the extractive template and only the 2B4T footprint applies. Further shrinking via personal pruning is deferred ([`pruning.md`](pruning.md)); a 1.5B interactive model is the documented fallback if the ~4.7 GB peak ever becomes a problem.
+**Concurrent peak ≈ 4.7 GB** *(measured on the 16 GB target box, 2026-09-01 — the earlier ~3.4 GB was an unvalidated estimate)* — both models resident once `neuropaca tell … --explain` has been run in a session that has also produced an L4 insight. That is **~29 % of the 16 GB target machine**, leaving ~11 GB for the daemon and a normal dev session. A single `_inference_lock` still serialises every call system-wide: the two models never *run* at once, they only *reside* at once. The 2B4T model is not loaded until a signal passes L4 gating; the Qwen model is not loaded until the first `tell --explain` (`gc.collect()` runs first); an idle session pays neither tax. If `interactive_model_path` is unset, `tell --explain` shows only the deterministic block and only the 2B4T footprint applies. Further shrinking via personal pruning is deferred ([`pruning.md`](pruning.md)).
 
 ---
 

@@ -162,44 +162,52 @@ flowchart TD
 
 ---
 
-## 7. Shell prefixes
+## 7. The terminal — a read-only project guide (B12)
 
-| Prefix | Meaning |
+The `neuropaca` terminal is **command-only**: no free text, no `$` / `?` / `!`
+sigils. Every command is predefined. Two kinds:
+
+**Explain the project** — deterministic, offline, no daemon:
+
+| Command | What it does |
 | --- | --- |
-| `$` | ask — natural language, grounded in the behavioural graph |
-| `$?` | diagnose — same as `$`, plus a live system snapshot |
-| `$!` | emergency — immediate autonomous action |
-| `$$` | safe — backup + verify before acting |
+| `neuropaca tell <path>` | what a file or folder does — its module docstring + top-level classes/functions + which layer, read straight from the source (`interface/describe.py`, `ast` only) |
+| `neuropaca tell <path> --explain` | the above, then the daemon's interactive model paraphrases that summary in plain words — **flagged**, and always *after* the facts |
+| `neuropaca overview` | what NeuroPACA is, what it watches, the L1-L10 layer table, where to look next |
 
-`ask` / `diagnose` answer **only** from the behavioural graph, behind a hard
-grounding gate. A question *about NeuroPaca itself* — how the graph is stored,
-what a layer does, where turns live — has nothing to match there. The `chat`
-verb (B11) is that path: retrieval over the repo's own Markdown docs
-(`interface/knowledge.py`, zero-inference lexical match) plus a live snapshot
-line, answered by the interactive model free-decoded. An answer not backed by a
-doc is **flagged** as general knowledge, never suppressed. `neuropaca chat "…"`
-from a normal shell; a bare line is `chat` in the interactive shell (below).
+`tell` is forgiving about the path: `root/…`, `src/neuropaca/…`, a bare
+`layer.py`, or a directory all resolve.
 
-### 7.1 The interactive shell (B10 · `chat` added B11)
+**Daemon state** — one JSONL round-trip over the Unix socket:
 
-`$` and `!` are hostile to a real shell — `$` opens a variable, `!` opens
-history expansion — so the prefixes above have to be quoted (`neuropaca "$! …"`).
-Running `neuropaca` with **no arguments** in a terminal opens a `neuropaca>`
-prompt where the line is read by us, not the shell, so the sigils are typed
-bare. Every line is translated to the argv the console script already accepts
-and run through the same code path (`interface/repl.py` → `cli._run_once`) — the
-client stays thin. The one convenience beyond the sigils: a line that is not a
-recognised verb and carries no sigil is sent as a `chat` question (B11), so you
-can just type `how is the graph stored` and get an answer from the daemon.
-
-| Typed in the shell | Runs |
+| Command | |
 | --- | --- |
-| `how is the graph stored` | a bare line with no verb → `chat` |
-| `chat "…"` | project-doc + general Q&A, explicitly |
-| `$doctor`, `$health`, `$insights`, … | a `$` + verb → that verb |
-| `!ask what's slow` | a `!` + verb, then free text |
-| `?why is the disk full` | a leading `?` → `diagnose` |
-| `$ …`, `$? …`, `$! …`, `$$ …` | the raw prefixes, unquoted |
+| `health` · `insights` · `notifications` | daemon + module health / surfaced insights / L7's notification intents |
+| `confirmations` · `confirm <id> [--deny]` | the L7 dangerous-action handshake |
+| `run "<cmd>"` · `run --backup "<cmd>"` | hand a command to the action layer (`$!` / `$$` are the internal wire enum L7 dispatches on); a dangerous action still needs `confirm` |
+| `doctor` · `export <path>` · `panic` | the offline verbs (B9) |
+
+Why the `$` grammar went away: `$` opens a variable and `!` opens history
+expansion, so every example had to be quoted; and the natural-language paths it
+fronted (`ask`/`diagnose` over the graph, `chat` over the repo docs) were never
+reliable enough to be an authoritative guide — a small model paraphrasing a
+retrieved chunk is not reproducible. Deterministic docstring extraction is.
+(Recorded in `RESEARCH_DOSSIER.md`; the graph and its retrieval primitives stay,
+only the terminal verb is gone.)
+
+### 7.1 The command menu (`neuropaca` with no arguments)
+
+Opens a `neuropaca>` prompt that accepts the same predefined verbs, unquoted —
+nothing else. Every line is translated to the argv the console script already
+accepts and run through the same code path (`interface/repl.py` →
+`cli._run_once`). A line whose first word is not a verb is a short error, never
+a usage dump and never a free-text question.
+
+| Typed in the menu | Runs |
+| --- | --- |
+| `tell src/neuropaca/idle` | `tell` on that folder |
+| `overview`, `health`, `insights`, … | that verb |
+| `run "pkill -f webpack"` | the action relay |
 | `help`, `quit` | the full guide (also `neuropaca help`) / leave |
 
 ---

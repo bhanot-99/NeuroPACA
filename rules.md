@@ -85,12 +85,14 @@ The model is 2B params at 1.58 bits. It loses coherence fast on open-ended promp
 flowchart TD
     P["build prompt from learning/prompts.py<br/>+ distilled context (≤5 nodes, top-K by score)"] --> G["splice cited_nodes alias enum<br/>into the static GBNF template<br/>(pure string work — BEFORE the lock)"]
     G --> LK["acquire _inference_lock"]
-    LK --> I["infer — greedy for enums/citations/confidence,<br/>≤0.4 free-text for interactive $ / $? only"]
+    LK --> I["infer — greedy for enums/citations/confidence"]
     I --> V{"HARD validation gate:<br/>parse vs schema · every cited_node in prompt ·<br/>free text references ≥1 cited label"}
     V -->|pass| STORE[use it]
-    V -->|fail — background loop| DISCARD[discard]
-    V -->|fail — $? only| RETRY[one tighter retry]
+    V -->|fail| DISCARD[discard]
 ```
+
+(The one exception is the L9 `explain` op — free-decoded, no grammar; see the
+carve-out below.)
 
 | Rule | Detail |
 | --- | --- |
@@ -99,28 +101,31 @@ flowchart TD
 | Grammar compiled per call, before the lock | Keep the schema skeleton as a static template; splice in only the `cited_nodes` alias enum. Build the GBNF string, *then* acquire `_inference_lock`, *then* infer. |
 | Every schema has an `abstain` path | `null` / `"insufficient evidence"`. Forcing an answer out of a small model is how you get hallucinations. |
 | Distilled input only | `build_context_from_nodes()` emits one terse line per node (`alias · label · type · score · 1–2 attrs`) — never a raw `MetricSnapshot`, never a raw subgraph dump. Top-K ranked by `relevance_score`, deduped by domain; K is a config value set from the B0 ablation, not a guess. |
-| Decoding | Enums / routing / `cited_nodes` / `confidence`: always greedy (temp ≈ 0). Free-text fields: greedy in the background loop (L4's novelty check absorbs repetition); ~0.4 permitted for interactive `$` / `$?` only. |
-| Post-generation validation is a hard gate | parse against the schema → every `cited_node` exists in the prompt → the free text references at least one cited node's `label`. Fail → discard (background loop) or one tighter retry (`$?` only). |
+| Decoding | Enums / routing / `cited_nodes` / `confidence`: always greedy (temp ≈ 0). Free-text fields in the background loop: greedy (L4's novelty check absorbs repetition). |
+| Post-generation validation is a hard gate | parse against the schema → every `cited_node` exists in the prompt → the free text references at least one cited node's `label`. Fail → discard. |
 | One synthetic few-shot example | Per prompt, matching the grammar exactly. Synthetic/fictional data only — prompts must stay shippable. |
-| Fallbacks — only if the B0 spike shows constrained 2B4T isn't enough | micro-decompose `$?` into ≤ 2 sequential grammar-constrained prompts (never the background loop); or use a ~3B Q4 model for `$?` only (`BitNetRuntime` is backend-pluggable). |
 
-**Carve-out — the L9 `chat` op (B11).** `chat` answers a free question about
-NeuroPaca itself, so it is the one call that runs the interactive model
-**free-decoded** (no GBNF). It stays bounded and safe by other means:
+**Carve-out — the L9 `explain` op (B12).** `neuropaca tell <path> --explain` is
+the one call that runs the interactive model **free-decoded** (no GBNF): it
+paraphrases in plain words the deterministic file summary the client already
+produced. It is bounded and safe by other means:
 
-- **Retrieval is still zero-inference** — `interface/knowledge.py`, a lexical
-  match over the repo docs, nothing more. The behavioural graph is not searched
-  (`search_by_label` is too loose for a free question). The model never chooses
-  what context it gets.
-- **Bounded output** — `CHAT_MAX_TOKENS`, a wall-clock timeout, and
-  `clean_chat_answer` (strip echo/fences, cap sentences). A timeout or empty
-  result falls back to an extractive reply, never a raw model string.
-- **Grounding is advisory, not a gate** — `grounded` is set from whether a doc
-  matched; an ungrounded answer is **flagged** to the user
-  (`source="model-general"`), not discarded. `chat` makes no decision and stores
-  nothing.
-- **Output stays untrusted** — never executed, never a path, never published to
-  the bus (`chat` does not emit `USER_MESSAGE`).
+- **The input is first-party and deterministic** — a summary built from the
+  target file's own module docstring and top-level defs (`interface/describe.py`,
+  `ast` only), for a path validated to sit inside the repo. Not model-chosen
+  context, not user free text, so there is no untrusted-content path into the
+  prompt. The `tell` command already answered from those same facts with no
+  model at all.
+- **Bounded output** — `EXPLAIN_MAX_TOKENS`, a wall-clock timeout, and
+  `clean_explain_answer` (strip echo/fences, cap sentences). A timeout or empty
+  result just drops the paraphrase; the deterministic block still stands.
+- **Advisory, never a decision** — the paraphrase is shown *below* the facts and
+  labelled a model paraphrase. `explain` makes no decision, stores nothing, and
+  does not publish to the bus.
+- **Output stays untrusted** — never executed, never treated as a path.
+
+(The earlier `$` / `$?` / `chat` interactive paths were removed in B12 — see
+`RESEARCH_DOSSIER.md`. The graph and its retrieval primitives are unchanged.)
 
 ## 5. Action layer safety
 
