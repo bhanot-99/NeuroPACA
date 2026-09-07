@@ -1,26 +1,26 @@
 """L9 · `InterfaceLayer` — the only module that talks to the human
 (Architecture.md §9, B5).
 
-Shape:
+Shape (B5, re-scoped in B12):
 - a **Unix-domain socket** at ``$XDG_RUNTIME_DIR/neuropaca.sock`` (JSONL framing:
-  one JSON request per line, one JSON response per line) is the daemon-side of
-  the `$` shell grammar. The thin CLI (`interface/cli.py`) is the only client.
-- retrieval (`_build_context`) is `search_by_label` -> `find_related` -> rank by
-  `relevance_score` -> keep what fits `max_context_tokens * 4` characters (B4).
-  Zero inference in retrieval (rules.md §4).
-- `_generate_response` routes `$` / `$?` to the **interactive** model
-  (`BitNetRuntime.infer_async(interactive=True)`, D-12) behind a GBNF grammar and
-  the `parse_answer` grounding gate; anything ungrounded, timed out, or a missing
-  interactive model falls back to an **extractive template** — never a raw model
-  string.
-- `$!` / `$$` are live from B7: L9 parses them and publishes `USER_MESSAGE`; L7
-  owns what they mean and answers through its own gate. L9 never executes
-  anything — it relays the request and, later, the confirmation prompt.
-- L9 is the human end of the L7 confirmation handshake (D-14): it holds the
-  `ACTION_CONFIRMATION_REQUEST`s L7 is blocked on (`confirmations`), sends the
-  human's verdict back as `ACTION_CONFIRMATION_RESPONSE` (`confirm`), and
-  delivers L7's notification *intents* (`notifications`) — L7 itself never
-  touches the desktop.
+  one JSON request per line, one JSON response per line). The thin CLI
+  (`interface/cli.py`) is the only client. Ops: `health`, `insights`,
+  `notifications`, `confirmations`, `confirm`, `run`, `explain`.
+- the terminal is a **read-only project guide** now: `neuropaca tell` / `overview`
+  answer deterministically on the client side (`interface/describe.py`) and never
+  reach this module. There is no natural-language query of the behavioural graph
+  here any more — that path (`$` / `$?`, `chat`, `KnowledgeIndex`) was removed.
+- **`run`** (B7, D-14) — L9 publishes `USER_MESSAGE` with the internal `prefix`
+  enum (`$!` = run, `$$` = run + state backup) and returns `queued` immediately.
+  L7 owns what it means and answers through its own gate; L9 never executes
+  anything. It is the human end of the confirmation handshake: it holds the
+  `ACTION_CONFIRMATION_REQUEST`s L7 is blocked on (`confirmations`), relays the
+  verdict as `ACTION_CONFIRMATION_RESPONSE` (`confirm`), and delivers L7's
+  notification *intents* (`notifications`) — L7 never touches the desktop.
+- **`explain`** (B12) — the one free-decode call (rules.md §4.1 carve-out): the
+  interactive model paraphrases a first-party file summary the client generated.
+  Bounded, advisory, never executed / stored / published. A missing interactive
+  model just means no paraphrase.
 - `conversation_history` is a `list[Message]` in RAM only — never disk, graph, or
   log; every logged IPC payload goes through `redact()` (rules.md §6, PRD §8.5).
 - health: L9 cannot import L10, so `health` publishes `SYSTEM_HEALTH_REQUEST` and
@@ -44,38 +44,25 @@ from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.context import format_node_line
 from neuropaca.core.enums import EventType, MessageRole, NodeType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.logging import redact
-from neuropaca.core.models import Event, Node, system_error_event
-from neuropaca.interface.knowledge import KnowledgeIndex, default_doc_paths
+from neuropaca.core.models import Event, system_error_event
 from neuropaca.interface.message import Message
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
-    ANSWER_MAX_TOKENS,
-    CHAT_MAX_TOKENS,
-    alias_nodes,
-    build_answer_grammar,
-    build_answer_prompt,
-    build_chat_prompt,
-    clean_chat_answer,
-    parse_answer,
+    EXPLAIN_MAX_TOKENS,
+    build_explain_prompt,
+    clean_explain_answer,
 )
-from neuropaca.sensing.snapshot import MetricSnapshot
 
 _log = logging.getLogger(__name__)
 
-_CHARS_PER_TOKEN = 4  # B4 — cheap tokenizer-free proxy for context truncation
 _MAX_HISTORY = 50  # conversation_history turns kept in RAM (blueprint max_history_length)
-_CONTEXT_SEEDS = 5
-_CONTEXT_NODES = 8
-_INFER_TIMEOUT = 30.0  # CPU interactive inference wall-clock ceiling (rules.md §1)
-_CHAT_INFER_TIMEOUT = 45.0  # B11 — a `chat` paragraph is a longer completion than a `$?` sentence
+_EXPLAIN_INFER_TIMEOUT = 45.0  # B12 — CPU wall-clock ceiling for the `tell --explain` paraphrase
 _HEALTH_TIMEOUT = 2.0
-_INTERACTIVE_TEMPERATURE = 0.3  # rules.md §4.1 — ~0.4 allowed for $ / $? only
 
 # Insight surfacing (B5, B3; B6 adds `proactive` — L6 idle thoughts, D-13)
 _INSIGHT_MIN_CONFIDENCE = 0.75
@@ -83,11 +70,11 @@ _SURFACEABLE_CATEGORIES = frozenset({"anomaly", "distraction", "proactive"})
 _DAILY_INSIGHT_CAP = 3
 _SURFACEABLE_NODE_PREFIXES = ("insight:", "idle:")
 
-_QUERY_PREFIXES = frozenset({"$", "$?"})
-# B7: the two action prefixes. L9 relays them to L7 and returns immediately —
-# a dangerous action then waits on a *separate* confirmation round-trip, so the
-# query socket is never held open for the length of a human decision.
-_COMMAND_PREFIXES = frozenset({"$!", "$$"})
+# B7 (surfaced as `neuropaca run` since B12): L9 relays a command to L7 as
+# `USER_MESSAGE` and returns immediately — a dangerous action then waits on a
+# *separate* confirmation round-trip, so the socket is never held open for the
+# length of a human decision. `$!` (run) / `$$` (run + state backup) are the
+# internal wire enum L7 dispatches on; the user types `run` / `run --backup`.
 _MAX_PENDING_NOTIFICATIONS = 50
 # Surface-once bookkeeping is the only state here that outlives the node it
 # describes: an INSIGHT / IDLE_THOUGHT is pruned at its 48 h TTL, but its id had
@@ -129,7 +116,6 @@ class InterfaceLayer(BaseModule):
         self._socket_path = Path(socket_path) if socket_path is not None else default_socket_path()
         self._server: asyncio.Server | None = None
         self._conversation_history: list[Message] = []
-        self._last_snapshot: MetricSnapshot | None = None
         self._latest_health: dict[str, Any] | None = None
         self._health_waiters: list[asyncio.Future[dict[str, Any] | None]] = []
         self._pending_insights: list[Insight] = []
@@ -142,13 +128,11 @@ class InterfaceLayer(BaseModule):
         self._queries = 0
         self._errors = 0
         self._interactive_disabled = False  # set once the interactive model is proven absent
-        self._knowledge: KnowledgeIndex | None = None  # B11 · project-doc corpus, built at start()
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.subscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
-        self.event_bus.subscribe(EventType.METRIC_COLLECTED, self._on_metric)
         # B7 (D-14): L7 publishes intents and confirmation prompts; L9 is the
         # only module that may turn either into something a human sees.
         self.event_bus.subscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
@@ -169,23 +153,8 @@ class InterfaceLayer(BaseModule):
         with contextlib.suppress(OSError):
             os.chmod(self._socket_path, 0o600)  # owner-only (rules.md §6 spirit)
         self._rehydrate_surfaced_ids()
-        self._build_knowledge_index()
         self.is_running = True
         _log.info("L9 interface listening on %s", self._socket_path)
-
-    def _build_knowledge_index(self) -> None:
-        """B11 · load the project-doc corpus for `chat`. Optional, like the
-        interactive model — a build failure is logged and leaves `chat` running
-        on the graph + model alone; it never blocks startup."""
-        if not self.config.knowledge_enabled:
-            _log.info("L9 knowledge corpus disabled (knowledge_enabled=false)")
-            return
-        paths = self.config.knowledge_paths or default_doc_paths()
-        try:
-            self._knowledge = KnowledgeIndex.from_paths(paths)
-        except Exception:
-            _log.exception("L9 knowledge index build failed — chat falls back to graph + model")
-            self._knowledge = None
 
     def _rehydrate_surfaced_ids(self) -> None:
         """Surface-once survives a restart: any INSIGHT node already stamped
@@ -209,7 +178,6 @@ class InterfaceLayer(BaseModule):
         self.is_running = False
         self.event_bus.unsubscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
-        self.event_bus.unsubscribe(EventType.METRIC_COLLECTED, self._on_metric)
         self.event_bus.unsubscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
         self.event_bus.unsubscribe(
             EventType.ACTION_CONFIRMATION_REQUEST, self.on_confirmation_request
@@ -227,9 +195,7 @@ class InterfaceLayer(BaseModule):
             name=self.name,
             ok=self.is_running and self._server is not None,
             detail=(
-                f"socket {self._socket_path.name} · {self._queries} queries · "
-                f"{len(self._conversation_history)} turns · "
-                f"{len(self._knowledge) if self._knowledge else 0} doc chunks · "
+                f"socket {self._socket_path.name} · {self._queries} requests · "
                 f"{self._surfaced_today} insights surfaced today · "
                 f"{len(self._pending_confirmations)} confirmations waiting · "
                 f"{self._errors} errors"
@@ -237,11 +203,6 @@ class InterfaceLayer(BaseModule):
         )
 
     # ------------------------------------------------------------ bus handlers
-    async def _on_metric(self, event: Event) -> None:
-        snap = event.payload.get("snapshot")
-        if isinstance(snap, MetricSnapshot) and snap.collector_name == "system":
-            self._last_snapshot = snap
-
     async def _on_health_report(self, event: Event) -> None:
         health = event.payload.get("health")
         self._latest_health = health if isinstance(health, dict) else None
@@ -468,12 +429,15 @@ class InterfaceLayer(BaseModule):
         if op == "confirm":
             request_id = str(req.get("request_id", ""))
             return self._answer_confirmation(request_id, bool(req.get("approved", False)))
-        if op == "query":
-            prefix = str(req.get("prefix", "$"))
-            text = str(req.get("text", "")).strip()
-            return await self.on_user_input(prefix, text)
-        if op == "chat":
-            return await self._chat(str(req.get("text", "")).strip())
+        if op == "run":
+            self._queries += 1
+            prefix = "$$" if req.get("backup") else "$!"
+            return self._relay_command(prefix, str(req.get("cmd", "")).strip())
+        if op == "explain":
+            self._queries += 1
+            return await self._explain(
+                str(req.get("target", "")).strip(), str(req.get("summary", "")).strip()
+            )
         return {"ok": False, "error": f"unknown op: {op!r}"}
 
     async def _request_health(self) -> dict[str, Any] | None:
@@ -491,129 +455,17 @@ class InterfaceLayer(BaseModule):
             if fut in self._health_waiters:
                 self._health_waiters.remove(fut)
 
-    # ------------------------------------------------------------ query pipeline
-    async def on_user_input(self, prefix: str, text: str) -> dict[str, Any]:
-        """Parse one `$`-grammar turn.
-
-        `$` / `$?` are answered here. `$!` / `$$` are *commands*: L9 publishes
-        `USER_MESSAGE` and returns immediately — L7 decides what they mean, and a
-        dangerous action comes back as a separate confirmation prompt rather than
-        holding this socket open (B7, D-14)."""
-        self._queries += 1
-        if prefix in _COMMAND_PREFIXES:
-            return self._relay_command(prefix, text)
-        if prefix not in _QUERY_PREFIXES:
-            return {"ok": False, "error": f"unknown prefix: {prefix!r}"}
-        if not text:
-            return {"ok": False, "error": "empty query"}
-
-        self._store_message(MessageRole.USER, text)
-        self.event_bus.publish(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                source="interface",
-                payload={"text": text, "prefix": prefix},
-            )
-        )
-
-        context = self._build_context(text)
-        answer, cited, confidence, source = await self._generate_response(
-            text, context, diagnose=(prefix == "$?")
-        )
-        self._store_message(MessageRole.ASSISTANT, answer, tuple(cited))
-        return {
-            "ok": True,
-            "answer": answer,
-            "cited": list(cited),
-            "confidence": round(confidence, 3),
-            "source": source,
-        }
-
-    async def _chat(self, text: str) -> dict[str, Any]:
-        """B11 · the project-aware conversational answer.
-
-        Retrieval is the repo docs (`self._knowledge`) plus a live snapshot line
-        — zero-inference and deterministic. The **behavioural graph is not
-        searched here**: `search_by_label` matches on common words and would cite
-        an unrelated `idle:` / `app:` node on almost every question; graph
-        grounding is what `$` / `$?` are for. The interactive model writes the
-        prose **free-decoded** (the one L9 call exempt from rules.md §4.1's
-        per-call grammar). `grounded` is set from whether a doc matched; an
-        ungrounded answer is flagged (`source="model-general"`), never
-        suppressed. Unlike `$` / `$?` this does **not** publish `USER_MESSAGE` —
-        `chat` is a read-only Q&A turn."""
-        self._queries += 1
-        if not text:
-            return {"ok": False, "error": "empty question"}
-
-        history = [(m.role.value, m.content) for m in self._conversation_history[-4:]]
-        self._store_message(MessageRole.USER, text)
-
-        doc_chunks = (
-            self._knowledge.search(text, max_chars=self.config.knowledge_max_chars)
-            if self._knowledge is not None
-            else []
-        )
-        grounded = bool(doc_chunks)
-        cited = [c.cite for c in doc_chunks]
-
-        prompt = build_chat_prompt(
-            text,
-            doc_block="\n\n".join(f"[{c.cite}]\n{c.text}" for c in doc_chunks),
-            live_line=self._live_snapshot_line(),
-            history=history,
-        )
-
-        answer: str | None = None
-        if await self._ensure_interactive_model():
-            raw = await self._infer(
-                prompt,
-                None,
-                temperature=self.config.chat_temperature,
-                max_tokens=CHAT_MAX_TOKENS,
-                wall_clock_s=_CHAT_INFER_TIMEOUT,
-            )
-            answer = clean_chat_answer(raw) if raw is not None else None
-
-        if answer is not None:
-            source = "model" if grounded else "model-general"
-            confidence = 0.7 if grounded else 0.3
-        else:
-            answer, source, confidence = self._chat_fallback(doc_chunks)
-
-        self._store_message(MessageRole.ASSISTANT, answer, tuple(cited))
-        return {
-            "ok": True,
-            "answer": answer,
-            "cited": cited,
-            "confidence": round(confidence, 3),
-            "source": source,
-            "grounded": grounded,
-        }
-
-    @staticmethod
-    def _chat_fallback(doc_chunks: list[Any]) -> tuple[str, str, float]:
-        """No interactive model, or it returned nothing usable. Answer
-        extractively from the top doc chunk, or say plainly that the model is
-        needed."""
-        if doc_chunks:
-            top = doc_chunks[0]
-            return (f"{top.cite}: {top.snippet()}", "template", 0.4)
-        return (
-            "I can't answer that without the interactive model, and it isn't loaded "
-            "— see `neuropaca health`.",
-            "template-nomodel",
-            0.0,
-        )
-
+    # ------------------------------------------------------------ run relay (B7)
     def _relay_command(self, prefix: str, text: str) -> dict[str, Any]:
-        """Hand `$!` / `$$` to L7 over the bus. L9 holds no gate of its own — it
-        does not decide, back up, sandbox, or execute anything. It also does not
-        pre-empt L7's refusal: an empty command is the one thing it can reject
-        without guessing at L7's policy."""
+        """Hand a `neuropaca run` command to L7 over the bus. `prefix` is the
+        internal wire enum L7 dispatches on — `$!` (run) or `$$` (run + state
+        backup). L9 holds no gate of its own: it does not decide, back up,
+        sandbox, or execute anything, and it does not pre-empt L7's refusal. An
+        empty command is the one thing it can reject without guessing at L7's
+        policy."""
         if not text:
             return {"ok": False, "error": "empty command", "prefix": prefix}
-        self._store_message(MessageRole.USER, f"{prefix} {text}")
+        self._store_message(MessageRole.USER, f"run {text}")
         self.event_bus.publish(
             Event(
                 event_type=EventType.USER_MESSAGE,
@@ -631,64 +483,29 @@ class InterfaceLayer(BaseModule):
             )
         return {"ok": True, "queued": True, "prefix": prefix, "note": note}
 
-    def _build_context(self, query: str) -> list[Node]:
-        """Retrieval: label search -> 1-hop neighbourhood -> rank by score
-        (Architecture.md §9). Pure graph reads, zero inference."""
-        seeds = self._graph.search_by_label(query, limit=_CONTEXT_SEEDS)
-        pool: dict[str, Node] = {n.id: n for n in seeds}
-        for seed in seeds:
-            for neighbour in self._graph.find_related(seed.id, depth=1):
-                pool.setdefault(neighbour.id, neighbour)
-        ranked = sorted(pool.values(), key=lambda n: (-n.relevance_score, n.label))
-        return ranked[:_CONTEXT_NODES]
+    # ------------------------------------------------------------ tell --explain
+    async def _explain(self, target: str, summary: str) -> dict[str, Any]:
+        """B12 · the one free-decode L9 call (rules.md §4.1 carve-out).
 
-    def _live_snapshot_line(self) -> str | None:
-        snap = self._last_snapshot
-        if snap is None:
-            return None
-        cpu = snap.data.get("cpu_percent")
-        mem = snap.data.get("mem_percent")
-        return f"cpu {cpu}% · mem {mem}%" if cpu is not None else None
-
-    async def _generate_response(
-        self, query: str, context: list[Node], *, diagnose: bool
-    ) -> tuple[str, tuple[str, ...], float, str]:
-        if not context:
-            return ("Nothing in the graph matches that yet.", (), 0.0, "template")
-
-        kept = self._nodes_within_budget(context)
-        aliased = alias_nodes(kept)
-        aliases = [a for a, _ in aliased]
-        alias_to_id = {a: n.id for a, n in aliased}
-        alias_to_label = {a: n.label for a, n in aliased}
-        grammar = build_answer_grammar(aliases)
-        prompt = build_answer_prompt(
-            query, aliased, live_snapshot=self._live_snapshot_line() if diagnose else None
-        )
-
-        if not await self._ensure_interactive_model():
-            return self._template_answer(kept)
-
-        raw = await self._infer(prompt, grammar, temperature=_INTERACTIVE_TEMPERATURE)
-        answer = parse_answer(raw, alias_to_id, alias_to_label) if raw is not None else None
-        if answer is None and diagnose:  # one tighter retry, $? only (rules.md §4.1)
-            raw = await self._infer(prompt, grammar, temperature=0.0)
-            answer = parse_answer(raw, alias_to_id, alias_to_label) if raw is not None else None
-        if answer is None:
-            return self._template_answer(kept)
-        return (answer.text, answer.cited_node_ids, answer.confidence, "model")
-
-    def _nodes_within_budget(self, context: list[Node]) -> list[Node]:
-        budget = self.config.max_context_tokens * _CHARS_PER_TOKEN
-        kept: list[Node] = []
-        used = 0
-        for node in context:
-            line = format_node_line(node.id, node)
-            if used + len(line) + 1 > budget:
-                break
-            kept.append(node)
-            used += len(line) + 1
-        return kept or context[:1]
+        `neuropaca tell <path>` already answered deterministically from the
+        file's docstring and defs; this optional step asks the interactive model
+        to paraphrase that summary in plain words. The model's **input** is a
+        first-party summary the client generated from repo docstrings — never
+        model-chosen context, never user free text — and its **output** is
+        bounded (`EXPLAIN_MAX_TOKENS`, wall clock, `clean_explain_answer`), never
+        executed, never a path, never published, never stored. A timeout / empty
+        result just drops the paraphrase; the deterministic block still stands.
+        """
+        if not summary:
+            return {"ok": False, "error": "nothing to explain"}
+        prompt = build_explain_prompt(target or "this file", summary)
+        answer: str | None = None
+        if await self._ensure_interactive_model():
+            raw = await self._infer(prompt, temperature=self.config.explain_temperature)
+            answer = clean_explain_answer(raw) if raw is not None else None
+        if answer:
+            return {"ok": True, "answer": answer, "source": "model", "confidence": 0.6}
+        return {"ok": True, "answer": "", "source": "template-nomodel", "confidence": 0.0}
 
     async def _ensure_interactive_model(self) -> bool:
         if self._interactive_disabled or not self._runtime.interactive_configured:
@@ -698,41 +515,23 @@ class InterfaceLayer(BaseModule):
         loaded = await self._runtime.load_interactive_model_async()
         if not loaded:
             self._interactive_disabled = True
-            _log.warning("L9 interactive model unavailable — answering from templates")
+            _log.warning("L9 interactive model unavailable — `tell --explain` stays deterministic")
         return loaded
 
-    async def _infer(
-        self,
-        prompt: str,
-        grammar: str | None,
-        *,
-        temperature: float,
-        max_tokens: int = ANSWER_MAX_TOKENS,
-        wall_clock_s: float = _INFER_TIMEOUT,
-    ) -> str | None:
+    async def _infer(self, prompt: str, *, temperature: float) -> str | None:
         try:
             return await asyncio.wait_for(
                 self._runtime.infer_async(
-                    prompt, max_tokens, temperature, grammar, interactive=True
+                    prompt, EXPLAIN_MAX_TOKENS, temperature, None, interactive=True
                 ),
-                wall_clock_s,
+                _EXPLAIN_INFER_TIMEOUT,
             )
         except TimeoutError:
-            _log.warning("L9 interactive inference timed out after %ss", wall_clock_s)
+            _log.warning("L9 interactive inference timed out after %ss", _EXPLAIN_INFER_TIMEOUT)
             return None
-        except Exception:  # a model crash (context overflow, backend fault) → fall back, don't 500
-            _log.exception("L9 interactive inference failed — falling back to a template answer")
+        except Exception:  # a model crash (context overflow, backend fault) → drop the paraphrase
+            _log.exception("L9 interactive inference failed — dropping the paraphrase")
             return None
-
-    @staticmethod
-    def _template_answer(nodes: list[Node]) -> tuple[str, tuple[str, ...], float, str]:
-        top = nodes[0]
-        return (
-            f"{top.label} looks most relevant (relevance {top.relevance_score:.1f}).",
-            (top.id,),
-            0.4,
-            "template",
-        )
 
     # ------------------------------------------------------------ history / output
     def _store_message(

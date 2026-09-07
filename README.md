@@ -73,8 +73,10 @@ That single number governs **retention** (low, long-untouched nodes are pruned),
 It passively watches **cold OS-level numbers** (CPU, RAM, disk, temperature, processes, system
 logs, Wayland idle/focus events) every 60 seconds, turns them into **named behavioural patterns**
 with a rule-based correlator (no inference in that path, by design), and stores them in a personal
-knowledge graph. When you ask a question in the terminal, it answers from that graph, grounded in
-real nodes, using an in-process quantised model.
+knowledge graph. Insights it surfaces, and — behind a hard safety gate — actions it can take, all
+come from that graph. The terminal client is a **read-only project guide**: predefined commands
+that report daemon state (`health`, `insights`, …) or explain the codebase itself
+(`neuropaca tell <path>`, `neuropaca overview`).
 
 ```mermaid
 flowchart LR
@@ -117,7 +119,7 @@ product, or a GPU project. Those are stated scope boundaries, not omissions.
 | **Linux** | Developed and soaked on Pop!\_OS (Wayland). macOS/Windows: the daemon runs but the Wayland `ActivityCollector` self-disables. |
 | **Python 3.12** | `requires-python = ">=3.12"`. |
 | **[uv](https://docs.astral.sh/uv/)** | The only supported dependency manager (`uv.lock` is committed; CI runs `uv sync --locked`). |
-| **~5 GB free RAM** | Only to *run the daemon with inference* — idle daemon is ~40 MB, BitNet adds ~1.4 GB, Qwen adds ~3.25 GB when you ask a `$` question. Running the **test suite** needs none of this. |
+| **~5 GB free RAM** | Only to *run the daemon with inference* — idle daemon is ~40 MB, BitNet adds ~1.4 GB, Qwen adds ~3.25 GB the first time you run `neuropaca tell … --explain`. Running the **test suite** needs none of this. |
 | A C toolchain + `libwayland-dev` | Only for the optional `llama` / `activity` extras. Not needed for tests, lint, or type-checking. |
 
 ### Clone and set up
@@ -210,48 +212,49 @@ The CLI is a thin client over a Unix socket
 (`--socket PATH` > `$NEUROPACA_SOCKET` > `$XDG_RUNTIME_DIR/neuropaca.sock`).
 
 ```bash
-neuropaca                                     # no args → the interactive shell (below)
+neuropaca                                     # no args → the command menu (below)
 neuropaca help                                # the full guide
 
-neuropaca chat "how is the graph stored"     # project docs + general Q&A, docs first
-neuropaca ask "what's using my CPU"          # $  — grounded answer from your graph
-neuropaca diagnose "why is the disk full"    # $? — + a live system snapshot
+neuropaca overview                            # what NeuroPACA is + the L1-L10 layer map
+neuropaca tell src/neuropaca/drive/pressure.py    # what a file or folder does
+neuropaca tell drive/pressure.py --explain    # + a plain-words model paraphrase (needs the daemon)
+
 neuropaca health                             # daemon + module health
 neuropaca insights                           # surfaced insights (anomaly / distraction)
-
-neuropaca "$! pkill -f webpack"              # $! — run a command (needs confirmation)
-neuropaca "$$ systemctl --user restart x"    # $$ — same, state backed up first
 neuropaca notifications                       # what the action layer wants to tell you
 neuropaca confirmations                       # dangerous actions waiting on you
 neuropaca confirm <id> [--deny]               # answer one
+neuropaca run "pkill -f webpack"              # hand a command to the action layer (needs confirmation)
+neuropaca run --backup "systemctl --user restart x"   # same, daemon state backed up first
 
 neuropaca doctor                              # offline diagnosis, no daemon needed
 neuropaca export <path> [--force]             # dump the graph out of data/
 neuropaca panic [--yes]                       # kill the daemon and wipe all state
 ```
 
-#### The interactive shell
+`tell` accepts a file or a folder, and is forgiving about the path: `root/…`,
+`src/neuropaca/…`, a bare `layer.py`, or a directory all resolve. It reads the
+target's module docstring and its top-level classes/functions — deterministic,
+and it works with no daemon. `--explain` adds one optional step: the daemon's
+interactive model paraphrases that summary in plain words, clearly flagged,
+*after* the facts.
 
-`$` and `!` fight the shell (variable expansion, history expansion), so the
-prefix forms above have to be quoted. Run `neuropaca` with **no arguments** to
-drop into a `neuropaca>` prompt where the sigils are typed bare:
+#### The command menu
+
+Run `neuropaca` with **no arguments** to drop into a `neuropaca>` prompt. It
+accepts the same predefined verbs, unquoted — nothing else. A line whose first
+word is not a verb is a short error, never a free-text question.
 
 ```
-neuropaca> how is the behavioural graph stored   # a bare line is a chat question
-neuropaca> $doctor                     # → the doctor verb
-neuropaca> $health                     # → the health verb
-neuropaca> !ask what's eating my CPU   # → ask "what's eating my CPU"
-neuropaca> ?why is the disk full       # → diagnose "…"
-neuropaca> $ how many meetings today   # the raw prefixes work unquoted in here
+neuropaca> tell src/neuropaca/interface/layer.py
+neuropaca> overview
+neuropaca> health
+neuropaca> run "pkill -f webpack"
 neuropaca> help        quit
 ```
 
 Each line is translated to the exact `neuropaca` argv and run through the same
-path (`src/neuropaca/interface/repl.py`). The one convenience beyond the sigils:
-a line that is not a recognised verb is sent as a `chat` question, so the shell
-answers anything — questions about NeuroPaca's own internals (graph storage,
-monitoring, file handling) drawn from the repo docs, with anything not backed by
-a doc flagged as general knowledge.
+path (`src/neuropaca/interface/repl.py`) — the client stays thin.
 
 **The action layer ships inert.** `action_dry_run = True` and only the `safe` tier is enabled, so a
 fresh install describes what it *would* do and does nothing. Even turned on: a dangerous action

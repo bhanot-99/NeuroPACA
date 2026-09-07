@@ -1,7 +1,11 @@
-"""B5 · Interface (L9) — schemas, retrieval, dual-model routing, IPC, surfacing.
+"""B5/B12 · Interface (L9) — retrieval, the interactive-model seam, IPC, surfacing.
 
-Grouped by the phase's implementation steps. No test loads a real model
-(rules.md §8) and no test sleeps (`FakeClock`).
+Since B12 the terminal is a read-only project guide: no `$` grammar, no `chat`,
+no natural-language graph query. What remains on the socket is `health`,
+`insights`, `notifications`, `confirmations`, `confirm`, `run`, `explain`.
+`tell` / `overview` are client-side and deterministic (`tests/test_describe.py`).
+
+No test loads a real model (rules.md §8) and no test sleeps (`FakeClock`).
 """
 
 from __future__ import annotations
@@ -19,20 +23,14 @@ from neuropaca.core.enums import EventType, MessageRole, NodeType, SignalType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.inference import FakeInferenceBackend, create_interactive_backend
-from neuropaca.core.models import Event, Node
+from neuropaca.core.models import Event
 from neuropaca.interface import cli
 from neuropaca.interface.layer import InterfaceLayer
 from neuropaca.interface.message import Message
 from neuropaca.learning.insight import Insight
-from neuropaca.learning.prompts import (
-    alias_nodes,
-    build_answer_grammar,
-    build_answer_prompt,
-    parse_answer,
-)
 
 # --------------------------------------------------------------------------- 1
-# Core schemas & retrieval
+# Core retrieval primitive (still used by GraphMemory; L9 no longer calls it)
 
 
 async def _graph(tmp_path) -> GraphMemory:
@@ -50,23 +48,6 @@ async def test_search_by_label_substring_is_case_insensitive(tmp_path) -> None:
     assert [n.id for n in hits] == ["app:code"]
 
 
-async def test_search_by_label_exact_hub_match_seeds_the_domain(tmp_path) -> None:
-    gm = await _graph(tmp_path)
-    hits = gm.search_by_label("what have I been doing in engineering today")
-    assert "domain:engineering" in {n.id for n in hits}
-
-
-async def test_search_by_label_ranks_by_relevance_and_caps(tmp_path) -> None:
-    gm = await _graph(tmp_path)
-    for i in range(5):
-        await gm.add_node(f"app:cpu{i}", NodeType.APP, {"label": f"cpu hog {i}"})
-    await gm.update_node("app:cpu3", {"relevance_score": 9.0})
-
-    hits = gm.search_by_label("cpu", limit=2)
-    assert len(hits) == 2
-    assert hits[0].id == "app:cpu3"
-
-
 async def test_search_by_label_empty_query_returns_nothing(tmp_path) -> None:
     gm = await _graph(tmp_path)
     assert gm.search_by_label("   ") == []
@@ -80,68 +61,19 @@ def test_message_role_is_an_enum_not_a_string() -> None:
 
 
 # --------------------------------------------------------------------------- 2
-# Dual-backend inference & the $? prompt / grammar / gate
-
-
-def _nodes() -> list[Node]:
-    return [
-        Node(id="app:webpack", node_type=NodeType.APP, label="webpack", relevance_score=8.1),
-        Node(id="file:/src/app", node_type=NodeType.FILE, label="/src/app", relevance_score=7.4),
-    ]
-
-
-def test_build_answer_grammar_rejects_non_aliases() -> None:
-    with pytest.raises(ValueError, match="local alias"):
-        build_answer_grammar(["app:webpack"])
-    with pytest.raises(ValueError, match="at least one"):
-        build_answer_grammar([])
-
-
-def test_parse_answer_accepts_a_grounded_sentence() -> None:
-    raw = '{"insight": "webpack is pinning a core.", "cited_nodes": ["n1"], "confidence": 0.8}'
-    ans = parse_answer(raw, {"n1": "app:webpack"}, {"n1": "webpack"})
-    assert ans is not None
-    assert ans.cited_node_ids == ("app:webpack",)
-    assert ans.confidence == 0.8
-
-
-def test_parse_answer_discards_an_ungrounded_sentence() -> None:
-    raw = '{"insight": "Something is slow.", "cited_nodes": ["n1"], "confidence": 0.8}'
-    assert parse_answer(raw, {"n1": "app:webpack"}, {"n1": "webpack"}) is None
-
-
-def test_parse_answer_discards_abstain_and_bad_vocab() -> None:
-    assert parse_answer('{"insight": null, "cited_nodes": [], "confidence": 0.0}', {}, {}) is None
-    raw = '{"insight": "webpack is busy", "cited_nodes": ["n9"], "confidence": 0.5}'
-    assert parse_answer(raw, {"n1": "app:webpack"}, {"n1": "webpack"}) is None
-
-
-def test_fake_backend_answers_the_dollar_query_grammar_with_a_grounded_citation() -> None:
-    aliased = alias_nodes(_nodes())
-    aliases = [a for a, _ in aliased]
-    grammar = build_answer_grammar(aliases)
-    prompt = build_answer_prompt("what is using my CPU?", aliased)
-
-    raw = FakeInferenceBackend().infer(prompt, 96, 0.0, grammar)
-    ans = parse_answer(
-        raw,
-        {a: n.id for a, n in aliased},
-        {a: n.label for a, n in aliased},
-    )
-    assert ans is not None
-    assert ans.cited_node_ids == ("app:webpack",)
+# The interactive-model seam — now used only by `tell --explain` (B12)
 
 
 async def test_bitnet_runtime_routes_interactive_to_the_second_backend() -> None:
-    loop_be, chat_be = FakeInferenceBackend(), FakeInferenceBackend()
-    rt = BitNetRuntime.get_instance(loop_be, chat_be)
+    loop_be, explain_be = FakeInferenceBackend(), FakeInferenceBackend()
+    rt = BitNetRuntime.get_instance(loop_be, explain_be)
     assert rt.interactive_configured
 
     await rt.infer_async("loop prompt", 16)
-    await rt.infer_async("chat prompt", 16, interactive=True)
+    await rt.infer_async("explain prompt", 16, interactive=True)
 
     assert [c[0] for c in loop_be.calls] == ["loop prompt"]
-    assert [c[0] for c in chat_be.calls] == ["chat prompt"]
+    assert [c[0] for c in explain_be.calls] == ["explain prompt"]
 
 
 async def test_bitnet_runtime_falls_back_to_loop_model_when_no_interactive_backend() -> None:
@@ -158,7 +90,7 @@ def test_create_interactive_backend_is_none_without_a_path() -> None:
     assert create_interactive_backend(Config(inference_backend="fake")) is not None
 
 
-def test_insight_extractive_grammar_still_works_after_the_dollar_branch() -> None:
+def test_insight_extractive_grammar_still_works() -> None:
     from neuropaca.learning.prompts import build_insight_grammar, parse_insight
 
     g = build_insight_grammar(["n1"])
@@ -167,6 +99,18 @@ def test_insight_extractive_grammar_still_works_after_the_dollar_branch() -> Non
         raw, {"n1": "app:x"}, source_signal=SignalType.HIGH_LOAD, confidence=0.9, snapshot_count=1
     )
     assert ins is not None and ins.cited_node_ids == ("app:x",)
+
+
+def test_fake_backend_paraphrases_an_explain_prompt() -> None:
+    from neuropaca.learning.prompts import build_explain_prompt, clean_explain_answer
+
+    prompt = build_explain_prompt(
+        "src/neuropaca/interface/cli.py",
+        "File: src/neuropaca/interface/cli.py\n\nThe thin CLI client.",
+    )
+    out = FakeInferenceBackend().infer(prompt, 260, 0.3, None)
+    cleaned = clean_explain_answer(out)
+    assert cleaned and "cli.py" in cleaned
 
 
 # --------------------------------------------------------------------------- 3
@@ -190,9 +134,6 @@ class _Wired:
 async def _wired(
     tmp_path, *, clock: FakeClock | None = None, interactive: bool = True, **cfg
 ) -> _Wired:
-    # The B11 doc corpus is off by default here — a chat test opts in with
-    # `knowledge_enabled=True, knowledge_paths=[...]` pointing at a tmp file.
-    cfg.setdefault("knowledge_enabled", False)
     bus = EventBus.get_instance()
     await bus.start()
     graph = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
@@ -223,25 +164,13 @@ async def _teardown(w: _Wired) -> None:
     await w.bus.stop()
 
 
-async def test_socket_query_answers_dollar_with_a_grounded_node_label(tmp_path) -> None:
-    """B5 exit: `$ what's using my CPU` -> an answer citing real node labels."""
-    w = await _wired(tmp_path)
-    try:
-        resp = await w.request({"op": "query", "prefix": "$", "text": "what's using my CPU"})
-    finally:
-        await _teardown(w)
+async def test_run_is_relayed_to_l7_not_executed(tmp_path) -> None:
+    """B7 (D-14), surfaced as `neuropaca run` since B12: L9 hands the command to
+    the action layer and returns at once.
 
-    assert resp["ok"] is True
-    assert resp["source"] == "model"
-    assert "webpack (cpu heavy)" in resp["answer"]  # a real node label
-    assert resp["cited"] == ["app:webpack"]
-
-
-async def test_bang_and_double_dollar_are_relayed_to_l7_not_executed(tmp_path) -> None:
-    """B7 (D-14): L9 hands `$!` / `$$` to the action layer and returns at once.
-
-    It publishes exactly one `USER_MESSAGE` per command carrying the prefix, and
-    it answers `queued` — never an answer, and never an effect of its own."""
+    It publishes exactly one `USER_MESSAGE` per command carrying the internal
+    `prefix` enum (`$!` = run, `$$` = run + backup), and answers `queued` — never
+    an answer, never an effect of its own."""
     w = await _wired(tmp_path)
     seen: list[tuple[str, str]] = []
 
@@ -250,18 +179,68 @@ async def test_bang_and_double_dollar_are_relayed_to_l7_not_executed(tmp_path) -
 
     w.bus.subscribe(EventType.USER_MESSAGE, spy)
     try:
-        bang = await w.request({"op": "query", "prefix": "$!", "text": "kill it"})
-        dd = await w.request({"op": "query", "prefix": "$$", "text": "clean up"})
-        empty = await w.request({"op": "query", "prefix": "$!", "text": ""})
+        run = await w.request({"op": "run", "cmd": "kill it"})
+        backup = await w.request({"op": "run", "cmd": "clean up", "backup": True})
+        empty = await w.request({"op": "run", "cmd": ""})
         await w.bus.join()
     finally:
         await _teardown(w)
 
-    assert bang["ok"] is True and bang["queued"] is True and bang["prefix"] == "$!"
-    assert dd["ok"] is True and dd["queued"] is True and dd["prefix"] == "$$"
-    assert "answer" not in bang and "answer" not in dd
+    assert run["ok"] is True and run["queued"] is True and run["prefix"] == "$!"
+    assert backup["ok"] is True and backup["queued"] is True and backup["prefix"] == "$$"
+    assert "answer" not in run and "answer" not in backup
     assert empty["ok"] is False and "empty command" in empty["error"]
     assert seen == [("$!", "kill it"), ("$$", "clean up")]
+
+
+async def test_explain_op_paraphrases_a_first_party_summary(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request(
+            {
+                "op": "explain",
+                "target": "src/neuropaca/drive/pressure.py",
+                "summary": "File: src/neuropaca/drive/pressure.py\n\nThe drive layer.",
+            }
+        )
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["source"] == "model"
+    assert resp["answer"]
+
+
+async def test_explain_without_a_model_returns_empty_not_an_error(tmp_path) -> None:
+    w = await _wired(tmp_path, interactive=False)
+    try:
+        resp = await w.request(
+            {"op": "explain", "target": "x.py", "summary": "File: x.py\n\nA file."}
+        )
+        empty = await w.request({"op": "explain", "target": "x.py", "summary": ""})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True and resp["answer"] == "" and resp["source"] == "template-nomodel"
+    assert empty["ok"] is False
+
+
+async def test_explain_op_does_not_publish_or_store(tmp_path) -> None:
+    """`explain` is a read-only paraphrase — nothing on the bus, nothing in the
+    RAM conversation history."""
+    w = await _wired(tmp_path)
+    seen: list[Event] = []
+
+    async def spy(event: Event) -> None:
+        seen.append(event)
+
+    w.bus.subscribe(EventType.USER_MESSAGE, spy)
+    try:
+        await w.request({"op": "explain", "target": "x.py", "summary": "File: x.py\n\nA file."})
+        await w.bus.join()
+        history = w.layer.conversation_history
+    finally:
+        await _teardown(w)
+    assert seen == []
+    assert history == ()
 
 
 async def test_notification_intents_are_drained_by_the_notifications_op(tmp_path) -> None:
@@ -344,7 +323,7 @@ async def test_l9_relays_a_confirmation_verdict_back_to_l7(tmp_path) -> None:
                     "action": "run_command",
                     "tier": "dangerous",
                     "summary": "run /usr/bin/pkill with 1 argument(s), 30.0s budget",
-                    "reason": "user requested via $!",
+                    "reason": "user requested via run",
                     "requested_at": "2026-09-01T12:00:00+00:00",
                 },
             )
@@ -362,17 +341,14 @@ async def test_l9_relays_a_confirmation_verdict_back_to_l7(tmp_path) -> None:
     assert [c["request_id"] for c in listed["confirmations"]] == ["abc123"]
     assert listed["confirmations"][0]["summary"].startswith("run /usr/bin/pkill")
     assert approved["ok"] is True and approved["approved"] is True
-    # One prompt, one verdict: a request cannot be answered twice, and an id
-    # nobody is waiting on is never published.
     assert again["ok"] is False and "no confirmation is waiting" in again["error"]
     assert unknown["ok"] is False
     assert responses == [{"request_id": "abc123", "approved": True}]
 
 
 async def test_a_prompt_is_retired_when_l7_stops_waiting(tmp_path) -> None:
-    """Regression (found on the target box by `scripts/validate_b7_confirmation.py`):
-    an expired confirmation used to sit in the terminal forever, so the next
-    `confirm` answered a question nobody was listening to. L7's completion event
+    """Regression (found by `scripts/validate_b7_confirmation.py`): an expired
+    confirmation used to sit in the terminal forever. L7's completion event
     carries the `confirmation_id`, and L9 retires the prompt on it."""
     w = await _wired(tmp_path)
     try:
@@ -495,28 +471,28 @@ async def test_health_op_times_out_cleanly_when_l10_is_silent(tmp_path) -> None:
     assert resp["ok"] is False and "timed out" in resp["error"]
 
 
-async def test_conversation_history_is_ram_only_and_never_on_disk(tmp_path) -> None:
+async def test_run_command_is_ram_only_and_never_on_disk(tmp_path) -> None:
     marker = "zzq_secret_kernel_panic_marker"
     w = await _wired(tmp_path)
     try:
-        await w.request({"op": "query", "prefix": "$", "text": f"what about {marker}"})
+        await w.request({"op": "run", "cmd": f"pkill {marker}"})
         history = w.layer.conversation_history
     finally:
         await _teardown(w)
 
-    assert [m.role for m in history] == [MessageRole.USER, MessageRole.ASSISTANT]
-    assert history[0].content == f"what about {marker}"
+    assert [m.role for m in history] == [MessageRole.USER]
+    assert marker in history[0].content
     for path in tmp_path.rglob("*"):
         if path.is_file():
             assert marker not in path.read_text("utf-8", errors="ignore"), path
 
 
 async def test_ipc_payloads_are_redacted_in_logs(tmp_path, caplog) -> None:
-    marker = "zzq_do_not_log_this_query"
+    marker = "zzq_do_not_log_this_command"
     caplog.set_level(logging.DEBUG, logger="neuropaca.interface.layer")
     w = await _wired(tmp_path)
     try:
-        await w.request({"op": "query", "prefix": "$", "text": marker})
+        await w.request({"op": "run", "cmd": marker})
     finally:
         await _teardown(w)
 
@@ -529,7 +505,7 @@ async def test_ipc_payloads_are_redacted_in_logs(tmp_path, caplog) -> None:
 
 
 # --------------------------------------------------------------------------- 4
-# CLI client, insight surfacing, surfaced_at persistence
+# CLI client parsing
 
 
 @pytest.mark.parametrize(
@@ -537,18 +513,20 @@ async def test_ipc_payloads_are_redacted_in_logs(tmp_path, caplog) -> None:
     [
         (["health"], {"op": "health"}),
         (["insights"], {"op": "insights"}),
-        (["ask", "what", "is", "up"], {"op": "query", "prefix": "$", "text": "what is up"}),
-        (["diagnose", "why slow"], {"op": "query", "prefix": "$?", "text": "why slow"}),
-        (["$? why slow"], {"op": "query", "prefix": "$?", "text": "why slow"}),
-        (["$ hello there"], {"op": "query", "prefix": "$", "text": "hello there"}),
-        (["$! kill it"], {"op": "query", "prefix": "$!", "text": "kill it"}),
-        (["$$ restart it"], {"op": "query", "prefix": "$$", "text": "restart it"}),
         (["notifications"], {"op": "notifications"}),
         (["confirmations"], {"op": "confirmations"}),
         (["confirm", "abc123"], {"op": "confirm", "request_id": "abc123", "approved": True}),
         (
             ["confirm", "abc123", "--deny"],
             {"op": "confirm", "request_id": "abc123", "approved": False},
+        ),
+        (
+            ["run", "pkill", "-f", "webpack"],
+            {"op": "run", "cmd": "pkill -f webpack", "backup": False},
+        ),
+        (
+            ["run", "--backup", "systemctl --user restart x"],
+            {"op": "run", "cmd": "systemctl --user restart x", "backup": True},
         ),
     ],
 )
@@ -560,8 +538,11 @@ def test_cli_parse(argv: list[str], expected: dict) -> None:
 def test_cli_parse_rejects_garbage() -> None:
     with pytest.raises(cli._CliError):
         cli._parse([])
-    # `confirm` names exactly one outstanding request — never a wildcard, never
-    # "all" (rules.md §5.2: one recorded confirmation per dangerous action).
+    with pytest.raises(cli._CliError):
+        cli._parse(["ask", "what is up"])  # the `$` grammar is gone
+    with pytest.raises(cli._CliError, match="needs a command"):
+        cli._parse(["run"])
+    # `confirm` names exactly one outstanding request — never a wildcard.
     with pytest.raises(cli._CliError, match="exactly one request id"):
         cli._parse(["confirm"])
     with pytest.raises(cli._CliError, match="exactly one request id"):
@@ -575,39 +556,28 @@ def test_cli_reports_a_missing_daemon(capsys) -> None:
 
 
 # --------------------------------------------------------------------------- 4b
-# The interactive shell (B10 · terminal accessibility) — interface/repl.py.
-# Every REPL line must translate to argv `cli._parse` / `offline.dispatch`
-# already accept; the shell adds no new grammar.
+# The interactive shell (B10, re-scoped B12) — interface/repl.py, a command menu.
 
 
 @pytest.mark.parametrize(
     "line, argv",
     [
-        ("$doctor", ["doctor"]),
-        ("$health", ["health"]),
-        ("$insights", ["insights"]),
-        ("!ask what is up", ["ask", "what is up"]),
-        ("!diagnose why slow", ["diagnose", "why slow"]),
-        ("?why is the disk full", ["diagnose", "why is the disk full"]),
-        # apostrophes in free text must not raise (no shlex on ask/diagnose)
-        ("!ask what's eating my CPU", ["ask", "what's eating my CPU"]),
-        ("ask what's up", ["ask", "what's up"]),
-        # raw prefixes pass straight through as one token, unquoted
-        ("$ how many meetings today", ["$ how many meetings today"]),
-        ("$? why slow", ["$? why slow"]),
-        ("$! pkill -f webpack", ["$! pkill -f webpack"]),
-        ("$$ systemctl --user restart x", ["$$ systemctl --user restart x"]),
+        ("health", ["health"]),
+        ("doctor", ["doctor"]),
+        ("overview", ["overview"]),
+        ("insights", ["insights"]),
+        ("tell src/neuropaca/interface/layer.py", ["tell", "src/neuropaca/interface/layer.py"]),
+        ("tell drive/pressure.py --explain", ["tell", "drive/pressure.py", "--explain"]),
+        ("run pkill -f webpack", ["run", "pkill -f webpack"]),
+        (
+            "run --backup systemctl --user restart x",
+            ["run", "--backup", "systemctl --user restart x"],
+        ),
+        ("confirm abc123 --deny", ["confirm", "abc123", "--deny"]),
         # short aliases
         ("status", ["health"]),
         ("notes", ["notifications"]),
         ("pending", ["confirmations"]),
-        ("confirm abc123 --deny", ["confirm", "abc123", "--deny"]),
-        # B11: an unrecognised first word with no sigil is a chat question
-        ("how is the graph stored", ["chat", "how is the graph stored"]),
-        ("chat where do conversation turns live", ["chat", "where do conversation turns live"]),
-        ("chat what's the drive layer", ["chat", "what's the drive layer"]),
-        ("$chat how many nodes", ["chat", "how many nodes"]),
-        ("wat", ["chat", "wat"]),
     ],
 )
 def test_repl_translate(line: str, argv: list[str]) -> None:
@@ -616,23 +586,32 @@ def test_repl_translate(line: str, argv: list[str]) -> None:
     assert repl._translate(line) == argv
 
 
+def test_repl_translate_rejects_free_text() -> None:
+    from neuropaca.interface import repl
+
+    for line in ("how is the graph stored", "wat", "$doctor", "?why", "!ask hi"):
+        assert isinstance(repl._translate(line), repl._UnknownVerb)
+
+
 def test_repl_translations_all_reach_a_real_dispatcher() -> None:
-    """Whatever the shell emits, an offline verb or a clean `_parse` must take it."""
+    """Whatever the menu emits, an offline verb, the describe dispatcher, or a
+    clean `_parse` must take it."""
     from neuropaca.interface import offline, repl
 
-    for line in ("$doctor", "$health", "!ask hi", "?why", "$ hello", "$? hi", "$! x", "$$ x"):
+    for line in ("doctor", "health", "overview", "tell x.py", "run true", "confirmations"):
         argv = repl._translate(line)
-        if argv and argv[0] in offline.OFFLINE_VERBS:
+        assert not isinstance(argv, repl._UnknownVerb)
+        if argv[0] in offline.OFFLINE_VERBS or argv[0] in ("tell", "overview"):
             continue
-        cli._parse(argv)  # raises cli._CliError if the shell produced garbage
+        cli._parse(argv)  # raises cli._CliError if the menu produced garbage
 
 
 def test_cli_help_prints_the_full_guide(capsys) -> None:
     for form in (["help"], ["--help"], ["-h"], ["-help"]):
         assert cli.main(form) == 0
         out = capsys.readouterr().out
-        assert "interactive shell" in out
-        assert "raw prefixes" in out
+        assert "understand the project" in out
+        assert "tell <path>" in out
 
 
 def test_cli_no_args_without_a_tty_is_a_usage_error(capsys, monkeypatch) -> None:
@@ -641,18 +620,19 @@ def test_cli_no_args_without_a_tty_is_a_usage_error(capsys, monkeypatch) -> None
     assert "usage: neuropaca" in capsys.readouterr().err
 
 
-async def test_cli_end_to_end_against_a_live_socket(tmp_path, capsys) -> None:
+async def test_cli_run_end_to_end_against_a_live_socket(tmp_path, capsys) -> None:
     w = await _wired(tmp_path)
     try:
         code = await asyncio.get_running_loop().run_in_executor(
-            None,
-            cli.main,
-            ["ask", "what's using my CPU", "--socket", w.sock],
+            None, cli.main, ["run", "true", "--socket", w.sock]
         )
     finally:
         await _teardown(w)
     assert code == 0
-    assert "webpack (cpu heavy)" in capsys.readouterr().out
+    assert "handed to the action layer" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------- insight surfacing
 
 
 def _insight(node_id: str, *, category: str = "anomaly", confidence: float = 0.9) -> Insight:
@@ -676,7 +656,6 @@ async def test_insight_surfacing_priority_surface_once_and_daily_cap(tmp_path) -
     clock = FakeClock()
     w = await _wired(tmp_path, clock=clock)
     try:
-        # routine / low-confidence are filtered by the priority gate
         routine = _insight("insight:routine", category="routine")
         weak = _insight("insight:weak", confidence=0.3)
         await w.layer.on_insight_generated(_insight_event(routine))
@@ -688,11 +667,9 @@ async def test_insight_surfacing_priority_surface_once_and_daily_cap(tmp_path) -
         assert w.layer._surfaced_today == 3
         assert len(w.layer._pending_insights) == 3
 
-        # surface-once: replaying an already-surfaced insight does nothing
         await w.layer.on_insight_generated(_insight_event(_insight("insight:0")))
         assert w.layer._surfaced_today == 3
 
-        # local midnight resets the cap
         await clock.advance(24 * 3600)
         await w.layer.on_insight_generated(_insight_event(_insight("insight:tomorrow")))
         assert w.layer._surfaced_today == 1
@@ -712,7 +689,6 @@ async def test_surfaced_at_is_stamped_and_survives_a_restart(tmp_path) -> None:
     finally:
         await _teardown(w)
 
-    # a fresh process: reload the graph, new InterfaceLayer -> already-surfaced
     graph2 = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
     await graph2.load()
     assert graph2.get_node("insight:abc").surfaced_at is not None
@@ -738,15 +714,9 @@ async def test_surfaced_at_is_stamped_and_survives_a_restart(tmp_path) -> None:
 
 
 # --------------------------------------------------------------- audit regressions
-# From the B9 optimisation audit: L9's two collections that grew without a ceiling
-# on a daemon meant to run for months.
 
 
 async def test_surfaced_ids_are_bounded_and_keep_the_newest(tmp_path) -> None:
-    """Surface-once bookkeeping outlives the node it describes — an insight is
-    pruned at its 48 h TTL but its id had to stay remembered. Remembering every
-    id forever made that a leak; the cap keeps the newest, which are the only
-    ones a live node can still match."""
     from neuropaca.interface.layer import _MAX_SURFACED_IDS
 
     clock = FakeClock()
@@ -755,7 +725,7 @@ async def test_surfaced_ids_are_bounded_and_keep_the_newest(tmp_path) -> None:
         total = _MAX_SURFACED_IDS + 50
         for i in range(total):
             w.layer._remember_surfaced(f"insight:{i}")
-            if i % 3 == 0:  # keep the daily cap out of it — this is the id store
+            if i % 3 == 0:
                 w.layer._surfaced_today = 0
         assert len(w.layer._surfaced_ids) == _MAX_SURFACED_IDS
         assert f"insight:{total - 1}" in w.layer._surfaced_ids, "newest must survive"
@@ -765,8 +735,6 @@ async def test_surfaced_ids_are_bounded_and_keep_the_newest(tmp_path) -> None:
 
 
 async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -> None:
-    """Insights queue until a CLI client reads them out. Nothing guarantees one
-    ever connects, so the queue needs its own ceiling."""
     from neuropaca.interface.layer import _MAX_PENDING_INSIGHTS
 
     clock = FakeClock()
@@ -774,204 +742,8 @@ async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -
     try:
         for day in range(_MAX_PENDING_INSIGHTS + 20):
             await w.layer.on_insight_generated(_insight_event(_insight(f"insight:d{day}")))
-            await clock.advance(24 * 3600)  # a fresh day, so the 3/day cap never bites
+            await clock.advance(24 * 3600)
         assert len(w.layer._pending_insights) == _MAX_PENDING_INSIGHTS
-        # the tail is kept — the newest insights are the ones worth showing
         assert w.layer._pending_insights[-1].node_id.endswith(f"d{_MAX_PENDING_INSIGHTS + 19}")
     finally:
         await _teardown(w)
-
-
-# --------------------------------------------------------------- 4c
-# The conversational `chat` op (B11 · terminal accessibility) — project-doc +
-# general Q&A, distinct from the graph-grounded `$` / `$?` path.
-
-
-_DOC = """\
-# NeuroPACA notes
-
-## Graph storage
-
-The behavioural graph is a single JSON file at data/graph.json, written
-atomically: temp file, fsync, os.replace. GraphMemory owns every write behind
-one asyncio.Lock.
-
-## Something unrelated
-
-Filler about meetings and calendars.
-"""
-
-
-async def test_chat_answers_from_a_project_doc(tmp_path) -> None:
-    md = tmp_path / "notes.md"
-    md.write_text(_DOC)
-    w = await _wired(tmp_path, knowledge_enabled=True, knowledge_paths=[str(md)])
-    try:
-        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
-    finally:
-        await _teardown(w)
-
-    assert resp["ok"] is True
-    assert resp["grounded"] is True
-    assert resp["source"] == "model"
-    assert resp["answer"]
-    assert any("Graph storage" in c for c in resp["cited"])
-
-
-async def test_chat_flags_an_answer_with_no_project_or_graph_backing(tmp_path) -> None:
-    w = await _wired(tmp_path)  # corpus off; query matches no graph node
-    try:
-        resp = await w.request({"op": "chat", "text": "what is the capital of France"})
-    finally:
-        await _teardown(w)
-
-    assert resp["ok"] is True
-    assert resp["grounded"] is False
-    assert resp["source"] == "model-general"
-    assert resp["answer"]
-
-
-async def test_chat_falls_back_to_extractive_without_the_interactive_model(tmp_path) -> None:
-    md = tmp_path / "notes.md"
-    md.write_text(_DOC)
-    w = await _wired(tmp_path, interactive=False, knowledge_enabled=True, knowledge_paths=[str(md)])
-    try:
-        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
-    finally:
-        await _teardown(w)
-
-    assert resp["ok"] is True
-    assert resp["source"].startswith("template")
-    assert resp["answer"]  # the top doc chunk, extractively
-    assert "graph.json" in resp["answer"]
-
-
-async def test_chat_without_a_model_and_without_retrieval_says_so(tmp_path) -> None:
-    w = await _wired(tmp_path, interactive=False)
-    try:
-        resp = await w.request({"op": "chat", "text": "what is the capital of France"})
-    finally:
-        await _teardown(w)
-
-    assert resp["ok"] is True
-    assert resp["source"] == "template-nomodel"
-    assert resp["grounded"] is False
-
-
-async def test_chat_op_does_not_publish_user_message(tmp_path) -> None:
-    """`chat` is a read-only Q&A turn — unlike `$` / `$?` it must not put a
-    USER_MESSAGE on the bus for the rest of the daemon to react to."""
-    w = await _wired(tmp_path)
-    seen: list[Event] = []
-
-    async def spy(event: Event) -> None:
-        seen.append(event)
-
-    w.bus.subscribe(EventType.USER_MESSAGE, spy)
-    try:
-        await w.request({"op": "chat", "text": "how does anything work"})
-        await w.bus.join()
-    finally:
-        await _teardown(w)
-    assert seen == []
-
-
-async def test_chat_empty_text_is_rejected(tmp_path) -> None:
-    w = await _wired(tmp_path)
-    try:
-        resp = await w.request({"op": "chat", "text": "   "})
-    finally:
-        await _teardown(w)
-    assert resp["ok"] is False
-
-
-def test_fake_backend_writes_a_chat_reply_naming_the_first_citation() -> None:
-    from neuropaca.learning.prompts import build_chat_prompt
-
-    prompt = build_chat_prompt(
-        "how is the graph stored",
-        doc_block="[design.md → Graph storage]\nthe graph is one JSON file",
-    )
-    out = FakeInferenceBackend().infer(prompt, 320, 0.3, None)
-    assert "design.md → Graph storage" in out
-
-
-class _RaisingBackend(FakeInferenceBackend):
-    def infer(self, *_a: object, **_kw: object) -> str:
-        raise RuntimeError("llama.cpp context overflow")
-
-
-async def test_chat_survives_an_interactive_model_that_raises(tmp_path) -> None:
-    """A backend fault (context overflow, crashed process) must degrade to a
-    template answer, not break the socket connection."""
-    md = tmp_path / "notes.md"
-    md.write_text(_DOC)
-    bus = EventBus.get_instance()
-    await bus.start()
-    graph = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
-    await graph.load()
-    runtime = BitNetRuntime.get_instance(FakeInferenceBackend(), _RaisingBackend())
-    layer = InterfaceLayer(
-        bus,
-        Config(inference_backend="fake", knowledge_enabled=True, knowledge_paths=[str(md)]),
-        graph,
-        runtime,
-        clock=FakeClock(),
-        socket_path=str(tmp_path / "np.sock"),
-    )
-    await layer.initialize()
-    await layer.start()
-    w = _Wired(layer, bus, graph, str(tmp_path / "np.sock"))
-    try:
-        resp = await w.request({"op": "chat", "text": "how is the behavioural graph stored"})
-    finally:
-        await _teardown(w)
-    assert resp["ok"] is True
-    assert resp["source"].startswith("template")
-    assert resp["answer"]
-
-
-async def test_chat_answer_with_brackets_is_rendered_not_swallowed(tmp_path, capsys) -> None:
-    """A `chat` answer is free model text — a `[node:id]` in it must not be eaten
-    as rich markup, and a stray `[/]` must not crash the render."""
-    from neuropaca.interface import cli
-
-    resp = {
-        "ok": True,
-        "answer": "Node ids look like [app:code] and [file:/x]; a slash [/] is fine.",
-        "cited": ["design.md → §8.1 [draft]"],
-        "confidence": 0.7,
-        "source": "model",
-        "grounded": True,
-    }
-    code = cli._render({"op": "chat"}, resp)
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "[app:code]" in out and "[file:/x]" in out and "[/]" in out
-    assert "draft" in out
-
-
-def test_clean_chat_answer_edge_cases() -> None:
-    from neuropaca.learning.prompts import clean_chat_answer
-
-    assert clean_chat_answer("") is None
-    assert clean_chat_answer("   \n  ") is None
-    assert clean_chat_answer("null") is None
-    assert clean_chat_answer("Answer: The graph is a JSON file.") == "The graph is a JSON file."
-    assert "```" not in (clean_chat_answer("```python\nx=1\n```") or "")
-    # stops at a hallucinated next turn
-    assert (
-        clean_chat_answer("It is stored on disk.\nQuestion: and then?") == "It is stored on disk."
-    )
-    # caps at a few sentences
-    long = " ".join(f"Sentence number {i}." for i in range(12))
-    assert (clean_chat_answer(long) or "").count(".") <= 3
-
-
-def test_build_chat_prompt_stays_bounded(tmp_path) -> None:
-    from neuropaca.learning.prompts import build_chat_prompt
-
-    huge_docs = "x " * 20000
-    huge_history = [("user", "q " * 5000), ("assistant", "a " * 5000)] * 4
-    prompt = build_chat_prompt("what is going on", doc_block=huge_docs, history=huge_history)
-    assert len(prompt) < 8000  # the notes-clip + per-turn clip keep it under n_ctx

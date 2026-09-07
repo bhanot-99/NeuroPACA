@@ -43,7 +43,7 @@
 
 ## 1. What this project is
 
-**In plain words.** NeuroPACA is a small program that sits quietly on your laptop, watches boring numbers about your computer — how busy the CPU is, how full the disk is, which app you have open — and slowly builds a map of *how you actually work*. When you later ask it a question in the terminal, it answers using that map instead of guessing, and it never sends anything to the internet.
+**In plain words.** NeuroPACA is a small program that sits quietly on your laptop, watches boring numbers about your computer — how busy the CPU is, how full the disk is, which app you have open — and slowly builds a map of *how you actually work*. It surfaces the odd insight from that map, and — behind a hard safety gate — can act on it. It never sends anything to the internet. The terminal you drive it from is a set of predefined commands, including one (`neuropaca tell`) that explains its own codebase.
 
 **Technically.** NeuroPACA is a Python `asyncio` daemon organised into **ten architectural layers / eight runtime modules** that communicate **only** through an async `EventBus`. It:
 
@@ -58,7 +58,7 @@
 | Not this | Why |
 | --- | --- |
 | A cloud assistant | Zero egress. CI **affirmatively proves** it — the egress test runs in a network namespace with only loopback and asserts that HTTP and raw TCP both raise. |
-| A general chatbot | Its focus is *your machine and your work*. `$` / `$?` reject an ungrounded answer at a post-generation gate; `chat` will answer a general question but labels it `⚠ general knowledge` rather than passing it off as grounded. |
+| A general chatbot | Its focus is *your machine and your work*. The terminal is command-only (B12) — no free-text question at all; `neuropaca tell` explains the codebase deterministically from its own docstrings. |
 | A screen recorder or keylogger | It reads aggregate system counters and application identifiers. Window-title text is read transiently for a focus event and **never persisted**. |
 | A multi-user / fleet product | Single user, single machine, single graph. That is a stated scope boundary, and also a stated research limitation (§16). |
 | A GPU project | CPU-only inference is the *premise*, not a compromise. |
@@ -218,60 +218,68 @@ flowchart LR
 | **F6** | Action gradients | Builds up evidence before acting | Pressure accumulator, exponential decay half-life 60 s, low/high thresholds, hysteresis latch |
 | **F7** | Safety-gated execution | Cannot damage your machine | One `SafetyGate`, sandbox with `env={}`, backup-to-quarantine, JSONL audit, terminal confirmation |
 | **F8** | Structural plasticity | Grows temporary diagnostic structure, then cleans up | Bounded agent tasks, ephemeral node cap, apoptosis at 14 days |
-| **F9** | Terminal-native interface | The only human surface | Unix socket + JSONL, thin CLI, `$` / `$?` / `$!` / `$$` prefix grammar |
+| **F9** | Terminal-native interface | The only human surface | Unix socket + JSONL, thin CLI, a **read-only command set** (B12): `tell` / `overview` / `health` / `run` / … |
 | **F10** | Scheduled maintenance | Keeps the graph healthy | Consolidate duplicates, re-link orphans, recompute scores, purge raw buffers |
 
-### 4.1 The shell prefix grammar
+### 4.1 The terminal — a read-only project guide (B12)
 
-| Prefix | Name | What happens |
-| --- | --- | --- |
-| `$` | **Ask** | Natural-language question; graph context injected; grounded answer required |
-| `$?` | **Diagnose** | Same, plus a **live** system snapshot merged into the context |
-| `$!` | **Emergency** | Immediate action path; skips L3 and L4; still passes the safety gate |
-| `$$` | **Safe** | Same as `$!` but with a full state backup taken first |
-| `chat` | **Chat** (B11) | Project-doc + general Q&A; grounding is advisory, not a gate |
+The `neuropaca` terminal is command-only. Two kinds of command:
 
-`$` / `$?` are graph-only behind a hard grounding gate — deliberately, so an
-answer is never a guess. That leaves *questions about NeuroPACA itself*
-unanswerable: nothing about graph storage, monitoring, or file handling lives in
-the behavioural graph. **`chat`** (B11) fills the gap with a small design that
-keeps the project's discipline:
-
-- **Retrieval is zero-inference** — `KnowledgeIndex` chunks the repo's own
-  Markdown by heading and matches on non-stopword term overlap, the same
-  "deliberately dumb" lexical approach as `search_by_label`. No embeddings,
-  no vector store, no model in the retrieval path.
-- **The answer is free-decoded** — the one place the interactive model is *not*
-  behind a per-call GBNF grammar. Bounded instead by a token cap, a wall-clock
-  timeout, and a post-process that strips echo/fences and caps sentences; a
-  failure falls back to an extractive reply.
-- **Grounding becomes a label, not a filter** — `grounded` is set from whether a
-  doc matched, and an ungrounded answer is shown with a `⚠ general knowledge`
-  flag rather than discarded. The rejected alternative — extend the `$` grounding
-  gate to doc citations — was dropped because it would make "answer anything"
-  impossible, which was the whole point of the feature.
-- **The behavioural graph is not in `chat` retrieval.** An early version searched
-  it alongside the docs; `search_by_label` matches on common words with no
-  stopword filter, so it cited an unrelated `idle:` / `app:` node on nearly every
-  question. Graph grounding stays with `$` / `$?`, where the `parse_answer` gate
-  catches a bad citation.
-- **It stays inert** — `chat` stores nothing and publishes no `USER_MESSAGE`; it
-  is a read-only Q&A turn.
+| Command | What it does |
+| --- | --- |
+| `neuropaca tell <path>` | what a file or folder does — its module docstring + top-level classes/functions + which layer, read straight from source (`interface/describe.py`, `ast` only). Deterministic, offline. |
+| `neuropaca tell <path> --explain` | the above, then the interactive model paraphrases that summary in plain words — flagged, shown *after* the facts |
+| `neuropaca overview` | what NeuroPACA is, what it watches, the L1-L10 layer map |
+| `health` · `insights` · `notifications` | daemon + module state |
+| `confirmations` · `confirm <id> [--deny]` | the L7 dangerous-action handshake |
+| `run "<cmd>"` · `run --backup "<cmd>"` | hand a command to L7 (`$!` / `$$` are the internal wire enum); a dangerous action still needs `confirm` |
+| `doctor` · `export` · `panic` | offline verbs (B9) |
 
 ```bash
-neuropacad                                  # the daemon
-neuropaca chat "how is the graph stored"    # project docs first, general knowledge flagged
-neuropaca ask "what's using my CPU"         # $
-neuropaca diagnose "why is the disk full"   # $?
-neuropaca health                            # daemon + per-module health
-neuropaca insights                          # surfaced anomaly / distraction insights
-neuropaca "$! pkill -f webpack"             # $! — requires confirmation
-neuropaca confirmations                     # what is waiting on you
-neuropaca confirm <id> [--deny]             # answer one
-neuropaca doctor                            # offline diagnostic, no daemon needed
-neuropaca export                            # offline data export
-neuropaca panic                             # offline: SIGKILL + wipe everything
+neuropacad                                       # the daemon
+neuropaca overview                               # what it is + the layer map
+neuropaca tell src/neuropaca/drive/pressure.py   # what a file does
+neuropaca tell drive/pressure.py --explain       # + a plain-words paraphrase
+neuropaca health                                 # daemon + per-module health
+neuropaca run "pkill -f webpack"                  # → L7, requires confirmation
+neuropaca confirmations                          # what is waiting on you
+neuropaca doctor                                 # offline diagnostic, no daemon needed
 ```
+
+#### Rejected alternative — free-text terminal Q&A (`$` / `$?` / `chat`, B5/B11), withdrawn B12
+
+The original interface fronted the behavioural graph and the repo docs with a
+natural-language question:
+
+- **`$` / `$?` (`ask` / `diagnose`)** — retrieval over the graph
+  (`search_by_label` → `find_related` → rank), then the interactive model wrote
+  one sentence behind a GBNF grammar and a hard `parse_answer` grounding gate.
+- **`chat` (B11)** — retrieval over the repo's Markdown (`KnowledgeIndex`, a
+  stopword-filtered lexical match), then the model free-decoded a paragraph;
+  grounding was **advisory** — an unmatched answer was flagged `⚠ general
+  knowledge`, not withheld.
+
+Both were pulled in B12. The reasons, recorded because the rejection is a
+deliverable:
+
+- **A 3B-Q4 model paraphrasing a retrieved doc chunk is not reproducible** and
+  was sometimes wrong in ways a reader could not detect — unacceptable for a tool
+  whose stated job is to be the *first* guide to the codebase.
+- **`chat` grounding was a label, not a gate.** On a 30-question battery it
+  reached 30/30 project recall but only ~70% off-topic rejection; the leaks
+  retrieved a tangential chunk and cost only the missing flag. Good enough for a
+  convenience, not for an authority.
+- **`$` / `$?` answered about *your behaviour*, not *the project*** — a different
+  need from "explain this file", and one the user no longer wanted on the
+  terminal surface.
+- **Deterministic docstring + `ast` extraction is 100% reproducible and always
+  correct** by construction. `--explain` keeps an *optional* model paraphrase,
+  clearly subordinate to the facts.
+
+The behavioural graph, `GraphMemory.search_by_label` / `find_related`, and the
+`KnowledgeIndex`-style lexical approach are all unchanged — only the terminal
+verb that fronted them with a model is gone. The `$!` / `$$` action relay
+survives as `neuropaca run` (`$!` / `$$` are now an internal L9→L7 wire enum).
 
 ---
 
@@ -494,14 +502,14 @@ The bus is the entire API surface between layers. Key event types:
 
 ## 9. The model stack — how a laptop runs two LLMs
 
-**In plain words.** There are two AI models. A small always-on one does the background thinking. A bigger one wakes up only when you actually ask a question, and goes back to sleep. They are never allowed to run at the same time — that would fight over the CPU — but they can both be in memory at once, and we measured exactly how much memory that costs.
+**In plain words.** There are two AI models. A small always-on one does the background thinking. A bigger one wakes up only for `neuropaca tell … --explain`, and goes back to sleep. They are never allowed to run at the same time — that would fight over the CPU — but they can both be in memory at once, and we measured exactly how much memory that costs.
 
 ### 9.1 The two models
 
 | Model | Role | Quantisation | Resident RAM | Throughput | Measured in |
 | --- | --- | --- | --- | --- | --- |
 | **BitNet b1.58 2B4T** | Always-on loop — L4 extractive insight, L6 idle thoughts | GGUF `tq2_0` | **1.37 GB** after load → **1.55 GB** after 30 min | **~17 tok/s** | B0 spike, 2026-08-30 |
-| **Qwen2.5-3B-Instruct** | Interactive only — L9 `$` / `$?` grounded answers | GGUF `Q4_K_M` | **~3.25 GB** (`n_ctx=2048`, `n_batch=128`) | **~3.1–3.5 tok/s** | B5 validation, 2026-09-01 |
+| **Qwen2.5-3B-Instruct** | Interactive only — the L9 `tell --explain` paraphrase (B12) | GGUF `Q4_K_M` | **~3.25 GB** (`n_ctx=2048`, `n_batch=128`) | **~3.1–3.5 tok/s** | B5 validation, 2026-09-01 |
 
 **BitNet b1.58** stores weights in {−1, 0, +1} — 1.58 bits per parameter. Matrix multiplication becomes addition and subtraction; there is no floating-point work at inference. That is what makes ~0.4 GB of weights and CPU-native execution possible. For comparison, a conventional 2B model in float32 is roughly **8 GB**.
 
@@ -510,7 +518,7 @@ The bus is the entire API surface between layers. Key event types:
 ```mermaid
 flowchart LR
     A["Daemon idle<br/>0.04 GB"] -->|first signal passes<br/>the L4 gate| B["+ BitNet 2B4T<br/>1.37 GB"]
-    B -->|first $ or $? in the session<br/>gc.collect runs first| C["+ Qwen2.5-3B<br/>4.52 GB"]
+    B -->|first `tell --explain` in the session<br/>gc.collect runs first| C["+ Qwen2.5-3B<br/>4.52 GB"]
     C -->|after one inference| D["peak<br/>4.63 GB"]
     D -.->|about 29 % of a 16 GB box<br/>about 11 GB left for real work| E["headroom"]
 ```
@@ -518,7 +526,7 @@ flowchart LR
 - Both models are **lazily loaded** and **independently self-disabling**. An idle session pays neither cost.
 - A single `_inference_lock` serialises **every** call system-wide. The two models never *run* at once — they only *reside* at once.
 - Package temperature under sustained load: **66–72 °C**, no thermal throttling observed.
-- If `interactive_model_path` is unset, `$?` falls back to an extractive template and only the 1.37 GB BitNet footprint applies.
+- If `interactive_model_path` is unset, `tell --explain` shows only the deterministic block (B12) and only the 1.37 GB BitNet footprint applies.
 - Documented fallback if 4.63 GB ever becomes a problem: a 1.5B interactive model.
 
 ### 9.3 The critical constraint — structured generation
@@ -680,7 +688,7 @@ The 11-hour window was **accepted with the gap recorded** (open problem **T3**),
 | CLI latency, 100 sequential `health` round-trips (fresh connection each) | < 100 ms | **min 0.48 / p50 0.54 / p95 0.62 / max 0.72 ms** — a **166× margin** |
 | Grounded answer from the real model | must cite a real node | ✅ `"esbuild-service is using the most CPU right now."` · cited `["n1"]` · **confidence 0.94** · exact label substring match |
 | Concurrent RSS | measure it | **0.04 → 1.37 → 4.52 → 4.63 GB** (base → BitNet → both → post-inference) |
-| Qwen throughput | usable | **~3.1–3.5 tok/s** (a ~30-token `$?` answer ≈ 8 s) |
+| Qwen throughput | usable | **~3.1–3.5 tok/s** (a ~30-token answer ≈ 8 s) |
 | Privacy canary | must be absent | ✅ canary absent from `graph.json` and the 21 KB log; IPC lines confirmed redacted on disk |
 
 **A rejected optimisation, recorded:** the socket loop was *not* switched to length-prefixed `readexactly`. It would have broken JSONL framing to improve on a 166× margin. Recording the rejection is the point.
@@ -1168,7 +1176,7 @@ Each maps directly to an exit criterion in `phases.md`.
 
 | Script | Proves |
 | --- | --- |
-| `scripts/validate_b5_real_model.py` | Real Qwen2.5-3B Q4 + BitNet: grounded answer, GBNF parse, concurrent RSS ladder |
+| `scripts/validate_b5_real_model.py` | *(retired B12 with the `$?` grounded-sentence path it validated — dual-model RSS ladder now covered by the B12 `tell --explain` smoke test)* |
 | `scripts/validate_b5_latency.py` | 100 socket round-trips → the 0.72 ms figure |
 | `scripts/validate_b5_privacy.py` | Canary absent from disk; IPC log lines redacted |
 | `scripts/validate_b6_cancel.py` | Mid-consolidate cancellation in 0.1 ms with zero corruption |

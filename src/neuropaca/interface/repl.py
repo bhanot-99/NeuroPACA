@@ -1,22 +1,20 @@
-"""L9 · the interactive ``neuropaca>`` shell (B10 · terminal accessibility).
+"""L9 · the interactive ``neuropaca>`` shell — a command menu (B10, re-scoped B12).
 
-Running ``neuropaca`` with no arguments in a terminal lands here. It exists for
-one reason: the ``$`` / ``$?`` / ``$!`` / ``$$`` prefixes (design.md §7) are
-awkward from a real shell — ``$`` opens a variable, ``!`` opens history
-expansion — so every example in the README has to be quoted. Inside this loop
-the line is read by *us*, so the sigils can be typed bare:
+Running ``neuropaca`` with no arguments in a terminal lands here. Since B12 the
+terminal is a **read-only project guide**: there is no free text, no ``$`` / ``?``
+/ ``!`` sigils, no ``chat``. This shell exists only so the predefined verbs are a
+little quicker to reach — a line whose first word is not a known verb is a short
+error, never a usage dump.
 
-    neuropaca> $doctor                     # -> the `doctor` verb
-    neuropaca> $health                     # -> the `health` verb
-    neuropaca> !ask what's eating my CPU    # -> ask "what's eating my CPU"
-    neuropaca> ?why is the disk full        # -> diagnose "why is the disk full"
-    neuropaca> $? why is the disk full      # the raw prefix form still works
+    neuropaca> tell src/neuropaca/interface/layer.py
+    neuropaca> tell drive/pressure.py --explain
+    neuropaca> overview
+    neuropaca> health
+    neuropaca> run "pkill -f webpack"
+    neuropaca> help        quit
 
-Every line is translated to the exact argv the `neuropaca` console script
-already accepts and run through the same `cli._run_once` — the client stays
-thin. The one convenience beyond sigils: a line that is not a recognised verb
-and carries no sigil is sent as a ``chat`` question (B11), so you can just type
-``how is the graph stored`` and get an answer from the daemon.
+Every line is translated to the argv the ``neuropaca`` console script already
+accepts and run through the same ``cli._run_once`` — the client stays thin.
 """
 
 from __future__ import annotations
@@ -29,66 +27,55 @@ from neuropaca.interface import cli
 from neuropaca.interface.layer import default_socket_path
 from neuropaca.interface.offline import _daemon_pid as _peer_pid
 
-# Short names that map onto a real verb. Kept tiny on purpose — the shell is a
-# convenience, not a second grammar to learn.
+# Short aliases onto a real verb. Kept tiny on purpose.
 _ALIASES = {
+    "status": "health",
     "notes": "notifications",
     "pending": "confirmations",
-    "status": "health",
 }
-# Longest-first so `$?` wins over `$` (same order as cli._PREFIXES).
-_RAW_PREFIXES = ("$?", "$!", "$$", "$")
 _QUIT = {"quit", "exit", "q", ":q"}
 _HELP = {"help", "h", "?", "--help", "-h"}
-_FREE_TEXT = ("ask", "diagnose", "chat")
-# Every verb the console script accepts. A line whose first word is none of these
-# (and carries no `$` / `!` / `?` sigil) is read as a `chat` question rather than
-# dumped back as a usage error (B11).
 _KNOWN_VERBS = {
-    "ask",
-    "chat",
     "confirm",
     "confirmations",
-    "diagnose",
     "doctor",
     "export",
     "health",
     "insights",
     "notifications",
+    "overview",
     "panic",
+    "run",
+    "tell",
     *_ALIASES,
 }
 
 
-def _translate(line: str) -> list[str]:
-    """Map one REPL line to the argv the `neuropaca` console script understands."""
-    # "?<question>" — diagnose, mirroring the "$?" prefix without the "$".
-    if line.startswith("?"):
-        return ["diagnose", line[1:].strip()]
+class _UnknownVerb(str):
+    """Sentinel: the line's first word is not a known verb. ``run()`` prints it."""
 
-    # Raw prefix forms pass straight through as a single token, exactly as
-    # `neuropaca "$? …"` would arrive on argv — cli._parse owns them.
-    for prefix in _RAW_PREFIXES:
-        if line == prefix or line.startswith(prefix + " "):
-            return [line]
 
-    # "$verb …" / "!verb …" — the sigil is decoration here; drop it.
-    if line[:1] in ("$", "!") and line[1:2].isalpha():
-        line = line[1:]
-
+def _translate(line: str) -> list[str] | _UnknownVerb:
+    """Map one REPL line to the argv the `neuropaca` console script understands,
+    or an `_UnknownVerb` describing what was typed."""
     head, _, rest = line.partition(" ")
     head = _ALIASES.get(head, head)
     rest = rest.strip()
 
-    # `ask` / `diagnose` / `chat` take free text — never shlex-split it, or an
-    # apostrophe ("what's") raises ValueError on an unbalanced quote.
-    if head in _FREE_TEXT:
-        return [head, rest] if rest else [head]
-    # An unrecognised first word with no sigil is a plain question → `chat`.
     if head not in _KNOWN_VERBS:
-        return ["chat", line]
+        return _UnknownVerb(head)
     if not rest:
         return [head]
+    if head == "tell":
+        # path (+ optional flags like --explain) — split on spaces, no shlex.
+        return [head, *rest.split()]
+    if head == "run":
+        # keep the command string intact so quotes/spaces survive; peel a
+        # leading `--backup` so it is a real flag `cli._parse` can see.
+        if rest.split(" ", 1)[0] == "--backup":
+            tail = rest[len("--backup") :].strip()
+            return [head, "--backup", tail] if tail else [head]
+        return [head, rest]
     try:
         return [head, *shlex.split(rest)]
     except ValueError:
@@ -116,8 +103,8 @@ def _banner() -> None:
     console.print("[bold]neuropaca[/bold] · interactive shell")
     console.print(f"  daemon: {_daemon_status()}")
     console.print(
-        "  [dim]type a question, or[/dim] [cyan]help[/cyan] [dim]for commands,[/dim] "
-        "[cyan]quit[/cyan] [dim]to leave[/dim]\n"
+        "  [dim]commands:[/dim] [cyan]tell[/cyan] <path>, [cyan]overview[/cyan], "
+        "[cyan]health[/cyan], [cyan]insights[/cyan] …   [cyan]help[/cyan] / [cyan]quit[/cyan]\n"
     )
 
 
@@ -128,10 +115,10 @@ def print_help() -> None:
 
     console = Console()
     console.print(
-        "\n[bold]neuropaca[/bold] — a thin client for [bold]neuropacad[/bold], the local "
-        "behavioural-graph daemon.\nEvery answer comes from the running daemon; this command "
-        "sends one request over a Unix\nsocket and renders the reply. The daemon owns the "
-        "graph and the models — the client\nnever loads either.\n"
+        "\n[bold]neuropaca[/bold] — a read-only guide to this project and the "
+        "[bold]neuropacad[/bold] daemon.\nEvery command is predefined; there is no free-text "
+        "question. `tell` / `overview` answer from\nthe source tree with no daemon; the rest "
+        "ask the running daemon over a Unix socket.\n"
     )
 
     def _section(title: str, rows: list[tuple[str, str]]) -> None:
@@ -146,20 +133,14 @@ def print_help() -> None:
         console.print()
 
     _section(
-        "ask questions",
+        "understand the project  (offline — no daemon needed)",
         [
-            ('chat "…"', "project docs + general knowledge; a bare line works too"),
-            ('ask "…"', "grounded answer from your behavioural graph  (prefix: $)"),
-            ('diagnose "…"', "same as ask, plus a live system snapshot  (prefix: $?)"),
-        ],
-    )
-    _section(
-        "raw prefixes — must be quoted from a normal shell",
-        [
-            ('neuropaca "$ …"', "ask"),
-            ('neuropaca "$? …"', "diagnose"),
-            ('neuropaca "$! <cmd>"', "emergency: hand a command to the action layer (L7)"),
-            ('neuropaca "$$ <cmd>"', "same, with a state backup taken first"),
+            ("overview", "what NeuroPACA is, what it monitors, the L1-L10 layer map"),
+            ("tell <path>", "what a file or folder does — from its docstring + top-level defs"),
+            (
+                "tell <path> --explain",
+                "the above, plus a plain-words model paraphrase (needs the daemon)",
+            ),
         ],
     )
     _section(
@@ -170,6 +151,10 @@ def print_help() -> None:
             ("notifications", "what the action layer wants to tell you"),
             ("confirmations", "dangerous actions waiting on your yes/no"),
             ("confirm <id> [--deny]", "answer one of them"),
+            (
+                'run [--backup] "<cmd>"',
+                "hand a command to the action layer (confirmation still required)",
+            ),
         ],
     )
     _section(
@@ -183,11 +168,7 @@ def print_help() -> None:
     _section(
         "interactive shell  (run `neuropaca` with no arguments)",
         [
-            ("how is the graph stored", "a bare line with no verb is a `chat` question"),
-            ("$doctor   $health", "a `$` + verb runs that verb"),
-            ("!ask what's slow", "a `!` + verb, then free text"),
-            ("?why is disk full", "a leading `?` is diagnose"),
-            ("$ how many meetings", "the raw prefixes work unquoted in here"),
+            ("tell src/neuropaca/idle", "any verb above works here, unquoted"),
             ("help   quit", "this guide / leave"),
         ],
     )
@@ -222,6 +203,9 @@ def run() -> int:
             continue
 
         argv = _translate(line)
+        if isinstance(argv, _UnknownVerb):
+            print(f"unknown command {str(argv)!r} — try: help")
+            continue
         try:
             cli._run_once(argv)
         except KeyboardInterrupt:

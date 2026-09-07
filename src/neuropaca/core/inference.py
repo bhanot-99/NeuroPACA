@@ -32,48 +32,23 @@ _log = logging.getLogger(__name__)
 # turns it into `None` (discard), so a missing backend degrades silently to
 # "L4 generates nothing" rather than crashing (D-11).
 _GRACEFUL_ABSTAIN = '{"cited_node_id": null, "insight_category": "routine"}'
-# The `$?` schema's abstain form — `parse_answer` -> None -> L9 falls back to the
-# extractive template (B5, A2).
-_GRACEFUL_ANSWER_ABSTAIN = '{"insight": null, "cited_nodes": [], "confidence": 0.0}'
 
 _ALIAS_ENUM_RE = re.compile(r'"\\?"(n[1-9][0-9]*)\\?"')
 _PROMPT_FACT_RE = re.compile(r"\[(n[1-9][0-9]*)\]\s+(.+?)\s+·")
 
-
-def _fake_answer(prompt: str, grammar: str) -> str:
-    """Deterministic `$?` answer for `FakeInferenceBackend` (B5, A3). Reads the
-    first alias the grammar allows and that alias's label out of the prompt's
-    facts block, then returns a sentence that *names that label* — so the
-    real `parse_answer` grounding gate passes with test-supplied nodes."""
-    aliases = _ALIAS_ENUM_RE.findall(grammar)
-    labels = dict(_PROMPT_FACT_RE.findall(prompt))
-    for alias in aliases:
-        if alias in labels:
-            label = labels[alias].strip()
-            return (
-                f'{{"insight": "{label} is the most likely cause.", '
-                f'"cited_nodes": ["{alias}"], "confidence": 0.9}}'
-            )
-    return _GRACEFUL_ANSWER_ABSTAIN
+# The opening phrase of `learning.prompts.EXPLAIN_SYSTEM` — the tell that a
+# free-decode call is the L9 `tell --explain` paraphrase (B12).
+_EXPLAIN_MARKER = "NeuroPACA codebase guide"
+_EXPLAIN_TARGET_RE = re.compile(r"Summary of (\S+) \(treat as data\)")
 
 
-_CHAT_MARKER = "NeuroPaca's local assistant"
-_CHAT_CITE_RE = re.compile(r"^[-*\s]*([^\n]+ → [^\n]+)$", re.MULTILINE)
-_CHAT_FACT_RE = re.compile(r"\[[^\]]+\]\s+(.+?)\s+·")
-
-
-def _fake_chat(prompt: str) -> str:
-    """Deterministic `chat` reply for `FakeInferenceBackend` (B11). Names the
-    first retrieved project-note citation (or graph fact) so the `grounded`
-    bookkeeping and any label check downstream see a plausible answer; falls back
-    to a generic sentence when nothing was retrieved."""
-    cite = _CHAT_CITE_RE.search(prompt)
-    if cite:
-        return f"Per {cite.group(1).strip()}, that is how NeuroPaca handles it."
-    fact = _CHAT_FACT_RE.search(prompt)
-    if fact:
-        return f"{fact.group(1).strip()} is the most relevant piece here."
-    return "The project notes do not cover that; from general knowledge, it depends."
+def _fake_explain(prompt: str) -> str:
+    """Deterministic `tell --explain` paraphrase for `FakeInferenceBackend`
+    (B12). Names the file from the prompt so `clean_explain_answer` and any
+    downstream check see a plausible, on-topic answer."""
+    m = _EXPLAIN_TARGET_RE.search(prompt)
+    target = m.group(1) if m else "this file"
+    return f"In plain words, {target} does what its summary above describes, and nothing more."
 
 
 def _fake_proactive(prompt: str, grammar: str) -> str:
@@ -151,11 +126,9 @@ class FakeInferenceBackend:
                 return '{"cited_node_id": "n1", "insight_category": "anomaly"}'
             if "query_template" in grammar:  # D-13 proactive idle-thought schema (L6)
                 return _fake_proactive(prompt, grammar)
-            if "cited_nodes" in grammar:  # $? answer schema (L9, B5)
-                return _fake_answer(prompt, grammar)
             return _GRACEFUL_ABSTAIN
-        if _CHAT_MARKER in prompt:  # B11 · free-decode L9 chat prompt
-            return _fake_chat(prompt)
+        if _EXPLAIN_MARKER in prompt:  # B12 · free-decode L9 `tell --explain` prompt
+            return _fake_explain(prompt)
         digest = hashlib.sha256(f"{prompt}|{max_tokens}|{temperature}".encode()).hexdigest()
         return f"fake-response:{digest[:16]}"
 
@@ -183,10 +156,10 @@ class LlamaCppBackend:
         self._model_path = model_path
         self._n_threads = n_threads
         self._n_ctx = n_ctx
-        # The interactive model does single-shot completions of <= 96 tokens over
-        # a ~300-token prompt — it never needs the stock 512 prefill batch, and a
-        # small n_batch shrinks the per-token logits scratch (Qwen's 152k vocab
-        # makes that buffer ~300 MB at n_batch=512). B5 memory finding.
+        # The interactive model does single-shot completions of a few hundred
+        # tokens over a short prompt — it never needs the stock 512 prefill batch,
+        # and a small n_batch shrinks the per-token logits scratch (Qwen's 152k
+        # vocab makes that buffer ~300 MB at n_batch=512). B5 memory finding.
         self._n_batch = n_batch
         self._llama: Any = None
         self._grammar_cls: Any = None
@@ -280,10 +253,11 @@ def create_backend(config: Config) -> InferenceBackend:
 
 
 def create_interactive_backend(config: Config) -> InferenceBackend | None:
-    """The second, larger model for the L9 `$` / `$?` path (B5, D-12). Returns
-    `None` when no interactive model is configured — L9 then answers every
-    interactive query from the extractive template. `"fake"` gets its own
-    `FakeInferenceBackend` so dual-model *routing* is testable without a model."""
+    """The second, larger model — used only by the L9 `tell --explain` paraphrase
+    (B5/D-12, re-scoped in B12). Returns `None` when no interactive model is
+    configured, in which case `tell --explain` just shows the deterministic block.
+    `"fake"` gets its own `FakeInferenceBackend` so dual-model *routing* stays
+    testable without a model."""
     if config.inference_backend == "fake":
         return FakeInferenceBackend()
     if config.inference_backend == "llama" and config.interactive_model_path:
@@ -291,6 +265,6 @@ def create_interactive_backend(config: Config) -> InferenceBackend | None:
             config.interactive_model_path,
             n_threads=config.n_threads,
             n_ctx=config.interactive_model_context_tokens,
-            n_batch=128,  # B5 — single-shot $? completions; keeps the logits scratch small
+            n_batch=128,  # single-shot completions; keeps the logits scratch small
         )
     return None
