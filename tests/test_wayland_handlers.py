@@ -154,6 +154,23 @@ def test_window_title_sensitivity_only_for_configured_browsers() -> None:
     assert len(seen) == before  # a title tick on a non-browser is inert
 
 
+def test_window_keeps_a_strong_ref_to_every_cosmic_handle() -> None:
+    # B15 · the `state` dispatcher lives on the cosmic handle. If it is only a
+    # local in `_on_toplevel` it gets GC'd and that window's focus goes invisible
+    # (the flaky ~1-in-3 daemon deafness). It must be retained for the toplevel's
+    # life and dropped on close.
+    src = _window()
+    src.start(lambda w: None)
+    toplevel_list, _ = _bind_window(src)
+    handle = _FakeToplevelHandle()
+    toplevel_list.dispatcher["toplevel"](toplevel_list, handle)
+    key = id(handle)
+    assert key in src._cosmic_handles
+    assert src._cosmic_handles[key] is src._info_manager.handles[-1]
+    handle.dispatcher["closed"](handle)
+    assert key not in src._cosmic_handles
+
+
 def test_window_drop_recomputes_focus() -> None:
     seen: list[WindowInfo] = []
     src = _window()
@@ -166,6 +183,16 @@ def test_window_drop_recomputes_focus() -> None:
     assert seen[-1].app_id == "term"
     handle.dispatcher["closed"](handle)  # window closed
     assert src._toplevels == {}
+
+
+def test_window_lost_and_bound_clear_the_cosmic_handles() -> None:
+    src = _window()
+    src.start(lambda w: None)
+    toplevel_list, _ = _bind_window(src)
+    _add_toplevel(src, toplevel_list, app_id="term", title="a", activated=True)
+    assert src._cosmic_handles
+    src.lost()
+    assert src._cosmic_handles == {}
 
 
 def test_window_lost_clears_all_state() -> None:

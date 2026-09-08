@@ -45,11 +45,12 @@ class _FakeDisplay:
     def read(self) -> None:
         self.reads += 1
 
-    def dispatch(self, *, block: bool = False) -> None:
+    def dispatch(self, *, block: bool = False) -> int:
         self.dispatches += 1
         if self.dispatch_error is not None:
             err, self.dispatch_error = self.dispatch_error, None
             raise err
+        return 0
 
     def flush(self) -> None:
         self.flushes += 1
@@ -171,6 +172,7 @@ async def test_read_runs_only_when_fd_is_readable(monkeypatch) -> None:
     os.write(w, b"x")
     conn = WaylandConnection()
     conn._stopped = False
+
     fake = _FakeDisplay()
     conn._display = fake
     conn._fd = r
@@ -201,6 +203,7 @@ async def test_transient_error_reconnects_recovers_and_re_primes(monkeypatch) ->
         conn._display = d
         conn._fd = r
         conn._connected = True
+
         for h in conn._handlers:
             h.bound({})
             h.primed()
@@ -220,6 +223,60 @@ async def test_transient_error_reconnects_recovers_and_re_primes(monkeypatch) ->
     assert handler.lost_calls >= 1, "handler not told the connection was lost"
     assert handler.bound_calls >= 2 and handler.primed_calls >= 2, "handler not re-primed"
     assert displays[-1].dispatches >= 1, "new display not pumping"
+
+
+async def test_liveness_watchdog_reconnects_when_active_but_silent(monkeypatch) -> None:
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(wc, "_STALE_RECONNECT_SECONDS", 0.05)
+    monkeypatch.setattr(wc, "_RECONNECT_DELAYS_SECONDS", (0.01,) * 5)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn.activity_probe = lambda: True  # user is active
+    conn._last_event_at = 0.0  # ancient — nothing dispatched
+    handler = _FakeHandler()
+    conn.add(handler)
+    displays: list[_FakeDisplay] = []
+
+    def fake_connect() -> None:
+        d = _FakeDisplay()
+        displays.append(d)
+        conn._display = d
+        conn._fd = r
+        conn._connected = True
+        conn._last_event_at = 0.0  # keep it stale so the watchdog trips again
+        for h in conn._handlers:
+            h.bound({})
+            h.primed()
+
+    monkeypatch.setattr(conn, "_connect", fake_connect)
+    fake_connect()
+    try:
+        await _run_pump(conn, 0.2)
+    finally:
+        os.close(r)
+        os.close(w)
+    assert len(displays) >= 2, "watchdog did not force a reconnect"
+    assert handler.lost_calls >= 1
+
+
+async def test_liveness_watchdog_stays_quiet_when_user_is_idle(monkeypatch) -> None:
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(wc, "_STALE_RECONNECT_SECONDS", 0.05)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn.activity_probe = lambda: False  # user is idle — no watchdog
+    conn._last_event_at = 0.0
+    fake = _FakeDisplay()
+    conn._display = fake
+    conn._fd = r
+    try:
+        await _run_pump(conn, 0.15)
+    finally:
+        os.close(r)
+        os.close(w)
+    assert fake.disconnected is False  # never torn down
 
 
 async def test_permanent_failure_gives_up_and_reports_dead(monkeypatch) -> None:
@@ -331,7 +388,7 @@ def _install_fake_pywayland(monkeypatch, display: _FakeDisplay) -> None:
     monkeypatch.setitem(sys.modules, "pywayland.client", client_mod)
 
 
-def test_connect_binds_globals_and_calls_bound_then_primed_in_order(monkeypatch) -> None:
+def test_connect_binds_globals_then_primes_and_marks_connected(monkeypatch) -> None:
     global _PIPE_R
     r, w = os.pipe()
     _PIPE_R = r
@@ -349,8 +406,8 @@ def test_connect_binds_globals_and_calls_bound_then_primed_in_order(monkeypatch)
 
         conn._connect()
 
-        assert order == ["bound", "primed"]
-        assert display.roundtrips == 2  # bind roundtrip + prime roundtrip
+        assert order == ["bound", "primed"]  # bound strictly before primed
+        assert display.roundtrips >= 2  # bind + prime roundtrips
         assert conn._connected is True
         assert conn._fd == r
     finally:
@@ -396,20 +453,17 @@ def test_connect_wraps_a_primed_failure_as_collectorerror(monkeypatch) -> None:
         monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-test")
         display = _FakeDisplay()
         _install_fake_pywayland(monkeypatch, display)
-
         conn = WaylandConnection()
         conn.add(_FakeHandler(primed_raises=RuntimeError("get_idle_notification blew up")))
-
         with pytest.raises(CollectorError, match="protocol setup failed"):
             conn._connect()
-        assert display.disconnected is True
-        assert conn._display is None
+        assert display.disconnected is True and conn._display is None
     finally:
         os.close(r)
         os.close(w)
 
 
-def test_multiple_handlers_all_get_bound_and_primed(monkeypatch) -> None:
+def test_connect_binds_and_primes_every_handler(monkeypatch) -> None:
     global _PIPE_R
     r, w = os.pipe()
     _PIPE_R = r
@@ -421,8 +475,8 @@ def test_multiple_handlers_all_get_bound_and_primed(monkeypatch) -> None:
         conn.add(a)
         conn.add(b)
         conn._connect()
-        assert a.bound_calls == 1 and a.primed_calls == 1
-        assert b.bound_calls == 1 and b.primed_calls == 1
+        assert a.bound_calls == 1 and b.bound_calls == 1
+        assert a.primed_calls == 1 and b.primed_calls == 1
     finally:
         os.close(r)
         os.close(w)

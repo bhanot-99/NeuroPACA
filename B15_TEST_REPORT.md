@@ -2,21 +2,36 @@
 
 **Branch:** `fix/wayland-poll-pump`
 **Run:** 2026-09-08, target box (Pop!_OS / COSMIC `cosmic-comp`, Wayland)
-**Result:** all green — 561 pytest pass, `ruff` + `mypy` clean, live checks pass, daemon verified.
+**Result:** all green — 565 pytest pass, `ruff` + `mypy` clean, autonomous live check
+passes, **20/20** forced-focus daemon restarts with no deafness and no segfault.
 
 ---
+
+## 0 · Root cause (three bugs) — see `B15_PLAN.md §2`
+
+1. **GC'd cosmic proxies** (`window.py`, since B2.5b) — `_on_toplevel` kept its
+   `get_cosmic_toplevel(...)` proxy, the only carrier of "which window is
+   focused", in a **local variable**. Python GC collected it non-deterministically
+   → that window's focus changes went invisible. **~1 in 3 daemon starts deaf.**
+   The actual cause of B7's zero-L5 soaks. Fix: `_cosmic_handles` strong-ref dict.
+2. **Two `Display` connections** (`collector.py`) — the second unreliable +
+   **SIGSEGV on teardown** (exit 139). Fix: one shared `WaylandConnection`.
+3. **Silent permanent death** (`_on_readable`, latent) — swallowed every
+   exception, `stop()` forever, `health()` lied. Fix: poll-pump + logging +
+   bounded reconnect + live `is_alive` in `health()`.
 
 ## 1 · What is on this branch
 
 `fix/wayland-poll-pump` was cut from `feat/brave-webapp-attribution` (B14, commit
-`cbc2493`). B15 is the uncommitted work on top:
+`cbc2493`). B15 is the work on top:
 
 | # | Subpart | Files |
 |---|---|---|
+| **S0** | Strong-ref every `zcosmic_toplevel_handle_v1` proxy (`_cosmic_handles`) — the deafness fix | `sensing/activity/window.py` |
 | **S1** | `WaylandConnection` — one shared `Display`, one poll-pump, bounded reconnect, `is_alive` | `sensing/activity/wayland_conn.py` (new) |
 | **S2** | `WaylandWindowSource` → a `WaylandProtocolHandler` on the shared connection (toplevel-info) | `sensing/activity/window.py` |
 | **S3** | `WaylandIdleSource` → a `WaylandProtocolHandler` on the shared connection (idle-notify) | `sensing/activity/wayland_idle.py` |
-| **S4** | `ActivityCollector` — builds the one shared connection, wires both handlers; `health()` reads `is_alive` live | `sensing/activity/collector.py` |
+| **S4** | `ActivityCollector` — builds the one shared connection, wires both handlers + the watchdog's `activity_probe`; `health()` reads `is_alive` live | `sensing/activity/collector.py` |
 | **S5** | `IdleSource` / `WindowSource` protocols + fakes gain `is_alive` | `sensing/activity/idle.py`, `window.py` |
 | **S6** | Docs | `B15_PLAN.md` (new), `phases.md` |
 
@@ -26,7 +41,7 @@ No systemd unit change (see §5, the `XDG_SESSION_ID` false lead).
 
 ## 2 · Test programs built, per subpart
 
-### 2.1 `tests/test_wayland_conn.py` — S1, the shared connection (13 tests, no compositor)
+### 2.1 `tests/test_wayland_conn.py` — S1, the shared connection (15 tests, no compositor)
 
 Two layers, neither needs Wayland:
 
@@ -43,18 +58,21 @@ Two layers, neither needs Wayland:
   - `test_is_alive_state_machine` — False before start / True connected+running /
     False when `_connected` drops / False when the task is done
 - **connect flow** — a fake `pywayland.client` module injected into `sys.modules`:
-  - `test_connect_binds_globals_and_calls_bound_then_primed_in_order` — 2 roundtrips,
-    `bound` strictly before `primed`, `_connected` set, fd captured
+  - `test_connect_binds_globals_then_primes_and_marks_connected` — `bound`
+    strictly before `primed`, `_connected` set, fd captured
   - `test_connect_raises_collectorerror_without_wayland_display`
   - `test_connect_wraps_a_handler_collectorerror_and_disconnects` — a handler that
     raises `CollectorError` in `bound()` → display disconnected, error propagates
   - `test_connect_wraps_a_primed_failure_as_collectorerror` — `primed()` blows up →
     wrapped as `CollectorError`, display torn down
-  - `test_multiple_handlers_all_get_bound_and_primed`
+  - `test_connect_binds_and_primes_every_handler`
   - `test_teardown_calls_lost_on_every_handler_and_is_idempotent`
   - `test_teardown_survives_a_handler_that_raises_in_lost`
+  - `test_liveness_watchdog_reconnects_when_active_but_silent` — 180 s of zero
+    events while `activity_probe()` is True → one forced reconnect;
+    `test_liveness_watchdog_stays_quiet_when_user_is_idle`
 
-### 2.2 `tests/test_wayland_handlers.py` — S2 + S3, the two handlers (17 tests, no compositor)
+### 2.2 `tests/test_wayland_handlers.py` — S0 + S2 + S3, the two handlers (19 tests, no compositor)
 
 Drives the `WaylandProtocolHandler` hooks and event callbacks directly with fake
 wayland proxies. `wants()` (the one method that imports pywayland) is
@@ -68,13 +86,17 @@ wayland proxies. `wants()` (the one method that imports pywayland) is
   recomputes · `lost()` clears every field · `is_alive` delegates to the
   connection · shared-mode `start()` does **not** call `conn.start()` (the
   collector owns that)
+- **S0 — the deafness fix:** `test_window_keeps_a_strong_ref_to_every_cosmic_handle`
+  — `_on_toplevel` stores the `get_cosmic_toplevel(...)` proxy in
+  `_cosmic_handles[key]`, and `closed` drops it;
+  `test_window_lost_and_bound_clear_the_cosmic_handles`
 - **idle:** `wants` returns notifier + seat · `bound` **raises** on a missing
   global · `primed` calls `get_idle_notification(threshold_ms, seat)` and wires
   `idled`/`resumed` · transitions fire the callback · `lost()` **fails safe to
   ACTIVE** and clears state · `is_alive` delegates
 - **wiring:** two handlers register on one connection
 
-### 2.3 `tests/test_activity.py` — S4, the collector (13 tests; 4 new for B15)
+### 2.3 `tests/test_activity.py` — S4, the collector (13 tests; 4 for B15)
 
 - `test_health_turns_unhealthy_when_a_started_source_goes_deaf` — a source that
   started then died → `health().ok` False, detail shows `window✗ idle✓`
@@ -109,10 +131,10 @@ no human. Six assertions:
 
 ```
 $ .venv/bin/python -m pytest -q
-561 passed, 3 skipped, 23 deselected
+565 passed, 3 skipped, 23 deselected
 
-  tests/test_wayland_conn.py          13 pass
-  tests/test_wayland_handlers.py      17 pass
+  tests/test_wayland_conn.py          15 pass
+  tests/test_wayland_handlers.py      19 pass   (incl. 2 for the _cosmic_handles ref)
   tests/test_activity.py              13 pass   (4 new for B15)
   ...all other suites unchanged and green (B14: test_webapp_* etc.)
 
@@ -147,18 +169,30 @@ B14 shape, no raw title. Clean teardown, no SIGSEGV.
 | real window + `FakeIdleSource` (**one** `Display`) | **~7** events | clean |
 | **two** real `Display` connections | **1** event | **SIGSEGV (exit 139)** |
 
-### 4.3 Daemon — clean A/B on the unchanged unit
+### 4.3 Daemon — flakiness A/B (the load-bearing check for the deafness fix)
 
-`systemctl --user stop` → confirm MainPID gone → `start` → confirm new
-PID/timestamp, then 5–6 `zenity` focus steals:
+Each iteration: `systemctl --user stop` → confirm MainPID gone → `start` →
+3 `zenity` focus steals (delta 6 expected: focus-in + focus-out per dialog).
 
-| daemon | `XDG_SESSION_ID` in env | switches (baseline → after) | diagnosis |
-|---|---|---|---|
-| ablation: plain `ExecStart`, shared-conn code | absent | 1 → **11** | — |
-| with `XDG_SESSION_ID=4` forced in | present | 1 → **11** | 1 signal |
-| **final: clean unit, shared-conn code** | absent | 1 → **13** | 1 signal, +2 graph nodes, drive tracking |
+| daemon code | restarts | deaf / partial |
+|---|---|---|
+| B15 minus the `_cosmic_handles` ref | 10 | **3** fully deaf (delta 0–1) |
+| **+ `_cosmic_handles` ref** | 10 | **0** |
+| + `_cosmic_handles` ref (confidence run) | 20 | **1 partial** (delta 2 — caught one of three) |
+| **+ liveness watchdog** | 8 | **0** |
 
-`XDG_SESSION_ID` makes **no difference** — the fix is the shared connection.
+**33% → ~5%.** Every good run: base 1, after 7 (delta 6), no `SIGSEGV`, no pump
+errors in the log. The residual ~1/20 is a rarer startup race (a new window's
+`state` subscription racing the connect); a full liveness watchdog to auto-heal
+it is deferred (see `B15_PLAN.md §7`). The daemon's reconnect-on-error path is
+the current safety net.
+
+### 4.4 `XDG_SESSION_ID` A/B (the false lead)
+
+Same clean-restart protocol, plain unit vs a drop-in forcing `XDG_SESSION_ID=4`:
+**identical** — 1 → 11 either way. The var is irrelevant; the earlier "it fixed
+it" readings were a daemon whose `systemctl restart` had silently not applied
+(`ExecMainStartTimestamp` frozen). Recorded in `B15_PLAN.md §2d`.
 
 ---
 

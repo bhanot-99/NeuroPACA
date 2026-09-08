@@ -94,6 +94,12 @@ class WaylandWindowSource:
         self._cb: WindowCallback | None = None
         self._info_manager: Any = None
         self._toplevels: dict[int, _Toplevel] = {}
+        # B15 · hold a strong ref to every zcosmic_toplevel_handle_v1 proxy. Its
+        # `state` dispatcher is the ONLY source of "which window is focused"; if
+        # the proxy is only a local in `_on_toplevel` it can be GC'd before the
+        # first `state` event arrives and that window becomes permanently
+        # focus-invisible (the flaky ~1-in-3 deafness).
+        self._cosmic_handles: dict[int, Any] = {}
         self._focused_app_id: str | None = None
         # B14 · for these app_ids (browsers) a *title* change is a real focus
         # change (a new tab) and must fire the callback; for everything else only
@@ -140,6 +146,7 @@ class WaylandWindowSource:
         self._info_manager = info
         toplevel_list.dispatcher["toplevel"] = self._on_toplevel
         self._toplevels.clear()
+        self._cosmic_handles.clear()
         self._focused_app_id = None
         self._focused_title = ""
 
@@ -149,6 +156,7 @@ class WaylandWindowSource:
     def lost(self) -> None:
         self._info_manager = None
         self._toplevels.clear()
+        self._cosmic_handles.clear()
         self._focused_app_id = None
         self._focused_title = ""
 
@@ -160,6 +168,7 @@ class WaylandWindowSource:
         handle.dispatcher["title"] = lambda h, title: self._set(id(h), "title", title)
         handle.dispatcher["closed"] = lambda h: self._drop(id(h))
         cosmic_handle = self._info_manager.get_cosmic_toplevel(handle)
+        self._cosmic_handles[key] = cosmic_handle  # strong ref — see __init__
         cosmic_handle.dispatcher["state"] = lambda _ch, state: self._set(
             key, "activated", _STATE_ACTIVATED in list(state)
         )
@@ -171,6 +180,7 @@ class WaylandWindowSource:
             self._recompute_focus()
 
     def _drop(self, key: int) -> None:
+        self._cosmic_handles.pop(key, None)
         if self._toplevels.pop(key, None) is not None:
             self._recompute_focus()
 

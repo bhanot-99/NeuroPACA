@@ -78,6 +78,7 @@ class ActivityCollector(BaseModule):
             from neuropaca.sensing.activity.window import WaylandWindowSource
 
             conn = WaylandConnection()
+            conn.activity_probe = lambda: not self._idle  # gates the liveness watchdog
             self._idle_source = WaylandIdleSource(self._idle_threshold, connection=conn)
             self._window_source = WaylandWindowSource(
                 title_sensitive_app_ids=self._browsers if self._webapp_enabled else frozenset(),

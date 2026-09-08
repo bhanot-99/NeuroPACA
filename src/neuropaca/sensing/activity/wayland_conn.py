@@ -1,14 +1,17 @@
 """B15 · one shared pywayland `Display` for every activity protocol.
 
 **Why this exists.** Running two `pywayland.client.Display` connections in one
-process is broken on this stack: the second connection's event stream goes deaf
-(measured 2026-09-08 — 1 focus event across 25 forced title changes, both pumps
-`is_alive`) and teardown segfaults (exit 139). An `ActivityCollector` with a
-`WaylandIdleSource` **and** a `WaylandWindowSource`, each its own `Display`, hit
-exactly this — which is why the daemon logged ~4 app switches an hour while a
-single-connection collector caught dozens. libwayland is one connection per
+process is broken on this stack: the second connection's event stream is
+unreliable and teardown segfaults (exit 139, measured 2026-09-08). An
+`ActivityCollector` with a `WaylandIdleSource` **and** a `WaylandWindowSource`,
+each its own `Display`, hit exactly this. libwayland is one connection per
 client, so idle-notify and toplevel-info now bind on this one `Display`, share
 one fd, and are drained by one poll-pump.
+
+(The daemon's "~4 focus events an hour" also had a second, deeper cause — the
+`zcosmic_toplevel_handle_v1` proxies in `window.py` were GC'd before their
+`state` events arrived; fixed there with a strong-ref dict. Both fixes are
+needed.)
 
 **The pump** (mirrors the working B2.5 spike, not `loop.add_reader`, which does
 not reliably flush pywayland's queue to the handlers — flacjacket/pywayland#16):
@@ -26,6 +29,8 @@ import asyncio
 import logging
 import os
 import select
+import time
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from neuropaca.core.errors import CollectorError
@@ -34,6 +39,16 @@ _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 0.2
 _RECONNECT_DELAYS_SECONDS = (2.0, 4.0, 8.0, 16.0, 32.0)
+# Roundtrips during connect to drain the compositor's initial state. Binding the
+# toplevel list makes each handler send a `get_cosmic_toplevel` request; a
+# further round collects the `state` replies to those.
+_PRIME_ROUNDTRIPS = 2
+# Liveness watchdog: if the user has had input recently (the `activity_probe`
+# says not-idle) but this connection has dispatched **zero** events for this
+# long, the toplevel-info subscription has probably half-established on a bad
+# start (~1 in 20). Force one reconnect — cheap (~50 ms) and it re-rolls the
+# dice. On a genuinely idle machine the probe is False and this never fires.
+_STALE_RECONNECT_SECONDS = 180.0
 
 
 class WaylandProtocolHandler(Protocol):
@@ -64,6 +79,10 @@ class WaylandConnection:
         self._stopped = False
         self._connected = False
         self._handlers: list[WaylandProtocolHandler] = []
+        # optional "is the user active right now" probe (the collector wires this
+        # to `not activity_collector._idle`); gates the liveness watchdog.
+        self.activity_probe: Callable[[], bool] | None = None
+        self._last_event_at = 0.0
 
     def add(self, handler: WaylandProtocolHandler) -> None:
         self._handlers.append(handler)
@@ -126,7 +145,8 @@ class WaylandConnection:
 
         self._display = display
         self._fd = display.get_fd()
-        display.roundtrip()  # pull the initial state (current toplevels, ...)
+        for _ in range(_PRIME_ROUNDTRIPS):
+            display.roundtrip()  # toplevel list, then the get_cosmic_toplevel state replies
         try:
             for handler in self._handlers:
                 handler.primed()
@@ -136,6 +156,7 @@ class WaylandConnection:
             raise CollectorError(f"Wayland protocol setup failed: {exc}") from exc
         display.flush()
         self._connected = True
+        self._last_event_at = time.monotonic()
 
     async def _pump(self) -> None:
         failures = 0
@@ -147,10 +168,24 @@ class WaylandConnection:
                 assert self._display is not None
                 if select.select([self._fd], [], [], 0)[0]:
                     self._display.read()
-                self._display.dispatch(block=False)
+                dispatched = self._display.dispatch(block=False)
                 self._display.flush()
                 self._connected = True
                 failures = 0
+                now = time.monotonic()
+                if dispatched:
+                    self._last_event_at = now
+                elif (
+                    now - self._last_event_at > _STALE_RECONNECT_SECONDS
+                    and self.activity_probe is not None
+                    and self.activity_probe()
+                ):
+                    _log.warning(
+                        "no Wayland events in %.0fs while the user is active — "
+                        "reconnecting in case the subscription half-established",
+                        now - self._last_event_at,
+                    )
+                    self._teardown()  # next tick reconnects; the sleep below keeps this bounded
             except asyncio.CancelledError:
                 raise
             except Exception:
