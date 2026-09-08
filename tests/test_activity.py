@@ -7,6 +7,7 @@ Driven by `FakeIdleSource` — no compositor, no pywayland. The live Wayland pat
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ClassVar
 
 import pytest
 
@@ -228,6 +229,25 @@ async def test_webapp_tracking_off_reproduces_b13_payload() -> None:
     await bus.stop()
 
 
+async def test_health_turns_unhealthy_when_a_started_source_goes_deaf() -> None:
+    # B15 · a source that started fine then died (poll-pump gave up) must drag
+    # the module unhealthy — the alarm B7 never had.
+    bus = await _running_bus()
+    idle, window = FakeIdleSource(), FakeWindowSource()
+    collector = await _started(bus, idle, window=window)
+    assert collector.health().ok is True
+    assert "window✓" in collector.health().detail
+
+    window.started = False  # FakeWindowSource.is_alive tracks `started`
+
+    dead = collector.health()
+    assert dead.ok is False
+    assert "window✗" in dead.detail and "idle✓" in dead.detail
+
+    await collector.stop()
+    await bus.stop()
+
+
 async def test_stop_is_idempotent_and_stops_the_source() -> None:
     bus = await _running_bus()
     source = FakeIdleSource()
@@ -244,3 +264,115 @@ async def test_stop_is_idempotent_and_stops_the_source() -> None:
 def test_fake_source_emit_before_start_raises() -> None:
     with pytest.raises(RuntimeError):
         FakeIdleSource().emit(IdleTransition.IDLE)
+
+
+# ---------------------------------------------- B15 · shared Wayland connection
+
+
+class _FakeConn:
+    """Stand-in for WaylandConnection — records wiring, never touches pywayland."""
+
+    instances: ClassVar[list[_FakeConn]] = []
+
+    def __init__(self) -> None:
+        self.handlers: list[object] = []
+        self.started = 0
+        self.stopped = 0
+        self.alive = True
+        self.start_raises: Exception | None = None
+        _FakeConn.instances.append(self)
+
+    def add(self, handler: object) -> None:
+        self.handlers.append(handler)
+
+    def start(self) -> None:
+        self.started += 1
+        if self.start_raises is not None:
+            raise self.start_raises
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+    @property
+    def is_alive(self) -> bool:
+        return self.alive
+
+
+async def test_real_path_builds_one_shared_connection_with_both_handlers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn
+    )
+    _FakeConn.instances.clear()
+    bus = await _running_bus()
+    collector = ActivityCollector(bus, Config(inference_backend="fake"))
+    await collector.initialize()
+    await collector.start()
+
+    assert len(_FakeConn.instances) == 1, "not exactly one shared connection"
+    conn = _FakeConn.instances[0]
+    assert len(conn.handlers) == 2, "idle + window not both bound to the one connection"
+    assert conn.started == 1, "conn.start() not called exactly once"
+    detail = collector.health().detail
+    assert "idle✓" in detail and "window✓" in detail
+    assert collector.health().ok is True
+
+    await collector.stop()
+    assert conn.stopped == 1
+    await bus.stop()
+
+
+async def test_real_path_wayland_unavailable_disables_both_halves(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn
+    )
+    _FakeConn.instances.clear()
+    _base_init = _FakeConn.__init__
+
+    def _init(self: _FakeConn) -> None:
+        _base_init(self)
+        self.start_raises = CollectorError("compositor lacks the protocols")
+        self.alive = False
+
+    monkeypatch.setattr(_FakeConn, "__init__", _init)
+
+    bus = await _running_bus()
+    errors: list[Event] = []
+    bus.subscribe(EventType.SYSTEM_ERROR, _collect(errors))
+    collector = ActivityCollector(bus, Config(inference_backend="fake"))
+    await collector.initialize()
+    await collector.start()  # must not raise
+    await bus.join()
+
+    assert collector.is_running is True
+    detail = collector.health().detail
+    assert "idle✗" in detail and "window✗" in detail
+    # both halves fail as one connection → exactly one error, labelled "wayland"
+    assert len(errors) == 1
+    assert errors[0].payload["module"] == "sensing.activity.wayland"
+    assert errors[0].payload["severity"] == "collector-disabled"
+    # a source that never started does not drag health unhealthy (unchanged tolerance)
+    assert collector.health().ok is True
+
+    await collector.stop()
+    await bus.stop()
+
+
+async def test_real_path_connection_dies_later_drags_health_unhealthy(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn
+    )
+    _FakeConn.instances.clear()
+    bus = await _running_bus()
+    collector = ActivityCollector(bus, Config(inference_backend="fake"))
+    await collector.initialize()
+    await collector.start()
+    assert collector.health().ok is True
+
+    _FakeConn.instances[0].alive = False  # the pump gave up
+
+    dead = collector.health()
+    assert dead.ok is False
+    assert "idle✗" in dead.detail and "window✗" in dead.detail
+
+    await collector.stop()
+    await bus.stop()

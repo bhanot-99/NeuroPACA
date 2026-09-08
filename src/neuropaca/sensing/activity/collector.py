@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.config import Config
@@ -55,6 +56,7 @@ class ActivityCollector(BaseModule):
         self._webapp_map_path = config.webapp_map_path
         self._webapp_map = WebAppMap.empty()
         self._webapps_seen: set[str] = set()
+        self._wl_conn: Any = None  # the shared WaylandConnection on the real path
 
     async def initialize(self) -> None:
         return None  # publishes only; subscribes to nothing
@@ -64,24 +66,38 @@ class ActivityCollector(BaseModule):
             return
         self.is_running = True
 
-        if self._idle_source is None:
-            from neuropaca.sensing.activity.wayland_idle import WaylandIdleSource
-
-            self._idle_source = WaylandIdleSource(self._idle_threshold)
-        idle = self._idle_source
-        self._idle_ok = self._try_start("idle", lambda: idle.start(self._on_transition))
-
         if self._webapp_enabled and self._browsers:
             self._webapp_map = WebAppMap.from_file(self._webapp_map_path)
 
-        if self._window_source is None:
+        if self._idle_source is None and self._window_source is None:
+            # Real path: ONE shared Wayland connection carries both protocols
+            # (idle-notify + toplevel-info). Two Display connections in one
+            # process makes the second go deaf — see wayland_conn.py (B15).
+            from neuropaca.sensing.activity.wayland_conn import WaylandConnection
+            from neuropaca.sensing.activity.wayland_idle import WaylandIdleSource
             from neuropaca.sensing.activity.window import WaylandWindowSource
 
+            conn = WaylandConnection()
+            self._idle_source = WaylandIdleSource(self._idle_threshold, connection=conn)
             self._window_source = WaylandWindowSource(
-                title_sensitive_app_ids=self._browsers if self._webapp_enabled else frozenset()
+                title_sensitive_app_ids=self._browsers if self._webapp_enabled else frozenset(),
+                connection=conn,
             )
-        window = self._window_source
-        self._window_ok = self._try_start("window", lambda: window.start(self._on_window_switch))
+            self._idle_source.start(self._on_transition)  # store cb; conn not started yet
+            self._window_source.start(self._on_window_switch)
+            started = self._try_start("wayland", conn.start)
+            self._idle_ok = self._window_ok = started
+            self._wl_conn = conn
+        else:
+            # Injected doubles (tests): each source drives itself.
+            idle = self._idle_source
+            if idle is not None:
+                self._idle_ok = self._try_start("idle", lambda: idle.start(self._on_transition))
+            window = self._window_source
+            if window is not None:
+                self._window_ok = self._try_start(
+                    "window", lambda: window.start(self._on_window_switch)
+                )
 
     def _try_start(self, label: str, run: Callable[[], None]) -> bool:
         try:
@@ -106,14 +122,28 @@ class ActivityCollector(BaseModule):
             self._idle_source.stop()
         if self._window_ok and self._window_source is not None:
             self._window_source.stop()
+        if self._wl_conn is not None:
+            self._wl_conn.stop()  # the real shared connection (source.stop() is a no-op for it)
         self._idle_ok = self._window_ok = False
 
     def health(self) -> ModuleHealth:
-        idle = "idle✓" if self._idle_ok else "idle✗"
-        window = "window✓" if self._window_ok else "window✗"
+        # B15 · "✓" now means the source is started AND its poll-pump is still
+        # live. A pump that died and burned its reconnect budget flips is_alive to
+        # False, so health stops printing "✓" for a sensor that has gone deaf
+        # (the B7 failure was a dead collector that still looked healthy).
+        idle_live = self._idle_ok and self._idle_source is not None and self._idle_source.is_alive
+        window_live = (
+            self._window_ok and self._window_source is not None and self._window_source.is_alive
+        )
+        idle = "idle✓" if idle_live else "idle✗"
+        window = "window✓" if window_live else "window✗"
+        # A source that STARTED and then died drags the module unhealthy — that is
+        # the alarm B7 never had. A source that never started (headless, no
+        # compositor) stays tolerated, exactly as before.
+        died = (self._idle_ok and not idle_live) or (self._window_ok and not window_live)
         return ModuleHealth(
             name=self.name,
-            ok=self.is_running,
+            ok=self.is_running and not died,
             detail=f"{idle} {window} · {self._transitions} transitions · {self._switches} switches",
             last_event_at=self._idle_since,
         )

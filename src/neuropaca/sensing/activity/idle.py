@@ -28,6 +28,9 @@ class IdleSource(Protocol):
 
     def stop(self) -> None: ...
 
+    @property
+    def is_alive(self) -> bool: ...
+
 
 class FakeIdleSource:
     """Deterministic test double — drive transitions with `emit()`."""
@@ -43,6 +46,10 @@ class FakeIdleSource:
     def stop(self) -> None:
         self._cb = None
         self.started = False
+
+    @property
+    def is_alive(self) -> bool:
+        return self.started
 
     def emit(self, transition: IdleTransition) -> None:
         if self._cb is None:

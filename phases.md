@@ -391,6 +391,39 @@ activity / pattern / schema extensions), ruff + mypy clean. Config
 `webapp_browser_app_ids`; `data/webapp_map.default.toml` shipped as a starting
 guess — the real allowlist is a dogfood output.
 
+### B15 · The Wayland activity sensor goes deaf — one shared connection
+
+Full plan: [`B15_PLAN.md`](B15_PLAN.md), test run: `B15_TEST_REPORT.md`. Found
+during the B14 live smoke test: the daemon barely registered focus events (~1
+per session) while a standalone `ActivityCollector` on the same code caught
+dozens — the sensor was *deaf*, not dead, and `health()` still said `window✓`.
+This is the mechanism behind B7's zero-L5 soaks and B13's 4-switch-an-hour gate.
+
+**Root cause.** `ActivityCollector` opened `WaylandIdleSource` and
+`WaylandWindowSource` as **two independent `pywayland.Display` connections**. Run
+directly (no systemd, in-session): one connection → ~7 events over 25 forced
+changes, clean teardown; two connections → **1** event and a **SIGSEGV** (exit
+139) on teardown. libwayland is one connection per client. Latent alongside it:
+`_on_readable` swallowed every exception and permanently `stop()`d the source
+with no log — the B7 shape, still in the tree. (A ~2 h detour blamed a missing
+`XDG_SESSION_ID` under systemd; ruled out by a clean restart A/B — the fixed code
+works with or without it. `systemctl --user restart` had been silently not
+taking effect, keeping the old two-connection daemon alive.)
+
+**Fixes.** One shared `WaylandConnection` (`sensing/activity/wayland_conn.py`) —
+`WaylandIdleSource` / `WaylandWindowSource` became `WaylandProtocolHandler`s
+(`wants` / `bound` / `primed` / `lost`) that bind on it; this is the fix and
+erases the segfault. A poll-pump (non-blocking `select`, `read()` only when
+readable, **always** `dispatch` — the proven B2.5 spike shape, not `add_reader`),
+with bounded reconnect. `health()` reads `source.is_alive` live so a died sensor
+drags the module unhealthy. **No systemd unit change.**
+
+**Status:** implemented on `fix/wayland-poll-pump`. 561 pytest green (≈34 new:
+`test_wayland_conn`, `test_wayland_handlers`, activity additions), ruff + mypy
+clean. Live-verified autonomously (`scripts/b15_live_check.py`): 5 forced focus
+changes → 10 `APP_SWITCH` events, health green throughout, clean teardown; and on
+the real daemon (clean unit) → 13 switches + a diagnosis signal.
+
 ---
 
 ## Deferred — after the rest of the project

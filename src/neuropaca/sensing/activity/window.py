@@ -1,24 +1,31 @@
 """`WindowSource` — the focused window's `app_id` / `title` (B2.5b, D-9).
 
-`WaylandWindowSource` uses `ext_foreign_toplevel_list_v1` (bundled) to enumerate
+`WaylandWindowSource` binds `ext_foreign_toplevel_list_v1` (bundled) to enumerate
 toplevels and the vendored `zcosmic_toplevel_info_v1` to learn which one is
-`activated`. pywayland is optional + lazy-imported; a missing library, no
-compositor, or a compositor without the protocol raises `CollectorError`, which
-`ActivityCollector` turns into a graceful self-disable (rules.md §2). One Display
-connection, `loop.add_reader` on its fd, no thread, no lock (rules.md §3).
+`activated`. B15: it is a **protocol handler on a shared `WaylandConnection`** —
+it owns no `Display` of its own, because two `Display` connections in one process
+makes the second go deaf (see `wayland_conn.py`). Given no connection it creates
+a private one (standalone use); the `ActivityCollector` passes in the connection
+it also shares with `WaylandIdleSource`.
+
+pywayland is optional + lazy-imported; a missing library, no compositor, or a
+compositor without the protocol raises `CollectorError`, which `ActivityCollector`
+turns into a graceful self-disable (rules.md §2).
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from neuropaca.core.errors import CollectorError
+from neuropaca.sensing.activity.wayland_conn import WaylandConnection
 
 __all__ = ["FakeWindowSource", "WaylandWindowSource", "WindowInfo", "WindowSource"]
+
+_log = logging.getLogger(__name__)
 
 _TOPLEVEL_LIST_MAX_VERSION = 1
 _TOPLEVEL_INFO_MAX_VERSION = 3
@@ -39,6 +46,9 @@ class WindowSource(Protocol):
 
     def stop(self) -> None: ...
 
+    @property
+    def is_alive(self) -> bool: ...
+
 
 class FakeWindowSource:
     """Test double — `emit(app_id, title)` drives a focus change."""
@@ -54,6 +64,10 @@ class FakeWindowSource:
     def stop(self) -> None:
         self._cb = None
         self.started = False
+
+    @property
+    def is_alive(self) -> bool:
+        return self.started
 
     def emit(self, app_id: str, title: str = "") -> None:
         if self._cb is None:
@@ -71,10 +85,12 @@ class _Toplevel:
 
 
 class WaylandWindowSource:
-    def __init__(self, *, title_sensitive_app_ids: frozenset[str] = frozenset()) -> None:
-        self._display: Any = None
-        self._fd = -1
-        self._loop: asyncio.AbstractEventLoop | None = None
+    def __init__(
+        self,
+        *,
+        title_sensitive_app_ids: frozenset[str] = frozenset(),
+        connection: WaylandConnection | None = None,
+    ) -> None:
         self._cb: WindowCallback | None = None
         self._info_manager: Any = None
         self._toplevels: dict[int, _Toplevel] = {}
@@ -85,62 +101,56 @@ class WaylandWindowSource:
         # document's autosave-dirtied title stays a no-op.
         self._title_sensitive = title_sensitive_app_ids
         self._focused_title = ""
+        # B15 · one shared Wayland connection. If none is supplied we own a
+        # private one (standalone use); the collector passes in the connection it
+        # also shares with WaylandIdleSource.
+        self._owns_connection = connection is None
+        self._conn = connection if connection is not None else WaylandConnection()
+        self._conn.add(self)
 
     def start(self, on_switch: WindowCallback) -> None:
-        if not os.environ.get("WAYLAND_DISPLAY"):
-            raise CollectorError("no $WAYLAND_DISPLAY — not a Wayland session")
-        try:
-            from pywayland.client import Display
-            from pywayland.protocol.ext_foreign_toplevel_list_v1 import ExtForeignToplevelListV1
-
-            from neuropaca.sensing.activity._protocols.cosmic_toplevel_info_unstable_v1 import (
-                ZcosmicToplevelInfoV1,
-            )
-        except ImportError as exc:
-            raise CollectorError(
-                f"pywayland / cosmic protocol bindings missing (pip install .[activity]): {exc}"
-            ) from exc
-
         self._cb = on_switch
-        self._loop = asyncio.get_running_loop()
+        if self._owns_connection:
+            self._conn.start()  # synchronous — raises CollectorError to self-disable
 
-        try:
-            display = Display()
-            display.connect()
-        except Exception as exc:
-            raise CollectorError(f"cannot connect to the Wayland display: {exc}") from exc
+    @property
+    def is_alive(self) -> bool:
+        return self._conn.is_alive
 
-        found: dict[str, Any] = {}
-        registry = display.get_registry()
+    # ------------------------------------------- WaylandConnection protocol hooks
+    def wants(self) -> dict[str, tuple[type, int]]:
+        from pywayland.protocol.ext_foreign_toplevel_list_v1 import ExtForeignToplevelListV1
 
-        def _on_global(_reg: Any, name: int, interface: str, version: int) -> None:
-            if interface == "ext_foreign_toplevel_list_v1":
-                found["list"] = registry.bind(
-                    name, ExtForeignToplevelListV1, min(version, _TOPLEVEL_LIST_MAX_VERSION)
-                )
-            elif interface == "zcosmic_toplevel_info_v1":
-                found["info"] = registry.bind(
-                    name, ZcosmicToplevelInfoV1, min(version, _TOPLEVEL_INFO_MAX_VERSION)
-                )
+        from neuropaca.sensing.activity._protocols.cosmic_toplevel_info_unstable_v1 import (
+            ZcosmicToplevelInfoV1,
+        )
 
-        registry.dispatcher["global"] = _on_global
-        display.roundtrip()
+        return {
+            "ext_foreign_toplevel_list_v1": (ExtForeignToplevelListV1, _TOPLEVEL_LIST_MAX_VERSION),
+            "zcosmic_toplevel_info_v1": (ZcosmicToplevelInfoV1, _TOPLEVEL_INFO_MAX_VERSION),
+        }
 
-        if "list" not in found or "info" not in found:
-            display.disconnect()
+    def bound(self, globals_: dict[str, Any]) -> None:
+        toplevel_list = globals_.get("ext_foreign_toplevel_list_v1")
+        info = globals_.get("zcosmic_toplevel_info_v1")
+        if toplevel_list is None or info is None:
             raise CollectorError(
                 "compositor lacks ext_foreign_toplevel_list_v1 + zcosmic_toplevel_info_v1"
             )
+        self._info_manager = info
+        toplevel_list.dispatcher["toplevel"] = self._on_toplevel
+        self._toplevels.clear()
+        self._focused_app_id = None
+        self._focused_title = ""
 
-        self._info_manager = found["info"]
-        found["list"].dispatcher["toplevel"] = self._on_toplevel
-
-        self._display = display
-        self._fd = display.get_fd()
-        display.roundtrip()  # prime the current toplevel set
+    def primed(self) -> None:
         self._recompute_focus()
-        display.flush()
-        self._loop.add_reader(self._fd, self._on_readable)
+
+    def lost(self) -> None:
+        self._info_manager = None
+        self._toplevels.clear()
+        self._focused_app_id = None
+        self._focused_title = ""
 
     # ------------------------------------------------------ dispatcher callbacks
     def _on_toplevel(self, _list: Any, handle: Any) -> None:
@@ -179,30 +189,7 @@ class WaylandWindowSource:
         if self._cb is not None:
             self._cb(WindowInfo(app_id=app_id, title=title))
 
-    def _on_readable(self) -> None:
-        display = self._display
-        if display is None:
-            return
-        try:
-            display.read()
-            display.dispatch(block=False)
-            display.flush()
-        except Exception:
-            self.stop()
-
     def stop(self) -> None:
-        if self._loop is not None and self._fd >= 0:
-            try:
-                self._loop.remove_reader(self._fd)
-            except (ValueError, OSError):
-                pass
-        self._fd = -1
-        if self._display is not None:
-            try:
-                self._display.disconnect()
-            except Exception:
-                pass
-        self._display = None
-        self._info_manager = None
-        self._toplevels.clear()
+        if self._owns_connection:
+            self._conn.stop()
         self._cb = None
