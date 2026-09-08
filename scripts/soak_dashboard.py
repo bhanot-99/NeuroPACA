@@ -2,24 +2,24 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 soak status as a browsable HTML dashboard -- the explained version.
+"""Soak status as a browsable HTML dashboard -- the explained version.
 
 WHY THIS EXISTS
 
-`b9_soak_7day.sh` and `b9_soak_tray.py` both surface the same terse
+`soak_7day.sh` and `soak_tray.py` both surface the same terse
 `summarise()` block: label, number, at most a half-line of hint. It answers
 "is the soak alive" in five seconds but not "what does 'Sessions 20 (3
 unclean)' actually mean, and is 3 bad?". This dashboard is that second layer:
 every metric gets a plain-language description and a good / watch / bad band,
 plus a progress ring and an RSS sparkline.
 
-    scripts/b9_soak_dashboard.py            # write data/b9_soak_dashboard.html
-    scripts/b9_soak_dashboard.py --open     # write it and xdg-open it
-    scripts/b9_soak_dashboard.py --out /tmp/d.html
+    scripts/soak_dashboard.py            # write data/soak_dashboard.html
+    scripts/soak_dashboard.py --open     # write it and xdg-open it
+    scripts/soak_dashboard.py --out /tmp/d.html
 
 NOT A LIVE PAGE, BY DESIGN
 
-It is regenerated from `data/b9_soak/*` every time it is opened (the tray's
+It is regenerated from `data/soak/*` every time it is opened (the tray's
 "Open dashboard" item calls this module), the same way
 `scripts/neuropaca_graph.py` regenerates `graph_view.html`. An already-open
 tab does not update itself -- reopen it. One less moving part than a JSON
@@ -27,11 +27,11 @@ sidecar + a `file://` fetch loop.
 
 ONE SOURCE OF THE NUMBERS
 
-Like `b9_soak_tray.py`, this imports `b9_soak_state.py` by path and reuses its
+Like `soak_tray.py`, this imports `soak_state.py` by path and reuses its
 `accrued_seconds` / `rss_trend` / `counter_total` / `restarts` / `_humanise`
 so the dashboard, the tray and the popup can never disagree about the same
 soak. The row-building and rendering below are plain functions over stdlib
-types -- no `gi`, no toolkit -- so `tests/test_b9_soak_dashboard.py` exercises
+types -- no `gi`, no toolkit -- so `tests/test_soak_dashboard.py` exercises
 them under the project .venv.
 
 ZERO EGRESS (rules.md §6)
@@ -54,28 +54,28 @@ from pathlib import Path
 from typing import Any, Literal
 
 REPO = Path(__file__).resolve().parent.parent
-SOAK_DIR = REPO / "data" / "b9_soak"
+SOAK_DIR = REPO / "data" / "soak"
 STATE_PATH = SOAK_DIR / "state.json"
 SAMPLES_PATH = SOAK_DIR / "samples.jsonl"
-DEFAULT_OUT = REPO / "data" / "b9_soak_dashboard.html"
+DEFAULT_OUT = REPO / "data" / "soak_dashboard.html"
 
 Health = Literal["good", "watch", "bad", "neutral", "na"]
 
 
 def _load_soak_state_module() -> Any:
-    """Import scripts/b9_soak_state.py by path -- it is not a package, and this
+    """Import scripts/soak_state.py by path -- it is not a package, and this
     file must run standalone under system python3 (from the tray) as well as
-    under the project .venv (from pytest). Same shim as b9_soak_tray.py.
+    under the project .venv (from pytest). Same shim as soak_tray.py.
 
-    Reuse an already-loaded copy: `b9_soak_tray` loads it before it loads this
+    Reuse an already-loaded copy: `soak_tray` loads it before it loads this
     module, and a second copy would mean two distinct `RssTrend` classes."""
-    if "b9_soak_state" in sys.modules:
-        return sys.modules["b9_soak_state"]
-    module_path = REPO / "scripts" / "b9_soak_state.py"
-    spec = importlib.util.spec_from_file_location("b9_soak_state", module_path)
+    if "soak_state" in sys.modules:
+        return sys.modules["soak_state"]
+    module_path = REPO / "scripts" / "soak_state.py"
+    spec = importlib.util.spec_from_file_location("soak_state", module_path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.modules["b9_soak_state"] = module  # dataclass needs it in sys.modules first
+    sys.modules["soak_state"] = module  # dataclass needs it in sys.modules first
     spec.loader.exec_module(module)
     return module
 
@@ -98,28 +98,10 @@ class Row:
     health: Health = "neutral"
 
 
-_MODEL_LOADED_MIB = 500.0  # RSS above this = the BitNet GGUF has mapped in
-
-
-def _warm_slope(samples: list[dict[str, Any]]) -> tuple[float, float] | None:
-    """MiB/day computed over the samples *after* the model finished loading,
-    so the one-time 44 -> ~1400 MiB startup jump does not masquerade as a leak
-    (memory.md: b9-soak-leak-slope-coldstart-artifact). Returns (slope, hours)
-    or None if there is not yet a warm window worth a slope."""
-    warm = [
-        s
-        for s in samples
-        if float(s.get("rss_mib", 0)) >= _MODEL_LOADED_MIB and s.get("daemon_up", True)
-    ]
-    if len(warm) < 10:
-        return None
-    t0 = soak_state._parse(warm[0]["ts"])
-    t1 = soak_state._parse(warm[-1]["ts"])
-    hours = (t1 - t0).total_seconds() / 3600.0
-    if hours < 0.5:
-        return None
-    delta = float(warm[-1]["rss_mib"]) - float(warm[0]["rss_mib"])
-    return delta * 24.0 / hours, hours
+# The warm-window leak slope (post model-load) lives in soak_state now, so the
+# dashboard, the popup and the pass/fail verdict all fit the same window
+# (problems.md T6). This is a thin alias kept for readability below.
+_warm_slope = soak_state.warm_rss_slope
 
 
 def _rss_slope_health(trend: Any, samples: list[dict[str, Any]]) -> tuple[Health, str]:
@@ -601,8 +583,8 @@ def render(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>B9 Soak &middot; detailed monitor</title>
-<!-- Generated by scripts/b9_soak_dashboard.py. Self-contained: no network,
+<title>Soak &middot; detailed monitor</title>
+<!-- Generated by scripts/soak_dashboard.py. Self-contained: no network,
      no webfont, no script. Regenerate by reopening it from the tray. -->
 <style>{_CSS}</style>
 </head>
@@ -611,7 +593,7 @@ def render(
   <header>
     {_ring_svg(pct)}
     <div class="head-txt">
-      <div class="eyebrow">NeuroPACA &middot; B9 seven-day soak</div>
+      <div class="eyebrow">NeuroPACA &middot; seven-day soak</div>
       <h1>Detailed monitor</h1>
       <div class="status-line">{status}</div>
       <div class="gen mono">regenerated {gen}</div>
@@ -627,7 +609,7 @@ def render(
   {"".join(groups)}
 
   <footer>
-    Throwaway B9-hardening instrument &mdash; reads <span class="mono">data/b9_soak/*</span>,
+    Throwaway B9-hardening instrument &mdash; reads <span class="mono">data/soak/*</span>,
     no daemon coupling. The tray widget and login popup show the same numbers without the
     descriptions. Bands (OK / WATCH / CHECK) are rules of thumb, not gates.
   </footer>
@@ -650,10 +632,10 @@ def generate(out: Path = DEFAULT_OUT) -> Path:
         page = render(state, samples)
     except Exception as exc:
         page = (
-            "<!doctype html><meta charset=utf-8><title>B9 soak</title>"
+            "<!doctype html><meta charset=utf-8><title>soak</title>"
             "<body style='font-family:system-ui;padding:40px;max-width:640px;margin:auto'>"
             f"<h1>Soak state unreadable</h1><pre>{html.escape(str(exc))}</pre>"
-            "<p>Nothing has written a readable <code>data/b9_soak/state.json</code> yet.</p>"
+            "<p>Nothing has written a readable <code>data/soak/state.json</code> yet.</p>"
         )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page, encoding="utf-8")
@@ -661,7 +643,7 @@ def generate(out: Path = DEFAULT_OUT) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Render the B9 soak status as an HTML dashboard.")
+    ap = argparse.ArgumentParser(description="Render the Soak status as an HTML dashboard.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="where to write the HTML")
     ap.add_argument("--open", action="store_true", help="xdg-open the file after writing it")
     args = ap.parse_args(argv)
@@ -681,4 +663,4 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     sys.exit(main())
 
-# gen-ref: 172ff50f
+# gen-ref: 5a013b2b

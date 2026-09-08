@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 · one soak measurement, taken over the L9 socket (BL-5).
+"""One soak measurement, taken over the L9 socket (BL-5).
 
 WHY NOT journalctl.
 
 The first draft of the sampler grepped `journalctl --user -u neuropacad` for
-ACTIVITY_DETECTED and pressure, the way scripts/b9_soak_gate.sh does. Measured
+ACTIVITY_DETECTED and pressure, the way scripts/soak_gate.sh does. Measured
 on the target box 2026-09-03 that returns "No journal files were found":
 journald ships `Storage=auto` and /var/log/journal does not exist, so the
 journal is volatile and split into a system journal only -- there are no
@@ -87,6 +87,13 @@ def module_counters(health: dict[str, Any]) -> dict[str, dict[str, int]]:
     }
 
 
+def module_detail(health: dict[str, Any], name: str) -> str:
+    for module in health.get("modules", []):
+        if module.get("name") == name:
+            return str(module.get("detail", ""))
+    return ""
+
+
 def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, Any]:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if health is None:
@@ -94,6 +101,7 @@ def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, A
 
     counters = module_counters(health)
     activity = counters.get("activity", {})
+    activity_detail = module_detail(health, "activity")
     drive = counters.get("drive", {})
 
     # Every module reports its own error count in the same shape, so the total is
@@ -117,6 +125,14 @@ def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, A
         # path producing anything at all?
         "activity_edges": activity.get("transitions", 0),
         "app_switches": activity.get("switches", 0),
+        # B15 · the Wayland focus sensor. `window_ok` is the daemon's own live
+        # `is_alive` verdict (not inferred); `reconnects` / `pump_errors` are the
+        # shared connection's watchdog activity. A week of `window_ok=false`, or
+        # reconnects climbing steadily, is the B15 §2a deafness / §7 flaky-start
+        # signature the old soak could not see.
+        "window_ok": "window✓" in activity_detail,
+        "reconnects": activity.get("reconnects", 0),
+        "pump_errors": activity.get("pump-errors", 0),
         # B13-B2 · the latest per-app census group count, from the sensing
         # module's health detail ("... census N groups"). 0 until the process
         # collector has produced a snapshot.
@@ -138,7 +154,7 @@ def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, A
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="One B9 soak sample as JSON.")
+    parser = argparse.ArgumentParser(description="One soak sample as JSON.")
     parser.add_argument("--socket", default=None)
     parser.add_argument("--actions-log", default=None)
     args = parser.parse_args(argv)
@@ -160,4 +176,4 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     sys.exit(main())
 
-# gen-ref: 92da52ec
+# gen-ref: 7d7ef8f5

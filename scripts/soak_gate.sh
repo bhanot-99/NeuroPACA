@@ -1,27 +1,35 @@
 #!/usr/bin/env bash
-# B9 · the 1-hour live gate that must pass BEFORE the 7-day soak starts (BL-5).
+# The 1-hour live gate that must pass BEFORE the 7-day soak starts (BL-5).
 #
 # WHY THIS EXISTS
 #
-# B7 ran three soaks and L5 fired zero times in all three. The recorded cause
-# was "the Wayland activity collector cannot see Wayland under systemd --user",
-# which was wrong: measured on the target box 2026-09-03 the variable is present
-# in the manager environment, and the daemon simply started before the compositor
-# imported it (see scripts/systemd/neuropacad.service). The unit now binds to
-# graphical-session.target, and this gate is what proves that fix actually works
-# on this machine rather than only in the reasoning.
+# B7 ran three soaks and L5 fired zero times; B9's first gate saw ~4 app switches
+# in a full hour of real use. Both were blamed on "the collector cannot see
+# Wayland under systemd --user". B15 found the real cause (B15_PLAN.md §2a): the
+# `zcosmic_toplevel_handle_v1` proxy carrying "which window is focused" was kept
+# in a local variable and GC'd non-deterministically — ~1 in 3 daemon starts came
+# up permanently deaf. Fixed (strong-ref dict + one shared connection), and this
+# gate is what proves the fix holds on THIS machine, this boot, not just in the
+# reasoning. The 2026-09-03 gate pass and the "soak running" state it produced
+# were a deaf sensor the whole time and do not count.
 #
 # Without the gate, a 7-day soak that generates no pressure is indistinguishable
 # from a 7-day soak of a working system that happened to be idle — and it is this
 # soak that is supposed to subsume the carried B1 T2, B2 T3 and B4 windows. A week
 # is too expensive to spend finding that out at the end.
 #
+# THE POST-B15 BAR (check 5). B15_PLAN.md §6 criterion 1: the daemon must record
+# "dozens of focus/tab switches per hour, not ~4". So a pass now needs a real
+# switch rate (>= 20/h), a Wayland connection that is not thrashing (<= 1
+# reconnect, 0 pump-errors in the window), and window✓ live — not merely "one of
+# three liveness signals moved".
+#
 # EXIT
 #   0  gate passed — the 7-day soak may start
 #   1  gate failed — fix the cause; do NOT start the soak
 #
 # USAGE
-#   scripts/b9_soak_gate.sh [minutes]      # default 60
+#   scripts/soak_gate.sh [minutes]      # default 60; use a small value for a dry run
 
 set -euo pipefail
 
@@ -29,12 +37,12 @@ MINUTES="${1:-60}"
 UNIT="neuropacad.service"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT="${REPO}/data/b9_gate_${STAMP}.log"
+OUT="${REPO}/data/soak_gate_${STAMP}.log"
 
 mkdir -p "${REPO}/data"
 exec > >(tee -a "$OUT") 2>&1
 
-echo "=== B9 soak gate · ${STAMP} · ${MINUTES} min ==="
+echo "=== soak gate · ${STAMP} · ${MINUTES} min ==="
 
 fail() { echo "GATE FAILED: $*"; exit 1; }
 
@@ -69,7 +77,7 @@ echo "ok: daemon pid ${PID} has WAYLAND_DISPLAY"
 # happening" in check 5. Both are the apparatus lying, and this gate exists
 # precisely because B7 spent three soaks believing an apparatus that lied.
 PY="${REPO}/.venv/bin/python"
-PROBE="${REPO}/scripts/b9_soak_probe.py"
+PROBE="${REPO}/scripts/soak_probe.py"
 
 "$PY" "$PROBE" | "$PY" -c '
 import json, sys
@@ -78,8 +86,10 @@ if not sample.get("daemon_up"):
     sys.exit("the daemon did not answer on the L9 socket")
 if "activity" in sample.get("degraded", []):
     sys.exit("the activity collector reports itself degraded -- it self-disabled")
+if not sample.get("window_ok"):
+    sys.exit("window is not live (window not ok) -- the B15 focus sensor is deaf right now")
 ' || fail "the activity collector is not healthy (see above)"
-echo "ok: the activity collector reports healthy over the socket"
+echo "ok: the activity collector reports healthy, window✓ live over the socket"
 
 # --- 4. the CLI works under the hardened unit (BL-1) --------------------------
 # ProtectSystem=strict made $XDG_RUNTIME_DIR read-only, so the L9 socket could
@@ -91,72 +101,92 @@ echo "ok: the activity collector reports healthy over the socket"
   unit (check ReadWritePaths=%t in neuropacad.service)"
 echo "ok: neuropaca health answers over the socket"
 
-# --- 5. watch for real sensing/pressure activity over the window --------------
+# --- 5. the post-B15 sensing bar over the window -----------------------------
 # The counters are cumulative, so the question is whether they MOVED across the
-# window -- a snapshot of "3 switches" proves only that something happened once,
-# possibly before the gate started.
-echo "watching for activity for ${MINUTES} min..."
+# window. Post-B15 the bar is a real switch RATE, not "any one liveness signal
+# moved once": B15_PLAN.md §6 crit 1 is "dozens per hour, not ~4".
+#
+# PASS needs ALL of:
+#   switches   >= NEED_SWITCHES (20/h, scaled to the window)   -- the desk moved
+#              OR  graph grew AND a signal correlated           -- L2/L3 alive in
+#                                                                  a genuine
+#                                                                  single-window
+#                                                                  hour
+#   reconnects <= 1 in the window   -- the shared connection is not thrashing
+#   pump_errors == 0 in the window  -- no swallowed pump exceptions
+#   window_ok  -- the daemon's own live is_alive for the focus sensor
+NEED_SWITCHES=$(( 20 * MINUTES / 60 ))
+[ "$NEED_SWITCHES" -lt 1 ] && NEED_SWITCHES=1
+
+echo "watching for ${MINUTES} min (need >= ${NEED_SWITCHES} app switches, or graph+signal growth)..."
 BEFORE="$("$PY" "$PROBE")"
 sleep $(( MINUTES * 60 ))
 AFTER="$("$PY" "$PROBE")"
 
-# Liveness is asked THREE ways, not one. The desk-shaped check (idle edges and
-# app switches) stays, but it is no longer the only way to pass: it needs the
-# user to have switched app or walked away inside the window, and someone
-# working an hour in a single window produces neither. That failed a
-# demonstrably healthy daemon on 2026-09-04 -- 121 snapshots collected, 2
-# signals correlated, the graph advancing, and the gate still said "sensing is
-# dead". phases.md recorded the narrowness when the gate was written and named
-# this fix; this is it.
-#
-# Any ONE of the three proves L2/L3 are producing:
-#   desk   -- idle transitions + app switches   (the original check)
-#   graph  -- nodes or edges advancing          (L2/L3 wrote something)
-#   signal -- L3 correlated a signal            (L2 collected AND L3 ran)
-read -r DESK GRAPH SIGNALS PRESSURE <<<"$("$PY" -c '
+read -r SWITCHES GRAPH SIGNALS RECONNECTS PUMP_ERRS WINDOW_OK RATE <<<"$("$PY" -c '
 import json, sys
 before, after = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+minutes = float(sys.argv[3])
 def moved(key):
-    # A daemon restart mid-window resets the counter; the after-value is then
-    # the honest count for the life that is still running, and is never negative.
+    # A daemon restart mid-window resets a cumulative counter; the after-value is
+    # then the honest count for the life still running, and is never negative.
     delta = after.get(key, 0) - before.get(key, 0)
     return after.get(key, 0) if delta < 0 else delta
+switches = moved("app_switches")
+rate = switches * 60.0 / minutes if minutes else 0.0
 print(
-    moved("activity_edges") + moved("app_switches"),
+    switches,
     moved("graph_nodes") + moved("graph_edges"),
     moved("signals"),
-    moved("pressure_events"),
+    moved("reconnects"),
+    moved("pump_errors"),
+    "1" if after.get("window_ok") else "0",
+    f"{rate:.1f}",
 )
-' "$BEFORE" "$AFTER")"
+' "$BEFORE" "$AFTER" "$MINUTES")"
 
-ACTIVITY=$(( DESK + GRAPH + SIGNALS ))
+echo "app switches:                        ${SWITCHES}  (${RATE}/h)"
+echo "graph nodes + edges added:           ${GRAPH}"
+echo "signals correlated by L3:            ${SIGNALS}"
+echo "wayland reconnects in window:        ${RECONNECTS}"
+echo "wayland pump errors in window:       ${PUMP_ERRS}"
+echo "window✓ at end:                      ${WINDOW_OK}"
 
-echo "idle edges + app switches:          ${DESK}"
-echo "graph nodes + edges added:          ${GRAPH}"
-echo "signals correlated by L3:           ${SIGNALS}"
-echo "pressure contributions:             ${PRESSURE}"
+[ "$WINDOW_OK" = "1" ] || fail "the focus sensor was not live at the end of the window (window✗).
+  B15 §2a deafness or a burnt reconnect budget. Restart the daemon and re-run."
 
-[ "$ACTIVITY" -gt 0 ] || fail "no sign of life in ${MINUTES} min — every one of
-  the three liveness signals stayed flat, so the sensing path really is not
-  producing and a 7-day soak would prove nothing.
-  (If the box was genuinely untouched AND idle for the whole window, that is
-  indistinguishable from a dead collector; use the machine and re-run.)"
+[ "$PUMP_ERRS" -eq 0 ] || fail "${PUMP_ERRS} Wayland pump error(s) during the window — the
+  connection is raising and reconnecting. Check the daemon log before a 7-day run."
 
-# The stamp is the gate's only durable output, and scripts/b9_soak_7day.sh
+[ "$RECONNECTS" -le 1 ] || fail "${RECONNECTS} Wayland reconnects in ${MINUTES} min — the
+  connection is thrashing (B15_PLAN.md §7: watchdog insufficient). Do not start the soak."
+
+if [ "$SWITCHES" -ge "$NEED_SWITCHES" ]; then
+  echo "ok: switch rate ${RATE}/h clears the post-B15 bar"
+elif [ "$GRAPH" -gt 0 ] && [ "$SIGNALS" -gt 0 ]; then
+  echo "ok: only ${SWITCHES} switches, but the graph grew (${GRAPH}) and L3 correlated ${SIGNALS} signal(s) — L2/L3 are alive"
+else
+  fail "only ${SWITCHES} app switches in ${MINUTES} min (${RATE}/h, need ${NEED_SWITCHES}) and no
+  graph+signal growth to fall back on. Either the sensor is still slow (re-check B15)
+  or the box was genuinely idle/single-window — use the machine and re-run."
+fi
+
+# The stamp is the gate's only durable output, and scripts/soak_7day.sh
 # refuses to start without it. Writing it HERE -- after all five checks and not
 # one line earlier -- is what makes "the soak cannot run ungated" a property of
 # the filesystem rather than of someone remembering the running order.
-STAMP_FILE="${REPO}/data/b9_soak/gate-passed"
+STAMP_FILE="${REPO}/data/soak/gate-passed"
 mkdir -p "$(dirname "$STAMP_FILE")"
 {
   echo "gate passed ${STAMP}"
   echo "window_minutes ${MINUTES}"
   echo "daemon_pid ${PID}"
-  echo "activity_edges ${ACTIVITY}"
-  echo "desk_events ${DESK}"
+  echo "app_switches ${SWITCHES}"
+  echo "switch_rate_per_hour ${RATE}"
   echo "graph_growth ${GRAPH}"
   echo "signals ${SIGNALS}"
-  echo "pressure_mentions ${PRESSURE}"
+  echo "reconnects ${RECONNECTS}"
+  echo "pump_errors ${PUMP_ERRS}"
   echo "log ${OUT}"
 } > "$STAMP_FILE"
 
@@ -168,7 +198,7 @@ echo
 echo "Start the 7-day soak with sleep inhibited — a laptop that suspends does not"
 echo "accumulate runtime, which is what ended the B2 soak at 11 h of a 24 h window:"
 echo
-echo "  systemctl --user enable --now neuropaca-b9-soak"
+echo "  systemctl --user enable --now neuropaca-soak"
 echo
 echo "The unit wraps the driver in systemd-inhibit itself, starts with the"
 echo "graphical session and stops when the machine does -- so the week survives"

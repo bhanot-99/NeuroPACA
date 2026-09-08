@@ -1,9 +1,9 @@
-# NeuroPACA B9 · 7-day soak supervisor -- systemd --user unit.
+# NeuroPACA · 7-day soak supervisor -- systemd --user unit.
 #
 # Install:
-#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-b9-soak.service \
-#     > ~/.config/systemd/user/neuropaca-b9-soak.service
-#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-b9-soak
+#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-soak.service \
+#     > ~/.config/systemd/user/neuropaca-soak.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-soak
 #
 # START AT BOOT, STOP AT SHUTDOWN -- how that is actually achieved:
 #
@@ -30,7 +30,7 @@
 # thing the soak is specifically supposed to observe and record, not die of.
 
 [Unit]
-Description=NeuroPACA B9 7-day soak supervisor
+Description=NeuroPACA 7-day soak supervisor
 Documentation=file://__REPO__/phases.md
 After=graphical-session.target neuropacad.service
 Requires=neuropacad.service
@@ -50,7 +50,7 @@ WorkingDirectory=__REPO__
 # soak at 11 h of 24; `sleep` blocks the automatic suspend behind it. Neither
 # blocks an explicit shutdown -- SIGTERM still arrives and the session closes.
 ExecStart=/usr/bin/systemd-inhibit --what=sleep:idle --who=NeuroPACA \
-          --why=B9-7-day-soak __REPO__/scripts/b9_soak_7day.sh
+          --why=neuropaca-soak __REPO__/scripts/soak_7day.sh
 
 KillSignal=SIGTERM
 TimeoutStopSec=45

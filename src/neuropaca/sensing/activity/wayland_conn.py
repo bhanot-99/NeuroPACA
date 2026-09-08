@@ -86,6 +86,13 @@ class WaylandConnection:
         # to `not activity_collector._idle`); gates the liveness watchdog.
         self.activity_probe: Callable[[], bool] | None = None
         self._last_event_at = 0.0
+        # B15 soak instrumentation — surfaced through `ActivityCollector.health()`
+        # so a week-long run can answer "did the watchdog stay quiet?"
+        # (B15_PLAN.md §7). `reconnects` counts every successful re-`_connect()`
+        # after a teardown (pump error OR the stale-event watchdog); `pump_errors`
+        # counts pump ticks that raised.
+        self.reconnects = 0
+        self.pump_errors = 0
 
     def add(self, handler: WaylandProtocolHandler) -> None:
         self._handlers.append(handler)
@@ -93,6 +100,14 @@ class WaylandConnection:
     @property
     def is_alive(self) -> bool:
         return self._task is not None and not self._task.done() and self._connected
+
+    @property
+    def seconds_since_event(self) -> float:
+        """How long since the pump last dispatched a Wayland event. Large and
+        climbing while the user is active is the deafness signature."""
+        if self._last_event_at == 0.0:
+            return 0.0
+        return max(0.0, time.monotonic() - self._last_event_at)
 
     def start(self) -> None:
         """Connect (synchronous — raises `CollectorError` so the caller can
@@ -167,7 +182,8 @@ class WaylandConnection:
             try:
                 if self._display is None:
                     self._connect()
-                    _log.info("WaylandConnection reconnected")
+                    self.reconnects += 1
+                    _log.info("WaylandConnection reconnected (%d)", self.reconnects)
                 assert self._display is not None
                 if select.select([self._fd], [], [], 0)[0]:
                     self._display.read()
@@ -193,6 +209,7 @@ class WaylandConnection:
                 raise
             except Exception:
                 self._connected = False
+                self.pump_errors += 1
                 _log.exception("WaylandConnection pump tick failed — will reconnect")
                 self._teardown()
                 if failures >= len(_RECONNECT_DELAYS_SECONDS):

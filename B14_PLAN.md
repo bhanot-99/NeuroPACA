@@ -422,7 +422,7 @@ These are real behaviour changes. Each needs an explicit yes/no (see §9).
 - `_str_field` helper handles `None` fine (returns `""`), so `webapp=None` snapshots
   are safe everywhere.
 
-### 7.8 `scripts/b9_soak_state.py` / dashboard
+### 7.8 `scripts/soak_state.py` / dashboard
 
 - The soak "Census" line and dashboard can gain a "Top web-apps by focus count"
   section, read from `webapp:*` node `access_count`. Nice-to-have, not blocking.

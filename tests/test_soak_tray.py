@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 · tray widget status logic (`scripts/b9_soak_tray.py`).
+"""tray widget status logic (`scripts/soak_tray.py`).
 
 Only the pure half -- `compute_status()`, `read_status()`, `format_popup_text()`,
 `raise_popup()`. None of it imports `gi`: the project .venv has no PyGObject by
@@ -21,14 +21,14 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "b9_soak_tray.py"
-_spec = importlib.util.spec_from_file_location("b9_soak_tray", _MODULE_PATH)
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "soak_tray.py"
+_spec = importlib.util.spec_from_file_location("soak_tray", _MODULE_PATH)
 assert _spec and _spec.loader
 tray = importlib.util.module_from_spec(_spec)
-# Registered before exec for the same reason test_b9_soak_state.py registers
-# b9_soak_state: b9_soak_tray imports that module's slotted dataclass, and
+# Registered before exec for the same reason test_soak_state.py registers
+# soak_state: soak_tray imports that module's slotted dataclass, and
 # `dataclasses` resolves annotations through sys.modules[cls.__module__].
-sys.modules["b9_soak_tray"] = tray
+sys.modules["soak_tray"] = tray
 _spec.loader.exec_module(tray)
 
 
@@ -248,4 +248,4 @@ def test_raise_popup_never_lets_a_shell_interpret_the_summary_text() -> None:
     assert subprocess.list2cmdline  # sanity: real subprocess module in scope
 
 
-# gen-ref: 1f0ccdcc
+# gen-ref: 3299cab7

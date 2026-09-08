@@ -145,10 +145,22 @@ class ActivityCollector(BaseModule):
         # the alarm B7 never had. A source that never started (headless, no
         # compositor) stays tolerated, exactly as before.
         died = (self._idle_ok and not idle_live) or (self._window_ok and not window_live)
+        # B15 soak instrumentation — the shared Wayland connection's watchdog
+        # activity, so a 7-day run can tell "quiet" from "self-healing every
+        # few minutes" (B15_PLAN.md §7). Real path only; the injected-doubles
+        # path has no shared connection.
+        wl = ""
+        if self._wl_conn is not None:
+            wl = (
+                f" · {self._wl_conn.reconnects} reconnects"
+                f" · {self._wl_conn.pump_errors} pump-errors"
+            )
         return ModuleHealth(
             name=self.name,
             ok=self.is_running and not died,
-            detail=f"{idle} {window} · {self._transitions} transitions · {self._switches} switches",
+            detail=(
+                f"{idle} {window} · {self._transitions} transitions · {self._switches} switches{wl}"
+            ),
             last_event_at=self._idle_since,
         )
 

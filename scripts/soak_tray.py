@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 soak status, live in the tray -- the same words the login popup shows.
+"""Soak status, live in the tray -- the same words the login popup shows.
 
 WHY THIS EXISTS
 
-`b9_soak_7day.sh` raises a zenity popup once at session start (and once at
+`soak_7day.sh` raises a zenity popup once at session start (and once at
 completion). Between those two moments the soak is invisible: the only way to
-check on it is to run `b9_soak_7day.sh --status` from a terminal. This puts
+check on it is to run `soak_7day.sh --status` from a terminal. This puts
 the same numbers one glance away in the panel for the rest of the week.
 
 NOT THE L9 TRAY ICON
@@ -23,17 +23,17 @@ soak completes; L9 gets its own tray icon when L9 is built.
 ONE SOURCE OF THE NUMBERS
 
 This does not re-derive accrued runtime, memory trend, or session counts. It
-imports `b9_soak_state.py` directly and calls the exact `summarise()` function
-`b9_soak_7day.sh` calls, with the same `now`, so the tray and the popup can
+imports `soak_state.py` directly and calls the exact `summarise()` function
+`soak_7day.sh` calls, with the same `now`, so the tray and the popup can
 never say different things about the same soak at the same instant.
-`b9_soak_state.py` is pure stdlib (see its own docstring), which is what makes
+`soak_state.py` is pure stdlib (see its own docstring), which is what makes
 importing it -- and unit-testing the logic below -- possible without gi.
 
 PURE LOGIC VS. TOOLKIT GLUE
 
 `compute_status()` / `read_status()` / `format_popup_text()` below are plain
 functions over stdlib types: no `gi` import, so they run and are tested (see
-`tests/test_b9_soak_tray.py`) under the project .venv, which deliberately has
+`tests/test_soak_tray.py`) under the project .venv, which deliberately has
 no PyGObject (same reasoning as the lazy `pywayland` import in
 `src/neuropaca/sensing/activity/wayland_idle.py`). GTK/AppIndicator only enter
 in `_run_tray()`, imported lazily -- that half is verified live on this
@@ -46,10 +46,10 @@ gir1.2-ayatanaappindicator3-0.1), not a neuropaca runtime dependency, and the
 project .venv is built with --system-site-packages off. Run this with the
 system `python3`, the same one COSMIC's own panel applets use:
 
-    scripts/b9_soak_tray.py &
+    scripts/soak_tray.py &
 
-or enable scripts/systemd/neuropaca-b9-soak-tray.service to have it start
-with the session, the same way neuropaca-b9-soak.service does.
+or enable scripts/systemd/neuropaca-soak-tray.service to have it start
+with the session, the same way neuropaca-soak.service does.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
-SOAK_DIR = REPO / "data" / "b9_soak"
+SOAK_DIR = REPO / "data" / "soak"
 STATE_PATH = SOAK_DIR / "state.json"
 SAMPLES_PATH = SOAK_DIR / "samples.jsonl"
 REFRESH_SECONDS = 60
@@ -76,21 +76,21 @@ ICON_ERROR = "dialog-error"
 
 
 def _load_soak_state_module() -> Any:
-    """Import scripts/b9_soak_state.py by path.
+    """Import scripts/soak_state.py by path.
 
     It has no `__init__.py` sibling -- it isn't a package -- and this file is
     meant to run standalone under system python3 without the project on
-    PYTHONPATH, so a plain `import b9_soak_state` isn't available either.
+    PYTHONPATH, so a plain `import soak_state` isn't available either.
     """
-    module_path = REPO / "scripts" / "b9_soak_state.py"
-    spec = importlib.util.spec_from_file_location("b9_soak_state", module_path)
+    module_path = REPO / "scripts" / "soak_state.py"
+    spec = importlib.util.spec_from_file_location("soak_state", module_path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    # Registered before exec: b9_soak_state.py defines a slotted dataclass,
+    # Registered before exec: soak_state.py defines a slotted dataclass,
     # and dataclasses resolves annotations through sys.modules[cls.__module__]
     # -- skip this and it dies with "'NoneType' object has no attribute
-    # '__dict__'". Same fix tests/test_b9_soak_state.py already applies.
-    sys.modules["b9_soak_state"] = module
+    # '__dict__'". Same fix tests/test_soak_state.py already applies.
+    sys.modules["soak_state"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -99,16 +99,16 @@ soak_state = _load_soak_state_module()
 
 
 def _load_dashboard_module() -> Any:
-    """Import scripts/b9_soak_dashboard.py by path, same reasoning as
-    `_load_soak_state_module`. It is stdlib-only (plus b9_soak_state), so it
+    """Import scripts/soak_dashboard.py by path, same reasoning as
+    `_load_soak_state_module`. It is stdlib-only (plus soak_state), so it
     loads fine under system python3."""
-    if "b9_soak_dashboard" in sys.modules:
-        return sys.modules["b9_soak_dashboard"]
-    module_path = REPO / "scripts" / "b9_soak_dashboard.py"
-    spec = importlib.util.spec_from_file_location("b9_soak_dashboard", module_path)
+    if "soak_dashboard" in sys.modules:
+        return sys.modules["soak_dashboard"]
+    module_path = REPO / "scripts" / "soak_dashboard.py"
+    spec = importlib.util.spec_from_file_location("soak_dashboard", module_path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.modules["b9_soak_dashboard"] = module
+    sys.modules["soak_dashboard"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -206,13 +206,13 @@ def read_status(state_path: Path = STATE_PATH, samples_path: Path = SAMPLES_PATH
 
 def format_popup_text(text: str) -> str:
     """zenity `--text` is Pango markup; escape the summary before wrapping it
-    in `<tt>` -- the same escaping `b9_soak_7day.sh`'s `show_popup()` does."""
+    in `<tt>` -- the same escaping `soak_7day.sh`'s `show_popup()` does."""
     escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f"<tt>{escaped}</tt>"
 
 
 def raise_popup(text: str) -> bool:
-    """Show the same dialog `b9_soak_7day.sh` raises at login.
+    """Show the same dialog `soak_7day.sh` raises at login.
 
     Returns False and does nothing if zenity isn't installed -- mirrors the
     shell driver's own "zenity absent -- popup skipped" behaviour rather than
@@ -224,7 +224,7 @@ def raise_popup(text: str) -> bool:
         [
             "zenity",
             "--info",
-            "--title=NeuroPACA · B9 7-day soak",
+            "--title=NeuroPACA · 7-day soak",
             "--width=560",
             "--ok-label=OK",
             f"--text={format_popup_text(text)}",
@@ -255,7 +255,7 @@ def _run_tray() -> None:
     class SoakTray:
         def __init__(self) -> None:
             self.indicator = AppIndicator3.Indicator.new(
-                "neuropaca-b9-soak",
+                "neuropaca-soak",
                 ICON_RUNNING,
                 AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
             )
@@ -278,7 +278,7 @@ def _run_tray() -> None:
         def refresh(self) -> None:
             status = read_status()
             self._last_refresh = datetime.now().strftime("%H:%M:%S")
-            self.indicator.set_icon_full(status.icon_name, "B9 soak status")
+            self.indicator.set_icon_full(status.icon_name, "Soak status")
             self.indicator.set_label(status.label, "100.0%")
             self._populate_menu(status.text)
 
@@ -303,7 +303,7 @@ def _run_tray() -> None:
             for child in self.menu.get_children():
                 self.menu.remove(child)
 
-            header = Gtk.MenuItem(label="NeuroPACA · B9 7-day soak")
+            header = Gtk.MenuItem(label="NeuroPACA · 7-day soak")
             header.set_sensitive(False)
             self.menu.append(header)
             self.menu.append(Gtk.SeparatorMenuItem())
@@ -365,7 +365,7 @@ def _run_tray() -> None:
     # Exit promptly on SIGTERM/SIGINT (systemctl --user stop, Ctrl-C) instead
     # of the process being killed mid-loop. The tray holds no state to flush,
     # but a clean Gtk.main_quit() exits well inside TimeoutStopSec rather than
-    # needing it, and matches the discipline neuropaca-b9-soak.service already
+    # needing it, and matches the discipline neuropaca-soak.service already
     # applies to its own SIGTERM handling.
     def _quit(*_args: object) -> bool:
         Gtk.main_quit()
@@ -385,4 +385,4 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 
-# gen-ref: d60f6d59
+# gen-ref: 4bc5eb91
