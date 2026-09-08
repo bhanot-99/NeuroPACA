@@ -265,12 +265,18 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "interface",
     ]
     assert isinstance(modules[0], XMetricCollector)
-    assert [c.name for c in modules[0]._collectors] == ["system"]
+    # B13-B2: ProcessCollector is on by default (process_collector_enabled).
+    assert [c.name for c in modules[0]._collectors] == ["system", "process"]
 
     with_fs = build_modules(
         Config(inference_backend="fake", watch_paths=[str(tmp_path)]), bus, graph, runtime
     )
-    assert [c.name for c in with_fs[0]._collectors] == ["system", "filesystem"]
+    assert [c.name for c in with_fs[0]._collectors] == ["system", "filesystem", "process"]
+
+    no_proc = build_modules(
+        Config(inference_backend="fake", process_collector_enabled=False), bus, graph, runtime
+    )
+    assert [c.name for c in no_proc[0]._collectors] == ["system"]
 
     # B2.5: activity_enabled inserts ActivityCollector (L2) and stands the
     # CPU-derived idle stand-in down.

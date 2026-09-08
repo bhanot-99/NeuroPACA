@@ -25,7 +25,9 @@ from neuropaca.learning.plasticity import BitNetPlasticity
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
 from neuropaca.sensing.collectors.filesystem import FileSystemCollector
+from neuropaca.sensing.collectors.process import ProcessCollector
 from neuropaca.sensing.collectors.system import SystemMetricCollector
+from neuropaca.sensing.raw_recorder import RawMetricsRecorder
 
 
 def build_modules(
@@ -50,6 +52,15 @@ def build_modules(
                 ignore_globs=config.filesystem_ignore_globs,
                 buffer_size=config.snapshot_buffer_size,
                 poll_interval_seconds=config.poll_intervals.get("filesystem", 60.0),
+            )
+        )
+    # B13-B2 (D-19): the per-process RAM/CPU/runtime census, grouped by app name.
+    if config.process_collector_enabled:
+        sensing.register_collector(
+            ProcessCollector(
+                poll_interval_seconds=config.poll_intervals.get("process", 60.0),
+                min_rss_mb=config.process_min_rss_mb,
+                exclude_names=config.process_exclude_names,
             )
         )
 
@@ -83,6 +94,10 @@ def build_modules(
     # llama-cpp-python / the model (D-11); L9's interactive model is likewise
     # optional (D-12) — none block startup.
     modules: list[BaseModule] = [sensing]
+    # B13 · raw-data CSV. Passive METRIC_COLLECTED subscriber, appends one row
+    # per reading. Right after sensing so it captures from the first poll.
+    if config.raw_metrics_csv_path:
+        modules.append(RawMetricsRecorder(event_bus, config))
     if config.activity_enabled:
         modules.append(ActivityCollector(event_bus, config))
     modules.append(diagnosis)

@@ -31,7 +31,12 @@ log_level = "INFO"
 # actually drive pressure during a working day.
 activity_enabled = true
 top_process_count = 5
-poll_intervals = { system = 60.0, filesystem = 60.0 }
+# B13-B2 (D-19) · the per-app RAM/CPU/runtime census, and the raw-data CSV.
+process_collector_enabled = true
+process_min_rss_mb = 200.0
+process_exclude_names = []
+poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
+raw_metrics_csv_path = "data/raw_metrics.csv"
 
 # Both the L2 filesystem-sensing scope and the L7 write allowlist (D-14).
 # Deliberately just this repo: real edit activity, and the only root that could

@@ -39,12 +39,15 @@ from neuropaca.core.enums import NodeType, RelationType
 from neuropaca.core.errors import GraphMemoryError
 from neuropaca.core.models import Edge, Node
 
-# v2 (B5): node records gain an optional `surfaced_at`. Forward-compatible — a v1
-# file loads unchanged (the key is simply absent -> None).
-_SCHEMA_VERSION = 2
+# v2 (B5): node records gain an optional `surfaced_at`.
+# v3 (B13-B3, D-19): node records gain `ram_mb` / `cpu_percent` / `first_seen_at`
+# / `last_seen_at` — durable resource attributes for `app:<id>` nodes. All four
+# are optional and default (0.0 / None), so a v2 file loads unchanged: the keys
+# are simply absent and `_deserialise` tolerates that.
+_SCHEMA_VERSION = 3
 
-# The oldest on-disk version this build can still read. v1 differs from v2 only
-# by the absent `surfaced_at` key, which `_deserialise` already tolerates, so no
+# The oldest on-disk version this build can still read. v1/v2/v3 differ only by
+# added optional keys that `_deserialise` already tolerates when absent, so no
 # migration step is needed yet — when one is, add it to `_migrate` rather than
 # widening this window silently.
 _MIN_READABLE_SCHEMA_VERSION = 1
@@ -521,6 +524,8 @@ class GraphMemory:
     @staticmethod
     def _node_record(node_id: str, data: dict[str, Any]) -> dict[str, Any]:
         surfaced = _as_dt_opt(data.get("surfaced_at"))
+        first_seen = _as_dt_opt(data.get("first_seen_at"))
+        last_seen = _as_dt_opt(data.get("last_seen_at"))
         return {
             "id": node_id,
             "node_type": str(data["node_type"]),
@@ -531,6 +536,10 @@ class GraphMemory:
             "relevance_score": float(data["relevance_score"]),
             "priority": int(data["priority"]),
             "surfaced_at": surfaced.isoformat() if surfaced is not None else None,
+            "ram_mb": float(data.get("ram_mb", 0.0)),
+            "cpu_percent": float(data.get("cpu_percent", 0.0)),
+            "first_seen_at": first_seen.isoformat() if first_seen is not None else None,
+            "last_seen_at": last_seen.isoformat() if last_seen is not None else None,
         }
 
     @staticmethod
@@ -589,6 +598,10 @@ class GraphMemory:
             relevance_score=float(attributes.get("relevance_score", 0.0)),
             priority=int(attributes.get("priority", 0)),
             surfaced_at=_as_dt_opt(attributes.get("surfaced_at")),
+            ram_mb=float(attributes.get("ram_mb", 0.0)),
+            cpu_percent=float(attributes.get("cpu_percent", 0.0)),
+            first_seen_at=_as_dt_opt(attributes.get("first_seen_at")),
+            last_seen_at=_as_dt_opt(attributes.get("last_seen_at")),
         )
         self._graph.add_node(node_id, **self._node_to_attrs(node))
         self._dirty = True
@@ -614,8 +627,21 @@ class GraphMemory:
         self._dirty = True
         return edge
 
+    # `first_seen_at` joins the protected set: like `created_at`, it is write-once
+    # — the census refreshes `ram_mb` / `cpu_percent` / `last_seen_at` on every
+    # sighting but must never move the first-sighting timestamp (B13-B3, D-19).
     _UPSERT_PROTECTED: ClassVar[frozenset[str]] = frozenset(
-        {"created_at", "relevance_score", "access_count", "node_type", "last_accessed"}
+        {
+            "created_at",
+            "relevance_score",
+            "access_count",
+            "node_type",
+            "last_accessed",
+            "first_seen_at",
+        }
+    )
+    _UPSERT_DT_OPT_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {"surfaced_at", "first_seen_at", "last_seen_at"}
     )
 
     def _upsert_node_unsafe(
@@ -626,7 +652,11 @@ class GraphMemory:
         data = self._graph.nodes[node_id]
         for key, value in attributes.items():
             if key not in self._UPSERT_PROTECTED:
-                data[key] = _as_dt_opt(value) if key == "surfaced_at" else value
+                data[key] = _as_dt_opt(value) if key in self._UPSERT_DT_OPT_KEYS else value
+        # A first census sighting still sets `first_seen_at` once, even though the
+        # key is protected against later overwrites.
+        if data.get("first_seen_at") is None and attributes.get("first_seen_at") is not None:
+            data["first_seen_at"] = _as_dt_opt(attributes["first_seen_at"])
         data["access_count"] = int(data.get("access_count", 0)) + 1
         data["last_accessed"] = _utcnow()
         self._dirty = True
@@ -728,6 +758,18 @@ class GraphMemory:
         s["priority"] = max(int(s.get("priority", 0)), int(v.get("priority", 0)))
         if s.get("surfaced_at") is None and v.get("surfaced_at") is not None:
             s["surfaced_at"] = _as_dt_opt(v.get("surfaced_at"))
+
+        # B13-B3 · resource attributes: keep the earliest first-sighting and the
+        # most recent census — and the ram/cpu numbers from whichever side owns
+        # that most recent sighting.
+        s_first, v_first = _as_dt_opt(s.get("first_seen_at")), _as_dt_opt(v.get("first_seen_at"))
+        if v_first is not None and (s_first is None or v_first < s_first):
+            s["first_seen_at"] = v_first
+        s_last, v_last = _as_dt_opt(s.get("last_seen_at")), _as_dt_opt(v.get("last_seen_at"))
+        if v_last is not None and (s_last is None or v_last > s_last):
+            s["last_seen_at"] = v_last
+            s["ram_mb"] = float(v.get("ram_mb", 0.0))
+            s["cpu_percent"] = float(v.get("cpu_percent", 0.0))
 
         # Rewire every edge on the victim to the survivor, dropping any edge
         # between the two (it would become a self-loop) and folding a weight into
@@ -878,6 +920,10 @@ class GraphMemory:
                 relevance_score=float(raw["relevance_score"]),
                 priority=int(raw["priority"]),
                 surfaced_at=_as_dt_opt(raw.get("surfaced_at")),  # absent in a v1 file
+                ram_mb=float(raw.get("ram_mb", 0.0)),  # absent in a v1/v2 file
+                cpu_percent=float(raw.get("cpu_percent", 0.0)),
+                first_seen_at=_as_dt_opt(raw.get("first_seen_at")),
+                last_seen_at=_as_dt_opt(raw.get("last_seen_at")),
             )
             graph.add_node(node.id, **self._node_to_attrs(node))
         for raw in payload.get("edges", []):
@@ -902,6 +948,10 @@ class GraphMemory:
             "relevance_score": node.relevance_score,
             "priority": node.priority,
             "surfaced_at": node.surfaced_at,
+            "ram_mb": node.ram_mb,
+            "cpu_percent": node.cpu_percent,
+            "first_seen_at": node.first_seen_at,
+            "last_seen_at": node.last_seen_at,
         }
 
     @staticmethod
@@ -916,6 +966,10 @@ class GraphMemory:
             relevance_score=float(data["relevance_score"]),
             priority=int(data["priority"]),
             surfaced_at=_as_dt_opt(data.get("surfaced_at")),
+            ram_mb=float(data.get("ram_mb", 0.0)),
+            cpu_percent=float(data.get("cpu_percent", 0.0)),
+            first_seen_at=_as_dt_opt(data.get("first_seen_at")),
+            last_seen_at=_as_dt_opt(data.get("last_seen_at")),
         )
 
     @staticmethod

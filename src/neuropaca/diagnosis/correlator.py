@@ -200,7 +200,8 @@ class SignalCorrelator(BaseModule):
     async def _update_graph(self, draft: SignalDraft) -> Signal:
         related: list[str] = []
         for spec in draft.node_specs:
-            await self._graph.upsert_node(spec.node_id, spec.node_type, {"label": spec.label})
+            attrs: dict[str, object] = {"label": spec.label, **dict(spec.attributes)}
+            await self._graph.upsert_node(spec.node_id, spec.node_type, attrs)
             related.append(spec.node_id)
         for spec in draft.node_specs:
             for target_id, relation in spec.edges:

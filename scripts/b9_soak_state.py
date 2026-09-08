@@ -335,6 +335,11 @@ def summarise(
         f"Sensing     {counter_total(samples, 'activity_edges')} idle/active edges, "
         f"{counter_total(samples, 'app_switches')} app switches"
     )
+    census_now = samples[-1].get("census_groups", 0)
+    lines.append(
+        f"Census      {census_now} app groups tracked now "
+        f"(peak {max((s.get('census_groups', 0) for s in samples), default=0)})"
+    )
     lines.append(
         f"Drive       {counter_total(samples, 'pressure_events')} contributions, "
         f"{counter_total(samples, 'pressure_low')} low / "

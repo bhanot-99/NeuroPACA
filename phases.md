@@ -50,6 +50,11 @@ flowchart TD
     B6 --> B7["B7 · Drive & Action (L5 + L7)"]
     B7 --> B8["B8 · Agents & structural plasticity (L8)"]
     B8 --> B9["B9 · Hardening"]
+    B9 --> B10["B10–B12 · Terminal accessibility"]
+    B3 --> B13["B13 · Resource-aware sensing<br/>(process census + non-inert Idle/Distraction, D-19)"]
+    B25b --> B13
+    B4 --> B13
+    B7 --> B13
     B9 -.->|after dogfooding| D1["D1 · Personal model pruning<br/>DEFERRED (pruning.md)"]
 ```
 
@@ -72,6 +77,7 @@ flowchart TD
 | B10 | Terminal accessibility — interactive `neuropaca>` shell | ✅ done (`bc86c2a`) — **superseded by B12** (the shell stays as a command menu; the bare-sigil forms are gone) |
 | B11 | Conversational `chat` — project-doc + general Q&A | ✅ done — **withdrawn in B12** (`chat` / `KnowledgeIndex` removed; rationale in `RESEARCH_DOSSIER.md §4.1`) |
 | B12 | Terminal reconceived — read-only project guide | ✅ done — `neuropaca tell <path>` / `overview` (deterministic, `ast`-based, `interface/describe.py`); `$` / `?` / `!` grammar removed; `$!` / `$$` → `neuropaca run` / `run --backup`; `--explain` keeps an optional flagged model paraphrase |
+| B13 | Resource-aware sensing + non-inert Idle/Distraction | 🟢 implemented on `b13-resource-aware-sensing` (D-19 ratified 2026-09-08) — `IdlePattern`/`DistractionPattern` attach nodes; `ProcessCollector` (per-app RAM/CPU/runtime census); `Node` schema **v3** (`ram_mb`/`cpu_percent`/`first_seen_at`/`last_seen_at`); `MemoryPressurePattern` + `HeavyAppStartedPattern` + `SignalType.WORKING_SET_CHANGE`; `RawMetricsRecorder` CSV. 484 pytest green (39 new for B13), ruff + mypy clean. **Exit criterion open: the 48 h+ soak (B13-C) has not run** |
 | D1 | Personal model pruning | ⏸ deferred to after B9 |
 
 ---
@@ -285,6 +291,66 @@ Removed: `ask` / `diagnose` / `chat` verbs, `$` `$?` `$!` `$$` as a user grammar
 `interface/knowledge.py` + `KnowledgeIndex`, the `$`/`$?` interactive-query
 pipeline in L9, `config.{knowledge_*, chat_temperature, max_context_tokens}`.
 Covered by `tests/test_describe.py` and the reworked `tests/test_interface.py`.
+
+---
+
+### B13 · Resource-aware sensing + non-inert Idle/Distraction (D-19)
+
+Full plan: [`B13_PLAN.md`](B13_PLAN.md). Written 2026-09-08 after the B9 soak
+produced zero insights in three days — root cause: `IdlePattern` /
+`DistractionPattern` fired with `related_node_ids = ()`, so L4 dropped them at the
+`no_nodes` gate and L5 no-op'd them, and the two node-bearing patterns need
+conditions an unattended box never creates.
+
+**B13-A · non-inert Idle/Distraction.** `DistractionPattern` attaches the distinct
+thrashed `app:<id>` nodes; `IdlePattern` attaches the last-focused `app:<id>`
+(D-19(d) — not `YOU`, not a `SESSION` node). No edges from these specs (the
+`part_of` domain edge is owned by the `APP_SWITCH` path). Nodeless-safe when
+there is no activity data.
+
+**B13-B1 · `MemoryPressurePattern`.** `system.mem_percent` z-score >
+`mem_pressure_z` OR `mem_available_mb < mem_pressure_floor_mb`, sustained
+`mem_pressure_sustain_seconds`. Emits `HIGH_LOAD` (no schema change). Attaches the
+heavy `app:` nodes from the concurrent census. **Kept separate from
+`HighLoadPattern`** (D-19: CPU stays a distinct pattern).
+
+**B13-B2 · `ProcessCollector`.** Polled `BaseCollector`, `asyncio.to_thread`'d.
+Per-process RSS/CPU/`create_time`, grouped by process **name**, kept at grouped
+RSS ≥ `process_min_rss_mb` (200), RAM-sorted. Names only (rules.md §6). `on` by
+default. RSS not PSS for round 1 (D-19(b)). No exclusions in round 1 (D-19(c) —
+`process_exclude_names` empty; the round-2 list is a soak output).
+
+**B13-B3 · `Node` schema v3.** `ram_mb` / `cpu_percent` / `first_seen_at` /
+`last_seen_at` on `app:<id>` nodes. `first_seen_at` write-once. Not fed into
+`relevance_score`. `NodeSpec.attributes` carries them from a pattern to
+`upsert_node`. A v2 graph loads under v3.
+
+**B13-B4 · RAM-aware patterns.** `FocusSessionPattern` gains a +0.15 confidence
+bonus when the census shows the focused app as the largest non-browser RSS group
+(lifts a genuine 20-min session past L4's 0.7 gate). New `HeavyAppStartedPattern`
+→ `SignalType.WORKING_SET_CHANGE`, edge-triggered when an app group first appears
+in the census. (Item 1 of the plan — generalising `HighLoadPattern` — was dropped
+per D-19: keep CPU and memory patterns separate.)
+
+**B13 · raw-data CSV** (operator request). `RawMetricsRecorder`, a passive
+`METRIC_COLLECTED` subscriber that appends one row per reading (system metrics
+wide + one row per censused app) when `raw_metrics_csv_path` is set. Enabled in
+`neuropaca.toml` / `neuropaca.soak.toml` / `neuropaca.b13.toml`, off in tests.
+
+**D-19 (ratified 2026-09-08):** (a) reuse `NodeType.APP`, no `PROCESS` type;
+(b) RSS now, PSS the documented follow-up; (c) no census exclusions in round 1;
+(d) idle → last active app; (e) new `SignalType.WORKING_SET_CHANGE`;
+(f) 200 MB grouped-total threshold, name-based grouping.
+
+**Status:** implemented on `b13-resource-aware-sensing`. 484 pytest green (39 new
+for B13), ruff + mypy clean. Node id caveat: census nodes are `app:<process
+name>`; where the process name and the Wayland app_id agree (most dev tools) they
+merge with focus nodes, where they differ (browsers) a round-2 name map is the
+documented fix (B13_PLAN.md §7).
+
+**Exit criterion open:** the 48 h+ soak (B13-C) under `neuropaca.b13.toml` — not
+run. The B9 soak harness plus the new `Census` line in `scripts/b9_soak_state.py`
+covers it; running it needs the target box.
 
 ---
 

@@ -247,7 +247,20 @@ Event «dataclass»            Node «dataclass»                Edge «dataclas
                                surfaced_at     : datetime|None  (B5 — set by L9 on
                                                  first surface of an INSIGHT node;
                                                  persisted, graph schema v2)
+                               ram_mb          : float          (B13-B3 — schema v3,
+                               cpu_percent     : float           durable resource
+                               first_seen_at   : datetime|None    attrs for app:<id>
+                               last_seen_at    : datetime|None    nodes, D-19)
 ```
+
+**B13-B3 · resource attributes (schema v3, D-19).** An `app:<id>` node gains
+`ram_mb` / `cpu_percent` (last observed grouped values from the `process` census)
+and `first_seen_at` / `last_seen_at` (census sighting bounds). Written through a
+pattern's `NodeSpec.attributes`, passed straight to `upsert_node`. `first_seen_at`
+is **write-once** (in `_UPSERT_PROTECTED` alongside `created_at`); the other three
+refresh every census. Deliberately **not** fed into `relevance_score` — importance
+tracks behavioural salience, not memory footprint (B13 §7). A v2 graph loads
+under v3 unchanged: the keys are absent and default.
 
 **Node references are `str`, not `UUID`** (B1, 2026-08-29). `Node.id` / `Edge.source_id` / `Edge.target_id` are already `str`. Every field anywhere in the system that *holds* a node id is `List[str]` / `str` too — `Message.related_node_ids` (§9), `Insight.context_nodes` / `related_signal` (§5), event payloads. The blueprint's `List[UUID]` on `Message` is superseded. Only `Event.id` stays a `UUID` — it identifies an event, never a node.
 
@@ -269,7 +282,7 @@ EventType                      NodeType        RelationType
   AGENT_SPAWNED                                  FOCUS_SESSION   FILE_ACTIVITY
   AGENT_COMPLETED                                DISTRACTION     APP_SWITCH
   SYSTEM_ERROR                                   HIGH_LOAD       USER_RETURN
-  SYSTEM_HEALTH_REQUEST   (B5)                    IDLE
+  SYSTEM_HEALTH_REQUEST   (B5)                    IDLE           WORKING_SET_CHANGE (B13)
   SYSTEM_HEALTH_REPORT    (B5)
 
 InterfaceChannel                     MessageRole  (B5 — supersedes Message.role: str)
@@ -322,14 +335,27 @@ XMetricCollector «Module»                 BaseCollector «abstract»
   + register_collector(c: BaseCollector)    + should_poll() : bool
   - _poll_loop() «async»
 
-SystemMetricCollector   FileSystemCollector           ActivityCollector
-  CPU/RAM/disk/temp       watch_paths                   last_active_window
-  via psutil              recent_changes                last_input_time
-                          watchdog.Observer thread      get_idle_seconds()  ← platform-specific
+SystemMetricCollector   FileSystemCollector           ActivityCollector    ProcessCollector
+  CPU/RAM/disk/temp       watch_paths                   last_active_window    per-app RSS/CPU/
+  via psutil              recent_changes                last_input_time       runtime census
+                          watchdog.Observer thread      get_idle_seconds()    (B13-B2, D-19)
 
 MetricSnapshot «dataclass»
   collector_name : str · timestamp : datetime · data : Dict[str, Any] · anomaly_score : float
 ```
+
+**B13-B2 (D-19):** `ProcessCollector` — a polled `BaseCollector` (`is_blocking`,
+`asyncio.to_thread`'d). `collect()` walks `psutil.process_iter(["name",
+"memory_info", "cpu_percent", "create_time"])`, groups by process **name**, keeps
+groups whose **summed RSS ≥ `process_min_rss_mb`** (default 200), and emits
+`data = {"processes": [{name, rss_mb, cpu_percent, proc_count, running_seconds}…]}`
+RAM-sorted. **Names only** — never `cmdline`/`exe`/`environ`/`connections`
+(rules.md §6; a test greps the AST). RSS double-counts shared libraries — accepted
+for B13, PSS is the documented follow-up. `process_exclude_names` is empty in
+round 1 (the census is unfiltered; the round-2 list is a soak output).
+`RawMetricsRecorder` (B13, operator request) is a passive `METRIC_COLLECTED`
+subscriber that appends one CSV row per reading when `raw_metrics_csv_path` is
+set — a soak/visibility instrument, not part of the loop.
 
 | Rule | Detail |
 | --- | --- |
@@ -372,8 +398,10 @@ B3 shipped `HighLoadPattern` + `IdlePattern` (approved 2026-08-30). B2.5b adds `
 | --- | --- | --- |
 | `HighLoadPattern` | `system.cpu_percent > 90` for ≥ `ceil(300 / system_poll)` consecutive snapshots | ✅ B3 |
 | `IdlePattern` | `system.cpu_percent < 5` for ≥ `ceil(idle_threshold_seconds / system_poll)` consecutive snapshots; resets at `cpu ≥ 10` (shares `IDLE_CPU_PERCENT` / `ACTIVE_CPU_PERCENT` with L2's `_IdleWatcher`) | ✅ B3 |
-| `FocusSessionPattern` | active app classified `domain:engineering`/`domain:research` for ≥ 20 min with no switch away, and mean `system.cpu_percent ≥ ACTIVE_CPU_PERCENT` over the span (blueprint's "high CPU" read as "not idle" — editor focus rarely pins a core) | ✅ B2.5b |
+| `FocusSessionPattern` | active app classified `domain:engineering`/`domain:research` for ≥ 20 min with no switch away, and mean `system.cpu_percent ≥ ACTIVE_CPU_PERCENT` over the span. **B13-B4:** +0.15 confidence if the `process` census shows that app as the largest non-browser RSS group (lifts a real session past L4's 0.7 gate) | ✅ B2.5b · B13-B4 |
 | `DistractionPattern` | > 5 `APP_SWITCH` in a trailing 2 min; re-arms at ≤ 2 | ✅ B2.5b |
+| `MemoryPressurePattern` | `system.mem_percent` z-score > `mem_pressure_z` **or** `mem_available_mb < mem_pressure_floor_mb`, sustained `mem_pressure_sustain_seconds` (default 180); re-arms when z < 1 and available back over the floor. Emits `HIGH_LOAD` (L4/L5 already consume it) | ✅ B13-B1 |
+| `HeavyAppStartedPattern` | a `process` census group name present now but not in the previous census (i.e. just crossed the RSS threshold); re-arms per app when it drops out. `confidence = 0.5`. Emits `WORKING_SET_CHANGE` | ✅ B13-B4 |
 
 ### Rules
 
@@ -401,7 +429,7 @@ All alias/id/string work happens **before** step 4; nothing is awaited that a su
 
 ### `_update_graph` scope
 
-- `HighLoadPattern` upserts `FILE` nodes for changed paths inside the correlation window. `IdlePattern` / `DistractionPattern` write none.
+- `HighLoadPattern` upserts `FILE` nodes for changed paths inside the correlation window. **B13-A:** `IdlePattern` attaches the last-focused `app:<id>` ("you went idle after working in X" — D-19(d); nodeless if there is no activity data). `DistractionPattern` attaches the distinct thrashed `app:<id>` nodes (no `edges` — the `part_of` domain edge is owned by the `APP_SWITCH` path; re-emitting would reset Hebbian weight). `MemoryPressurePattern` / `HeavyAppStartedPattern` attach the heavy `app:<id>` nodes from the `process` census, each carrying its schema-v3 resource attributes via `NodeSpec.attributes`.
 - From B2.5b (D-10): every `APP_SWITCH` upserts an `app:<id>` node and, when the `AppMap` classifies it, a `PART_OF` edge to its `domain:*` hub (bounded by distinct-app count); `FocusSessionPattern` names that `app:<id>` as its related node.
 - `bridge_value` is live from B2.5b — a node's distinct `domain:*` reach, `0.0 / 0.5 / 1.0` (`graph_memory._bridge_value_unsafe`).
 

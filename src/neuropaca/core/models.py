@@ -59,6 +59,16 @@ class Node:
     # B5 · set by L9 the first time an INSIGHT node is surfaced to the user
     # (surface-once). None on every other node type. Persisted (schema v2).
     surfaced_at: datetime | None = None
+    # B13-B3 · durable resource attributes for `app:<id>` nodes (schema v3, D-19).
+    # Written by a pattern's `NodeSpec.attributes` when the concurrent `process`
+    # census has a matching row; 0.0 / None on every node the census never sees.
+    # `first_seen_at` is write-once (like `created_at`); the other three refresh
+    # on every census sighting. Deliberately NOT fed into `relevance_score` — see
+    # B13 §7: importance tracks behavioural salience, not memory footprint.
+    ram_mb: float = 0.0
+    cpu_percent: float = 0.0
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
 
 
 @dataclass(slots=True)

@@ -346,4 +346,6 @@ def test_build_patterns_is_the_registry() -> None:
         "IdlePattern",
         "FocusSessionPattern",  # B2.5b (D-10)
         "DistractionPattern",  # B2.5b (D-10)
+        "MemoryPressurePattern",  # B13-B1 (D-19)
+        "HeavyAppStartedPattern",  # B13-B4 (D-19)
     ]
