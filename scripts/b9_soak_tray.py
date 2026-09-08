@@ -95,6 +95,40 @@ def _load_soak_state_module() -> Any:
 soak_state = _load_soak_state_module()
 
 
+def _load_dashboard_module() -> Any:
+    """Import scripts/b9_soak_dashboard.py by path, same reasoning as
+    `_load_soak_state_module`. It is stdlib-only (plus b9_soak_state), so it
+    loads fine under system python3."""
+    if "b9_soak_dashboard" in sys.modules:
+        return sys.modules["b9_soak_dashboard"]
+    module_path = REPO / "scripts" / "b9_soak_dashboard.py"
+    spec = importlib.util.spec_from_file_location("b9_soak_dashboard", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["b9_soak_dashboard"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+dashboard = _load_dashboard_module()
+
+
+def open_dashboard() -> bool:
+    """Regenerate the detailed HTML dashboard from the current soak state and
+    hand it to the desktop's default browser. Returns False if `xdg-open` is
+    absent -- same soft-fail stance as `raise_popup`."""
+    if not shutil.which("xdg-open"):
+        return False
+    path = dashboard.generate()
+    subprocess.Popen(  # fixed argv, no shell
+        ["xdg-open", str(path)],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return True
+
+
 @dataclass(frozen=True)
 class SoakStatus:
     """Everything one tray refresh needs to render. Plain data -- nothing
@@ -224,6 +258,7 @@ def _run_tray() -> None:
             )
             self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
             self.zenity_available = shutil.which("zenity") is not None
+            self.dashboard_available = shutil.which("xdg-open") is not None
             self._last_refresh = "never"
             # ONE menu for the life of the process, exported over DBus once.
             # `refresh()` repopulates its rows; it never swaps the object. See
@@ -295,6 +330,17 @@ def _run_tray() -> None:
                 dead = Gtk.MenuItem(label="(zenity not installed -- no popup)")
                 dead.set_sensitive(False)
                 self.menu.append(dead)
+
+            # The explained view: every metric with a description and a
+            # good/watch/check band. Regenerated from the same state on click.
+            if self.dashboard_available:
+                dash_item = Gtk.MenuItem(label="Open detailed dashboard")
+                dash_item.connect("activate", lambda *_: open_dashboard())
+                self.menu.append(dash_item)
+            else:
+                dead2 = Gtk.MenuItem(label="(xdg-open not found -- no dashboard)")
+                dead2.set_sensitive(False)
+                self.menu.append(dead2)
 
             refresh_item = Gtk.MenuItem(label="Refresh now")
             refresh_item.connect("activate", self._on_refresh_clicked)
