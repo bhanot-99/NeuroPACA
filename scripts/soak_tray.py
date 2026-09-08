@@ -74,6 +74,8 @@ ICON_COMPLETE = "emblem-default"
 ICON_DAEMON_DOWN = "dialog-warning"
 ICON_ERROR = "dialog-error"
 
+GRAPH_WINDOW = REPO / "scripts" / "neuropaca_graph_window.py"
+
 
 def _load_soak_state_module() -> Any:
     """Import scripts/soak_state.py by path.
@@ -125,6 +127,26 @@ def open_dashboard() -> bool:
     path = dashboard.generate()
     subprocess.Popen(  # fixed argv, no shell
         ["xdg-open", str(path)],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return True
+
+
+def open_graph_window() -> bool:
+    """Launch the native force-directed graph window.
+
+    `scripts/neuropaca_graph_window.py` draws `data/graph.json` with Cairo -- no
+    browser, no daemon coupling. It runs as its own process on purpose: the
+    viewer carries a physics loop and the tray must not inherit a crash from it.
+    The window takes its own single-instance lock, so clicking this again while
+    one is already open is a harmless no-op.
+    """
+    if not GRAPH_WINDOW.exists():
+        return False
+    subprocess.Popen(  # fixed argv, no shell
+        [sys.executable, str(GRAPH_WINDOW)],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -209,6 +231,28 @@ def format_popup_text(text: str) -> str:
     in `<tt>` -- the same escaping `soak_7day.sh`'s `show_popup()` does."""
     escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f"<tt>{escaped}</tt>"
+
+
+# The tray menu shows only these rows of `summarise()` plus the headline. It is a
+# strict *subset* of the popup text -- the same line strings, just fewer of them
+# -- so it can never disagree with "Show full popup", it only says less. Without
+# this the menu was ~20 rows tall and ran off the screen.
+_MENU_KEEP_PREFIXES = ("Progress", "Remaining", "Memory", "Wayland", "Health")
+
+
+def compact_lines(text: str) -> list[str]:
+    """The headline plus a handful of key rows, for the tray menu.
+
+    Everything is one click away under "Show full popup" / the dashboard, so the
+    menu itself only needs the at-a-glance answer: how far in, how long left, is
+    memory flat, is the sensor alive, any errors.
+    """
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+    headline = lines[0].split(". ")[0].rstrip(".")
+    kept = [ln for ln in lines[1:] if ln.startswith(_MENU_KEEP_PREFIXES)]
+    return [headline, *kept]
 
 
 def raise_popup(text: str) -> bool:
@@ -308,25 +352,27 @@ def _run_tray() -> None:
             self.menu.append(header)
             self.menu.append(Gtk.SeparatorMenuItem())
 
-            # Same lines the popup shows, one per menu row -- nothing is
-            # reworded or summarised-of-a-summary on the way into the tray.
-            for line in text.splitlines():
-                item = Gtk.MenuItem(label=line if line else " ")
+            # The live graph view -- top of the menu because it is the thing you
+            # open this widget for. Also wired to a middle-click on the tray icon
+            # below (set_secondary_activate_target), so it is one click away
+            # without opening the menu at all.
+            graph_item = Gtk.MenuItem(label="Open graph view")
+            graph_item.connect("activate", lambda *_: open_graph_window())
+            self.menu.append(graph_item)
+            self.menu.append(Gtk.SeparatorMenuItem())
+
+            # A compact subset of the popup text -- headline + a few key rows.
+            # The exact line strings, just fewer of them (see `compact_lines`);
+            # the complete block is behind "Show full popup" below.
+            for line in compact_lines(text):
+                item = Gtk.MenuItem(label=line)
                 item.set_sensitive(False)
                 self.menu.append(item)
 
             self.menu.append(Gtk.SeparatorMenuItem())
 
-            # Proof the refresh happened. Between two samples the summary text
-            # is byte-identical, so without a clock here a working refresh and
-            # a dead one look the same -- which is half of why this was
-            # reported as broken.
-            stamp = Gtk.MenuItem(label=f"last refreshed {self._last_refresh}")
-            stamp.set_sensitive(False)
-            self.menu.append(stamp)
-
             if self.zenity_available:
-                popup_item = Gtk.MenuItem(label="Show full popup")
+                popup_item = Gtk.MenuItem(label="Show full status")
                 popup_item.connect("activate", lambda *_: raise_popup(text))
                 self.menu.append(popup_item)
             else:
@@ -345,7 +391,10 @@ def _run_tray() -> None:
                 dead2.set_sensitive(False)
                 self.menu.append(dead2)
 
-            refresh_item = Gtk.MenuItem(label="Refresh now")
+            # The stamp rides on this always-present row -- between two samples
+            # the summary is byte-identical, so it is the only way a working
+            # refresh and a dead one look different.
+            refresh_item = Gtk.MenuItem(label=f"Refresh now  (updated {self._last_refresh})")
             refresh_item.connect("activate", self._on_refresh_clicked)
             self.menu.append(refresh_item)
 
@@ -356,6 +405,15 @@ def _run_tray() -> None:
             self.menu.append(quit_item)
 
             self.menu.show_all()
+
+            # Middle-click the tray icon -> open the graph view directly. The
+            # menu is rebuilt every refresh, so the target is re-pointed here
+            # rather than once in __init__. Not every SNI host forwards a
+            # secondary activate (COSMIC's does); the menu item is the fallback.
+            try:
+                self.indicator.set_secondary_activate_target(graph_item)
+            except (AttributeError, TypeError):
+                pass
 
     # No variable holds the instance -- `GLib.timeout_add_seconds` above
     # already keeps it alive via the bound `self._on_timer` reference, for as
