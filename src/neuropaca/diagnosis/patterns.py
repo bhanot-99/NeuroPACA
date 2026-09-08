@@ -398,9 +398,7 @@ class FocusSessionPattern(BasePattern):
             # classification path (re-emitting it would reset the Hebbian weight,
             # same reasoning as DistractionPattern).
             focus_label = webapp
-            spec = NodeSpec(
-                node_id=f"webapp:{webapp}", node_type=NodeType.WEBAPP, label=webapp
-            )
+            spec = NodeSpec(node_id=f"webapp:{webapp}", node_type=NodeType.WEBAPP, label=webapp)
         else:
             focus_label = app_id
             spec = NodeSpec(

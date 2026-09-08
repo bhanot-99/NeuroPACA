@@ -59,9 +59,7 @@ def _window(**kw) -> WaylandWindowSource:
 def _bind_window(src: WaylandWindowSource) -> tuple[_FakeProxy, _FakeInfoManager]:
     toplevel_list = _FakeProxy()
     info = _FakeInfoManager()
-    src.bound(
-        {"ext_foreign_toplevel_list_v1": toplevel_list, "zcosmic_toplevel_info_v1": info}
-    )
+    src.bound({"ext_foreign_toplevel_list_v1": toplevel_list, "zcosmic_toplevel_info_v1": info})
     return toplevel_list, info
 
 

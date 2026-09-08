@@ -73,9 +73,7 @@ async def test_access_count_tracks_refocus(tmp_path: Path) -> None:
     corr, bus, graph = await _correlator(tmp_path)
     try:
         for i in range(4):
-            await corr.on_app_switch(
-                _switch("brave-browser", "gmail", "domain:comms", t=i * 10)
-            )
+            await corr.on_app_switch(_switch("brave-browser", "gmail", "domain:comms", t=i * 10))
         await corr.on_app_switch(_switch("brave-browser", "youtube", "domain:habits", t=99))
         await bus.join()
 

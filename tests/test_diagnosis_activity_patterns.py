@@ -149,8 +149,7 @@ def test_distraction_counts_browser_tabs_as_distinct() -> None:
     p = DistractionPattern()
     tabs = ["gmail", "reddit", "youtube", "gmail", "reddit", "youtube"]
     activity = [
-        _act("", t=float(i * 18), app_id="brave-browser", webapp=w)
-        for i, w in enumerate(tabs)
+        _act("", t=float(i * 18), app_id="brave-browser", webapp=w) for i, w in enumerate(tabs)
     ]
     draft = p.evaluate(_win(activity=activity), _NoBaseline())
     assert draft is not None

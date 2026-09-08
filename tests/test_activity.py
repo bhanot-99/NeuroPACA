@@ -299,9 +299,7 @@ class _FakeConn:
 
 
 async def test_real_path_builds_one_shared_connection_with_both_handlers(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn
-    )
+    monkeypatch.setattr("neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn)
     _FakeConn.instances.clear()
     bus = await _running_bus()
     collector = ActivityCollector(bus, Config(inference_backend="fake"))
@@ -322,9 +320,7 @@ async def test_real_path_builds_one_shared_connection_with_both_handlers(monkeyp
 
 
 async def test_real_path_wayland_unavailable_disables_both_halves(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn
-    )
+    monkeypatch.setattr("neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn)
     _FakeConn.instances.clear()
     _base_init = _FakeConn.__init__
 
@@ -358,9 +354,7 @@ async def test_real_path_wayland_unavailable_disables_both_halves(monkeypatch) -
 
 
 async def test_real_path_connection_dies_later_drags_health_unhealthy(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn
-    )
+    monkeypatch.setattr("neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn)
     _FakeConn.instances.clear()
     bus = await _running_bus()
     collector = ActivityCollector(bus, Config(inference_backend="fake"))

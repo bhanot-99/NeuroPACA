@@ -28,9 +28,7 @@ _MAP = WebAppMap.from_dict(
 
 
 def _derive(app_id: str, title: str, *, enabled: bool = True):
-    return derive_webapp(
-        app_id, title, browsers=_BROWSERS, webapp_map=_MAP, enabled=enabled
-    )
+    return derive_webapp(app_id, title, browsers=_BROWSERS, webapp_map=_MAP, enabled=enabled)
 
 
 @pytest.mark.parametrize(

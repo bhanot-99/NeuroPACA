@@ -193,9 +193,7 @@ class WaylandConnection:
                 _log.exception("WaylandConnection pump tick failed — will reconnect")
                 self._teardown()
                 if failures >= len(_RECONNECT_DELAYS_SECONDS):
-                    _log.error(
-                        "WaylandConnection giving up after %d reconnect attempts", failures
-                    )
+                    _log.error("WaylandConnection giving up after %d reconnect attempts", failures)
                     return
                 await asyncio.sleep(_RECONNECT_DELAYS_SECONDS[failures])
                 failures += 1
