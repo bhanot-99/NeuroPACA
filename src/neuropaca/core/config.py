@@ -174,6 +174,15 @@ class Config:
     process_collector_enabled: bool = True
     process_min_rss_mb: float = 200.0
     process_exclude_names: list[str] = field(default_factory=list)
+    # B14 · web-app attribution. When the focused window's app_id is in
+    # `webapp_browser_app_ids`, the ActivityCollector matches the window TITLE
+    # against `webapp_map_path` (a site-name -> domain allowlist) and emits the
+    # matched label ("gmail") on APP_SWITCH, so the browser stops being one
+    # opaque `app:` node. The raw title never leaves the collector. Off, or an
+    # empty browser set, or a missing map => the browser stays one node (B13).
+    webapp_tracking_enabled: bool = True
+    webapp_map_path: str = "data/webapp_map.default.toml"
+    webapp_browser_app_ids: list[str] = field(default_factory=lambda: ["brave-browser"])
     # B13-B1 · MemoryPressurePattern (D-19). Fires when `system.mem_percent`
     # z-scores above `mem_pressure_z` OR `mem_available_mb` drops below
     # `mem_pressure_floor_mb`, sustained `mem_pressure_sustain_seconds` (shorter

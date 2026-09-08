@@ -35,7 +35,7 @@ def test_enum_members_match_the_blueprint() -> None:
     # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).
-    assert len(NodeType) == 11  # +IDLE_THOUGHT (B6, D-13)
+    assert len(NodeType) == 12  # +IDLE_THOUGHT (B6, D-13) +WEBAPP (B14, schema v4)
     assert len(RelationType) == 8
     assert len(SignalType) == 8  # +WORKING_SET_CHANGE (B13-B4, D-19(e))
     assert len(InterfaceChannel) == 3

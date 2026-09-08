@@ -71,7 +71,7 @@ class _Toplevel:
 
 
 class WaylandWindowSource:
-    def __init__(self) -> None:
+    def __init__(self, *, title_sensitive_app_ids: frozenset[str] = frozenset()) -> None:
         self._display: Any = None
         self._fd = -1
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -79,6 +79,12 @@ class WaylandWindowSource:
         self._info_manager: Any = None
         self._toplevels: dict[int, _Toplevel] = {}
         self._focused_app_id: str | None = None
+        # B14 · for these app_ids (browsers) a *title* change is a real focus
+        # change (a new tab) and must fire the callback; for everything else only
+        # an app_id change does, so a terminal's animated title glyph or a
+        # document's autosave-dirtied title stays a no-op.
+        self._title_sensitive = title_sensitive_app_ids
+        self._focused_title = ""
 
     def start(self, on_switch: WindowCallback) -> None:
         if not os.environ.get("WAYLAND_DISPLAY"):
@@ -160,11 +166,18 @@ class WaylandWindowSource:
 
     def _recompute_focus(self) -> None:
         focused = next((t for t in self._toplevels.values() if t.activated), None)
-        app_id = focused.app_id if focused is not None else None
-        if app_id and app_id != self._focused_app_id:
-            self._focused_app_id = app_id
-            if self._cb is not None and focused is not None:
-                self._cb(WindowInfo(app_id=app_id, title=focused.title))
+        if focused is None or not focused.app_id:
+            return
+        app_id, title = focused.app_id, focused.title
+        changed = app_id != self._focused_app_id or (
+            app_id in self._title_sensitive and title != self._focused_title
+        )
+        if not changed:
+            return
+        self._focused_app_id = app_id
+        self._focused_title = title
+        if self._cb is not None:
+            self._cb(WindowInfo(app_id=app_id, title=title))
 
     def _on_readable(self) -> None:
         display = self._display

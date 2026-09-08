@@ -23,11 +23,18 @@ class _NoBaseline:
         return 0.0
 
 
-def _act(domain: str, *, t: float, app_id: str = "dev.zed.Zed") -> MetricSnapshot:
+def _act(
+    domain: str, *, t: float, app_id: str = "dev.zed.Zed", webapp: str | None = None
+) -> MetricSnapshot:
     return MetricSnapshot(
         collector_name="activity",
         timestamp=_BASE + timedelta(seconds=t),
-        data={"app_id": app_id, "previous_app_id": None, "title": "", "domain": domain},
+        data={
+            "app_id": app_id,
+            "webapp": webapp,
+            "previous_app_id": None,
+            "domain": domain,
+        },
     )
 
 
@@ -66,6 +73,21 @@ def test_focus_session_fires_after_twenty_minutes_of_engineering() -> None:
 def test_focus_session_fires_for_research_too() -> None:
     p = FocusSessionPattern()
     assert p.evaluate(_focus_windows("domain:research", span=1300, cpu=25.0), _NoBaseline())
+
+
+def test_focus_session_attributes_to_the_webapp_when_one_is_focused() -> None:
+    # B14 (D2): 20 min in GitHub tabs — domain rides the webapp, so it now fires
+    # where "brave = habits" never did, and attributes to webapp:github (no edge —
+    # the classification path owns webapp -> domain).
+    p = FocusSessionPattern()
+    activity = [_act("domain:engineering", t=0.0, app_id="brave-browser", webapp="github")]
+    system = [_sys(42.0, t=s) for s in range(0, 1301, 60)]
+    draft = p.evaluate(_win(activity=activity, system=system), _NoBaseline())
+    assert draft is not None
+    spec = draft.node_specs[0]
+    assert spec.node_id == "webapp:github"
+    assert spec.node_type is NodeType.WEBAPP
+    assert spec.edges == ()
 
 
 def test_focus_session_silent_before_twenty_minutes() -> None:
@@ -119,6 +141,22 @@ def test_distraction_fires_on_six_switches_in_two_minutes() -> None:
     assert [s.node_id for s in draft.node_specs] == [f"app:app{i}" for i in range(6)]
     assert all(s.node_type is NodeType.APP and s.edges == () for s in draft.node_specs)
     assert "6 app switches" in draft.reason
+
+
+def test_distraction_counts_browser_tabs_as_distinct() -> None:
+    # B14 (D3): six APP_SWITCHes inside Brave — different tabs — count as six
+    # switches and the distinct set keys on the webapp, so specs are webapp: nodes.
+    p = DistractionPattern()
+    tabs = ["gmail", "reddit", "youtube", "gmail", "reddit", "youtube"]
+    activity = [
+        _act("", t=float(i * 18), app_id="brave-browser", webapp=w)
+        for i, w in enumerate(tabs)
+    ]
+    draft = p.evaluate(_win(activity=activity), _NoBaseline())
+    assert draft is not None
+    ids = {s.node_id for s in draft.node_specs}
+    assert ids == {"webapp:gmail", "webapp:reddit", "webapp:youtube"}
+    assert all(s.node_type is NodeType.WEBAPP for s in draft.node_specs)
 
 
 def test_distraction_silent_when_switches_are_spread_out() -> None:

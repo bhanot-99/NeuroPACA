@@ -53,6 +53,14 @@ process_min_rss_mb = 200.0
 process_exclude_names = []
 poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
 
+# B14 · web-app attribution. A focused browser tab is matched against the title
+# allowlist (`webapp_map_path`) and stored as `webapp:<label>` — the browser
+# stops being one opaque node. The raw window title is confined to the collector;
+# only the allowlisted label crosses onto the bus.
+webapp_tracking_enabled = true
+webapp_map_path = "data/webapp_map.default.toml"
+webapp_browser_app_ids = ["brave-browser"]
+
 # B13 (operator request) · append-only raw-data CSV — one row per collector
 # reading (system metrics wide + one row per censused app). Personal-visibility
 # / soak instrument, not part of the loop. No rotation: sweep data/ periodically.

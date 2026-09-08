@@ -26,7 +26,9 @@ class EventType(StrEnum):
     PRESSURE_THRESHOLD_REACHED = auto()
     IDLE_DETECTED = auto()
     ACTIVITY_DETECTED = auto()
-    APP_SWITCH = auto()  # B2.5b — focused app_id changed; payload {app_id, title, previous_app_id}
+    APP_SWITCH = auto()  # B2.5b/B14 — focused app or web-app changed; payload
+    # {app_id, webapp, webapp_domain, previous_app_id, previous_webapp}. The raw
+    # window title is NOT in the payload — only the allowlisted `webapp` label.
     INSIGHT_GENERATED = auto()
     USER_MESSAGE = auto()
     AGENT_SPAWNED = auto()
@@ -73,6 +75,11 @@ class NodeType(StrEnum):
     # the DMN generated during idle, grounded in real nodes. `idle:<uuid>`; edged
     # `RELATED_TO` its cited nodes; surfaced once by L9; pruned after the 48 h TTL.
     IDLE_THOUGHT = auto()
+    # B14 · a focused browser tab identified against the webapp allowlist.
+    # `webapp:<slug>` (e.g. `webapp:gmail`); `PART_OF` its browser `app:` node
+    # and `PART_OF` its routing domain; `access_count` is the focus count.
+    # Enum add => graph schema v4 (forward-incompatible with a v3 reader).
+    WEBAPP = auto()
 
 
 class RelationType(StrEnum):

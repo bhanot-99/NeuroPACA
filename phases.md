@@ -352,6 +352,45 @@ documented fix (B13_PLAN.md §7).
 run. The B9 soak harness plus the new `Census` line in `scripts/b9_soak_state.py`
 covers it; running it needs the target box.
 
+### B14 · Web-app attribution — the browser stops being one node
+
+Full plan: [`B14_PLAN.md`](B14_PLAN.md). The B13 census made `app:brave-browser`
+one opaque node wired to `domain:habits`; the operator lives inside Gmail /
+GitHub / Gemini / YouTube, which are not one activity. B14 gives the browser
+sub-identity under a strict title allowlist.
+
+**The membrane.** The focused-window *title* is the only handle the compositor
+gives on which tab has focus — and it also carries email addresses, unread
+counts, document names. `derive_webapp()` (`sensing/activity/webapp.py`, pure)
+strips the browser suffix, splits on title delimiters, and returns **only** a
+matched allowlist label (`"gmail"`) + its domain, or `None`. The raw title is a
+local in the collector and never reaches the bus, the graph, or a log — the same
+"structurally impossible to leak" stance B13 took on cmdlines.
+
+**Wiring.** `window.py` fires the focus callback on a `(app_id, title)` change
+for browser app_ids (title-sensitive set), app_id-only for everything else.
+`collector.py` dedups on a focus key `(app_id, webapp_label)` — so "Inbox (351)"
+→ "(352)" is a no-op but Gmail → Gemini is one `APP_SWITCH`. Payload:
+`{app_id, webapp, webapp_domain, previous_app_id, previous_webapp}` — **no title**.
+
+**Graph.** `NodeType.WEBAPP` (schema **v4**, forward-incompatible with a v3
+reader). The correlator upserts `webapp:<label>` wired `PART_OF` its browser and
+`PART_OF` its routing domain. `access_count` is the re-focus count.
+
+**Pattern decisions (D2/D3, operator-ratified 2026-09-08):** the focused tab's
+domain overrides `brave = habits`, so 20 min in GitHub tabs fires a
+`FOCUS_SESSION` attributed to `webapp:github`; browser tab switches feed
+`DistractionPattern` (distinct set keyed on the web-app). Rejected: reusing
+`NodeType.APP` with a prefix (no schema bump), reading Brave history/session
+files, a browser extension, storing the raw title and filtering at read.
+
+**Status:** implemented on `feat/brave-webapp-attribution`. 524 pytest green
+(≈35 new: `test_webapp_derive`, `test_webapp_map`, `test_webapp_pipeline`, plus
+activity / pattern / schema extensions), ruff + mypy clean. Config
+`webapp_tracking_enabled` (kill switch), `webapp_map_path`,
+`webapp_browser_app_ids`; `data/webapp_map.default.toml` shipped as a starting
+guess — the real allowlist is a dogfood output.
+
 ---
 
 ## Deferred — after the rest of the project

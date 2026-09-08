@@ -166,15 +166,63 @@ async def test_app_switch_fires_on_focused_app_id_change() -> None:
     bus.subscribe(EventType.APP_SWITCH, _collect(switches))
 
     window.emit("md.Obsidian", "notes")
-    window.emit("md.Obsidian", "notes 2")  # same app_id — no event
-    window.emit("brave-browser", "web")
+    window.emit("md.Obsidian", "notes 2")  # same app_id, not a browser — no event
+    window.emit("brave-browser", "some blog - Brave")
     await bus.join()
 
     assert [e.payload["app_id"] for e in switches] == ["md.Obsidian", "brave-browser"]
     assert switches[0].payload["previous_app_id"] is None
     assert switches[1].payload["previous_app_id"] == "md.Obsidian"
-    assert switches[1].payload["title"] == "web"
+    # the raw title is NOT in the payload — only an allowlisted `webapp` label
+    assert "title" not in switches[1].payload
+    assert switches[1].payload["webapp"] is None
     assert collector.health().detail.endswith("2 switches")
+
+    await collector.stop()
+    await bus.stop()
+
+
+async def test_browser_tab_switches_fire_with_the_webapp_label() -> None:
+    bus = await _running_bus()
+    idle, window = FakeIdleSource(), FakeWindowSource()
+    collector = await _started(bus, idle, window=window)
+
+    switches: list[Event] = []
+    bus.subscribe(EventType.APP_SWITCH, _collect(switches))
+
+    window.emit("brave-browser", "Inbox (351) - me@gmail.com - Gmail - Brave")
+    window.emit("brave-browser", "Inbox (352) - me@gmail.com - Gmail - Brave")  # tick, no event
+    window.emit("brave-browser", "Rick Astley - YouTube - Brave")
+    window.emit("brave-browser", "Inbox (352) - me@gmail.com - Gmail - Brave")  # re-focus
+    await bus.join()
+
+    labels = [e.payload["webapp"] for e in switches]
+    assert labels == ["gmail", "youtube", "gmail"]
+    assert switches[0].payload["webapp_domain"] == "domain:comms"
+    assert switches[1].payload["previous_webapp"] == "gmail"
+    # no fragment of any title leaked
+    for e in switches:
+        blob = repr(e.payload)
+        assert "@gmail.com" not in blob and "351" not in blob and "Astley" not in blob
+
+    await collector.stop()
+    await bus.stop()
+
+
+async def test_webapp_tracking_off_reproduces_b13_payload() -> None:
+    bus = await _running_bus()
+    idle, window = FakeIdleSource(), FakeWindowSource()
+    collector = await _started(bus, idle, window=window, webapp_tracking_enabled=False)
+
+    switches: list[Event] = []
+    bus.subscribe(EventType.APP_SWITCH, _collect(switches))
+    window.emit("brave-browser", "Inbox - Gmail - Brave")
+    window.emit("brave-browser", "YouTube - Brave")  # same app_id, tracking off — no event
+    await bus.join()
+
+    assert len(switches) == 1
+    assert switches[0].payload["webapp"] is None
+    assert switches[0].payload["webapp_domain"] is None
 
     await collector.stop()
     await bus.stop()

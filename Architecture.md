@@ -278,6 +278,8 @@ EventType                      NodeType        RelationType
   ACTIVITY_DETECTED              APP             CONTRADICTS
   APP_SWITCH                     SESSION
   INSIGHT_GENERATED              GOAL
+                                 IDLE_THOUGHT (B6)
+                                 WEBAPP       (B14 — schema v4)
   USER_MESSAGE                                 SignalType
   AGENT_SPAWNED                                  FOCUS_SESSION   FILE_ACTIVITY
   AGENT_COMPLETED                                DISTRACTION     APP_SWITCH
@@ -431,6 +433,7 @@ All alias/id/string work happens **before** step 4; nothing is awaited that a su
 
 - `HighLoadPattern` upserts `FILE` nodes for changed paths inside the correlation window. **B13-A:** `IdlePattern` attaches the last-focused `app:<id>` ("you went idle after working in X" — D-19(d); nodeless if there is no activity data). `DistractionPattern` attaches the distinct thrashed `app:<id>` nodes (no `edges` — the `part_of` domain edge is owned by the `APP_SWITCH` path; re-emitting would reset Hebbian weight). `MemoryPressurePattern` / `HeavyAppStartedPattern` attach the heavy `app:<id>` nodes from the `process` census, each carrying its schema-v3 resource attributes via `NodeSpec.attributes`.
 - From B2.5b (D-10): every `APP_SWITCH` upserts an `app:<id>` node and, when the `AppMap` classifies it, a `PART_OF` edge to its `domain:*` hub (bounded by distinct-app count); `FocusSessionPattern` names that `app:<id>` as its related node.
+- **B14 · web-app attribution.** For a focused browser tab the `ActivityCollector` matches the window *title* against a token allowlist (`webapp_map.default.toml`) and puts only the resolved label + domain on the `APP_SWITCH` payload — the raw title never leaves the collector. The correlator upserts a `NodeType.WEBAPP` node `webapp:<label>`, wired `PART_OF` its browser `app:<id>` and `PART_OF` its own routing domain (so 20 min in GitHub tabs is `engineering` focus, not `habits`). Its `access_count` is the re-focus count. Unrecognised tab ⇒ no `webapp:` node, the browser stays one `app:` node. `NodeType.WEBAPP` ⇒ **graph schema v4** (a v3 reader refuses a v4 file at the version gate).
 - `bridge_value` is live from B2.5b — a node's distinct `domain:*` reach, `0.0 / 0.5 / 1.0` (`graph_memory._bridge_value_unsafe`).
 
 ### `recent_snapshots` bound

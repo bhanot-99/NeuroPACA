@@ -22,6 +22,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, system_error_event
 from neuropaca.sensing.activity.idle import IdleSource, IdleTransition
+from neuropaca.sensing.activity.webapp import WebAppMap, derive_webapp
 from neuropaca.sensing.activity.window import WindowInfo, WindowSource
 
 _log = logging.getLogger(__name__)
@@ -46,7 +47,14 @@ class ActivityCollector(BaseModule):
         self._idle_since: datetime | None = None
         self._transitions = 0
         self._switches = 0
-        self._focused_app_id: str | None = None
+        # B14 · focus key = (app_id, webapp_label | None). A tab switch inside a
+        # browser changes the second half; "Inbox (351)" -> "(352)" does not.
+        self._focus_key: tuple[str, str | None] | None = None
+        self._webapp_enabled = config.webapp_tracking_enabled
+        self._browsers = frozenset(config.webapp_browser_app_ids)
+        self._webapp_map_path = config.webapp_map_path
+        self._webapp_map = WebAppMap.empty()
+        self._webapps_seen: set[str] = set()
 
     async def initialize(self) -> None:
         return None  # publishes only; subscribes to nothing
@@ -63,10 +71,15 @@ class ActivityCollector(BaseModule):
         idle = self._idle_source
         self._idle_ok = self._try_start("idle", lambda: idle.start(self._on_transition))
 
+        if self._webapp_enabled and self._browsers:
+            self._webapp_map = WebAppMap.from_file(self._webapp_map_path)
+
         if self._window_source is None:
             from neuropaca.sensing.activity.window import WaylandWindowSource
 
-            self._window_source = WaylandWindowSource()
+            self._window_source = WaylandWindowSource(
+                title_sensitive_app_ids=self._browsers if self._webapp_enabled else frozenset()
+            )
         window = self._window_source
         self._window_ok = self._try_start("window", lambda: window.start(self._on_window_switch))
 
@@ -137,19 +150,35 @@ class ActivityCollector(BaseModule):
             )
 
     def _on_window_switch(self, window: WindowInfo) -> None:
-        if window.app_id == self._focused_app_id:
+        # The raw title is read HERE and nowhere downstream: `derive_webapp`
+        # returns only an allowlisted label, and that is all that goes on the bus
+        # (B14 — the membrane).
+        hit = derive_webapp(
+            window.app_id,
+            window.title,
+            browsers=self._browsers,
+            webapp_map=self._webapp_map,
+            enabled=self._webapp_enabled,
+        )
+        label = hit.label if hit is not None else None
+        key = (window.app_id, label)
+        if key == self._focus_key:
             return
-        previous = self._focused_app_id
-        self._focused_app_id = window.app_id
+        prev_app_id, prev_label = self._focus_key or (None, None)
+        self._focus_key = key
         self._switches += 1
+        if label is not None:
+            self._webapps_seen.add(label)
         self.event_bus.publish(
             Event(
                 event_type=EventType.APP_SWITCH,
                 source="sensing.activity",
                 payload={
                     "app_id": window.app_id,
-                    "title": window.title,
-                    "previous_app_id": previous,
+                    "webapp": label,
+                    "webapp_domain": hit.domain if hit is not None else None,
+                    "previous_app_id": prev_app_id,
+                    "previous_webapp": prev_label,
                 },
             )
         )

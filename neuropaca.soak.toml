@@ -38,6 +38,12 @@ process_exclude_names = []
 poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
 raw_metrics_csv_path = "data/raw_metrics.csv"
 
+# B14 · web-app attribution — on for the soak (D5). Real browsing over the window
+# is what tells us whether the allowlist is right and what belongs on it.
+webapp_tracking_enabled = true
+webapp_map_path = "data/webapp_map.default.toml"
+webapp_browser_app_ids = ["brave-browser"]
+
 # Both the L2 filesystem-sensing scope and the L7 write allowlist (D-14).
 # Deliberately just this repo: real edit activity, and the only root that could
 # ever be written to is one under version control.

@@ -210,7 +210,7 @@ flowchart LR
 
 | # | Feature | What it does, plainly | Key technical detail |
 | --- | --- | --- | --- |
-| **F1** | Passive OS sensing | Reads system numbers every 60 s | `psutil` + `watchdog` + Wayland protocols; **no inference in this layer**; publishes `MetricSnapshot` to the bus |
+| **F1** | Passive OS sensing | Reads system numbers every 60 s | `psutil` + `watchdog` + Wayland protocols; **no inference in this layer**; publishes `MetricSnapshot` to the bus. B14: the focused browser tab is matched against a title allowlist inside the collector — only the label crosses, never the raw title |
 | **F2** | Pattern correlation | Turns raw numbers into named situations | Rule-based `SignalCorrelator` over bounded deques; the LLM is never consulted here |
 | **F3** | Unified graph memory | Remembers things and how they relate | `networkx.MultiDiGraph`, 11 routing hubs, Hebbian edge strengthening, atomic saves |
 | **F4** | Local CPU inference | Runs an LLM without a GPU or an account | Two lazily-loaded GGUF models behind **one** system-wide `_inference_lock` |
@@ -460,6 +460,7 @@ Two gates would have meant two audit writers and two confirmation brokers racing
 | --- | --- | --- |
 | `YOU`, `domain:*` | The 11 routing hubs | Permanent, protected from all pruning |
 | `app:<id>` | An application you use | Score-decayed |
+| `webapp:<label>` | A browser tab identified against the title allowlist (B14) — `PART_OF` its browser and its own domain | Score-decayed |
 | `file:<abs path>` | A file in a watched path | Score-decayed |
 | `insight:<uuid>` | An L4 extractive insight | 48 h TTL |
 | `idle:<uuid12>` | An L6 idle thought | 48 h TTL |
