@@ -5,11 +5,12 @@
 | | |
 | --- | --- |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
-| **Version** | v4 |
-| **Dossier date** | 2026-09-05 |
-| **Status** | B9 · Hardening — B0–B9 built; 6 of 7 B9 exit criteria met; 7-day soak harness rebuilt post-B15 (prior run void — deaf sensor), re-run pending |
-| **Code size** | 10,909 lines of source · 9,435 lines of tests · 446 collected tests · 91 commits |
+| **Version** | v5 |
+| **Dossier date** | 2026-09-08 |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B15 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix); 6 of 7 B9 exit criteria met; the B15 fix is live-confirmed, the **1-hour soak gate passed on 2026-09-08**, and the **7-day soak started 2026-09-08T19:56Z** from a wiped graph (`neuropaca.b13.toml`, full sensing, dry-run safe) |
+| **Code size** | 13,254 lines of source · 12,609 lines of tests · 603 collected tests (580 default) · 102 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
+| **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
 | **Research goal** | A publishable paper — the benchmarks *and* the rejected alternatives are deliverables. |
 
 > **How to read this document.** Every section opens with a plain-English paragraph ("what this is, in normal words") and then goes technical. Diagrams are Mermaid — they render on GitHub, in Obsidian, and in VS Code. Every number in this file was measured on the target machine and is traceable to a script in `scripts/` or a test in `tests/`.
@@ -47,8 +48,8 @@
 
 **Technically.** NeuroPACA is a Python `asyncio` daemon organised into **ten architectural layers / eight runtime modules** that communicate **only** through an async `EventBus`. It:
 
-- polls cold OS-level telemetry every 60 seconds (`psutil`, `/proc`, `inotify` via `watchdog`, Wayland `ext-idle-notify-v1` and `zcosmic-toplevel-info-v1`);
-- converts raw telemetry into **named behavioural patterns** with a rule-based correlator (no inference in that path, by design);
+- polls cold OS-level telemetry every 60 seconds (`psutil`, `/proc`, `inotify` via `watchdog`, Wayland `ext-idle-notify-v1` and `zcosmic-toplevel-info-v1`) — including a per-application RAM/CPU/runtime **process census** (B13) and browser-tab **sub-identity** matched against a title allowlist (B14);
+- converts raw telemetry into **named behavioural patterns** with a rule-based correlator (no inference in that path, by design) — CPU load, memory pressure, focus sessions, distraction, idle, and heavy-app starts;
 - stores those patterns in a **personal knowledge graph** (`networkx.MultiDiGraph`) where every node carries one `relevance_score` in the range 0–10;
 - runs a **local quantised language model** in-process via `llama.cpp` to extract insights, generate idle-time thoughts, and answer grounded questions;
 - accumulates **pressure** from independent signal sources and, only when several agree, opens a **safety-gated** action path that can never execute a dangerous effect without a recorded human confirmation.
@@ -59,7 +60,7 @@
 | --- | --- |
 | A cloud assistant | Zero egress. CI **affirmatively proves** it — the egress test runs in a network namespace with only loopback and asserts that HTTP and raw TCP both raise. |
 | A general chatbot | Its focus is *your machine and your work*. The terminal is command-only (B12) — no free-text question at all; `neuropaca tell` explains the codebase deterministically from its own docstrings. |
-| A screen recorder or keylogger | It reads aggregate system counters and application identifiers. Window-title text is read transiently for a focus event and **never persisted**. |
+| A screen recorder or keylogger | It reads aggregate system counters and application identifiers. Window-title text is read transiently for a focus event, reduced **inside the collector** to a matched allowlist label (`"gmail"`) or discarded, and **never persisted or put on the bus** (B14). Process command lines are never read — the census groups by process *name* only, AST-checked. |
 | A multi-user / fleet product | Single user, single machine, single graph. That is a stated scope boundary, and also a stated research limitation (§16). |
 | A GPU project | CPU-only inference is the *premise*, not a compromise. |
 
@@ -210,8 +211,8 @@ flowchart LR
 
 | # | Feature | What it does, plainly | Key technical detail |
 | --- | --- | --- | --- |
-| **F1** | Passive OS sensing | Reads system numbers every 60 s | `psutil` + `watchdog` + Wayland protocols; **no inference in this layer**; publishes `MetricSnapshot` to the bus. B14: the focused browser tab is matched against a title allowlist inside the collector — only the label crosses, never the raw title |
-| **F2** | Pattern correlation | Turns raw numbers into named situations | Rule-based `SignalCorrelator` over bounded deques; the LLM is never consulted here |
+| **F1** | Passive OS sensing | Reads system numbers every 60 s | `psutil` + `watchdog` + Wayland protocols; **no inference in this layer**; publishes `MetricSnapshot` to the bus. B13 adds `ProcessCollector` — a per-app RAM/CPU/runtime census grouped by process name (≥ 200 MB), names only. B14: the focused browser tab is matched against a title allowlist inside the collector — only the label crosses, never the raw title. `RawMetricsRecorder` optionally mirrors every reading to a CSV (off by default, off in tests) |
+| **F2** | Pattern correlation | Turns raw numbers into named situations | Rule-based `SignalCorrelator` over bounded deques; the LLM is never consulted here. Six patterns: `HighLoadPattern` (CPU), `MemoryPressurePattern` (RAM, B13), `FocusSessionPattern`, `DistractionPattern`, `IdlePattern`, `HeavyAppStartedPattern` (B13) |
 | **F3** | Unified graph memory | Remembers things and how they relate | `networkx.MultiDiGraph`, 11 routing hubs, Hebbian edge strengthening, atomic saves |
 | **F4** | Local CPU inference | Runs an LLM without a GPU or an account | Two lazily-loaded GGUF models behind **one** system-wide `_inference_lock` |
 | **F5** | Default Mode Network | Thinks while you're away | Triggered on real idle events; cancelled within one tick when you return; wall-clock and inference budgets |
@@ -295,7 +296,7 @@ survives as `neuropaca run` (`$!` / `$$` are now an internal L9→L7 wire enum).
 | **2** | **A single usage score reused for retention, replay, and ranking** | Retrieval systems rank by semantic similarity; caches evict by LRU; nobody has unified all three under one behaviourally-derived score and measured whether that unification costs anything. |
 | **3** | **Corroboration-gated autonomy, measured** | "Require multiple signals before acting" is folklore. We turn it into a structural set test and show it is *impossible* — not merely unlikely — for one source to cross the high threshold, with 500 max-confidence spikes producing 167× the threshold and still firing only the low tier. |
 | **4** | **A CPU-only, zero-egress agent that is proven zero-egress** | Privacy claims are usually documentation. Here they are a CI job in a network namespace that fails the build if an outbound connection succeeds. |
-| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied. Negative results with numbers attached are rare and reusable. |
+| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf on 1-in-3 starts and misdiagnosed twice, a `chat` feature built over two phases then withdrawn. Negative results with numbers attached are rare and reusable. |
 
 ### 5.2 What makes the results credible
 
@@ -348,8 +349,8 @@ flowchart TB
 | Layer | Name | Primary classes | Source |
 | --- | --- | --- | --- |
 | **L1** | Core Infrastructure | `EventBus`, `GraphMemory`, `BitNetRuntime`, `Config`, `Node`/`Edge`, enums, `BaseModule`, `Clock` | `core/` |
-| **L2** | Sensing | `BaseCollector`, `SystemMetricCollector`, `FileSystemCollector`, `ActivityCollector`, `MetricSnapshot` | `sensing/` |
-| **L3** | Diagnosis | `SignalCorrelator`, `BasePattern`, `HighLoadPattern`, `IdlePattern`, `FocusSessionPattern`, `DistractionPattern`, `AppMap` | `diagnosis/` |
+| **L2** | Sensing | `BaseCollector`, `SystemMetricCollector`, `FileSystemCollector`, `ProcessCollector` (B13), `ActivityCollector` (`WaylandConnection` — one shared `pywayland.Display`, B15), `derive_webapp` (B14), `RawMetricsRecorder`, `MetricSnapshot` | `sensing/` |
+| **L3** | Diagnosis | `SignalCorrelator`, `BasePattern`, `HighLoadPattern`, `MemoryPressurePattern` (B13), `IdlePattern`, `FocusSessionPattern`, `DistractionPattern`, `HeavyAppStartedPattern` (B13), `AppMap`, `WebAppMap` (B14) | `diagnosis/` |
 | **L4** | Learning | `BitNetPlasticity`, `Insight`, GBNF prompts | `learning/` |
 | **L5** | Drive | `PressureAccumulator`, `PressureEntry` | `drive/` |
 | **L6** | Idle Cognition | `DefaultModeNetwork` | `idle/` |
@@ -454,6 +455,7 @@ Two gates would have meant two audit writers and two confirmation brokers racing
 
 - **Graph type:** `networkx.MultiDiGraph` — parallel edges are required, because the same pair of nodes can be connected by *different* `RelationType`s simultaneously.
 - **Identifiers:** every node id and node-reference field is a `str`. Only `Event.id` is a `UUID`.
+- **Schema version 4.** `_SCHEMA_VERSION = 4`, `_MIN_READABLE_SCHEMA_VERSION = 1`. v3 (B13) added `ram_mb` / `cpu_percent` / `first_seen_at` / `last_seen_at` to `Node` — populated from the process census, **not** fed into `relevance_score` (importance is behavioural salience, not memory footprint); `first_seen_at` is write-once. v4 (B14) added `NodeType.WEBAPP` and is forward-incompatible with a v3 reader. A newer-than-supported file is refused with a message (B9 criterion 6).
 - **Node id conventions carry meaning:**
 
 | Prefix | Meaning | Lifetime |
@@ -493,11 +495,13 @@ The bus is the entire API surface between layers. Key event types:
 | Pattern | Fires when | Attaches graph nodes? |
 | --- | --- | --- |
 | `HighLoadPattern` | CPU > 90 % sustained (5 samples) | ✅ from filesystem activity |
-| `IdlePattern` | No input past the idle threshold | ❌ — carries no `node_specs` |
-| `FocusSessionPattern` | A `domain:engineering` or `domain:research` app held ≥ 20 min without switching, mean CPU above idle | ✅ |
-| `DistractionPattern` | More than 5 app switches in a trailing 2 min window (re-arm ≤ 2) | ❌ |
+| `MemoryPressurePattern` (B13) | `mem_percent` z-score high **or** `mem_available_mb` below a floor, sustained ~180 s → emits `HIGH_LOAD` | ✅ the heavy census apps |
+| `IdlePattern` | No input past the idle threshold | ✅ (B13) the last-focused `app:<id>` — *was* `❌` |
+| `FocusSessionPattern` | A `domain:engineering`/`research` app (or a focused browser tab whose web-app domain is one of those, B14) held ≥ 20 min without switching, mean CPU above idle; +0.15 confidence when the census shows it as the largest non-browser RSS group (B13) | ✅ |
+| `DistractionPattern` | More than 5 app/tab switches in a trailing 2 min window (re-arm ≤ 2) | ✅ (B13) the distinct thrashed `app:<id>` / `webapp:<label>` nodes — *was* `❌` |
+| `HeavyAppStartedPattern` (B13) | An app group first appears in the census → `SignalType.WORKING_SET_CHANGE` (edge-triggered) | ✅ |
 
-> **This table is also a finding.** Only the two patterns that attach nodes can drive pressure at all — `PressureAccumulator.add_pressure` loops over `related_node_ids`, and an empty list is a no-op. That structural fact is what made three 24-hour soaks produce empty logs (§11.7, §15.5).
+> **This table is also a finding — and B13 is the fix.** `PressureAccumulator.add_pressure` loops over `related_node_ids`; an empty list is a no-op. In B0–B12 only `HighLoadPattern` and `FocusSessionPattern` attached nodes, so `IdlePattern` and `DistractionPattern` fired into a void — a structural reason three 24-hour soaks produced empty logs (§11.7, §15.5). B13 (D-19) made Idle and Distraction attach real nodes, added a memory-based primary signal (CPU is bursty and mostly ~0; RAM footprint is the stable indicator of what is being worked with), and added the census so `FocusSessionPattern` can tell a genuine 20-minute session from an idle window. The unattended soak is still not *expected* to produce insights — an idle box has nothing behaviourally rich left once the daemon's own work is excluded — but the loop now works under real interactive dogfooding.
 
 ---
 
@@ -553,7 +557,7 @@ The human-readable `summary` is then rendered from a **Python template**, never 
 
 ## 10. Method — how we built it, phase by phase
 
-**In plain words.** We built it in eleven numbered steps. Each step had written pass/fail conditions decided *before* the code was written, and a step was only declared done when a named test or script proved each condition. Where a condition could not be proven, that is recorded as unproven rather than assumed.
+**In plain words.** We built the core in ten numbered steps (B0–B9), then added five more (B10–B15) as dogfooding exposed real gaps. Each step had written pass/fail conditions decided *before* the code was written, and a step was only declared done when a named test or script proved each condition. Where a condition could not be proven, that is recorded as unproven rather than assumed.
 
 ```mermaid
 flowchart LR
@@ -567,8 +571,15 @@ flowchart LR
     B6 --> B7["B7 ✅<br/>drive + action L5/L7"]
     B7 --> B8["B8 ✅<br/>agents L8"]
     B8 --> B9["B9 🟡<br/>hardening L10"]
+    B9 --> B10["B10–B12 ✅<br/>terminal reconceived<br/>as a read-only guide"]
+    B10 --> B13["B13 ✅<br/>resource-aware sensing"]
+    B13 --> B14["B14 ✅<br/>web-app attribution"]
+    B14 --> B15["B15 ✅<br/>Wayland sensor fix"]
+    B15 -.->|re-run| B9
     B9 -.-> D1["D1 ⏸<br/>model pruning"]
 ```
+
+> B10–B15 are **post-B9 work**, not a linear continuation. B9's seventh criterion (the 7-day soak) is still open; B13–B15 exist because chasing *why* the soak measured nothing uncovered three separate causes (inert Idle/Distraction patterns, CPU being the wrong primary signal, and a deaf Wayland focus sensor). Each fix has its own phase, its own plan doc (`B13_PLAN.md` … `B15_PLAN.md`), and its own test report; the soak gate is now re-run against the fixed system.
 
 ### 10.1 The methodology rules
 
@@ -596,7 +607,11 @@ flowchart LR
 | **B6** | L6 idle cognition — the Default Mode Network, consolidate / link-orphans / prune-stale, extractive idle thoughts | Cancel a mid-consolidate cycle in **0.1 ms**, zero corruption |
 | **B7** | L5 drive + L7 action — pressure accumulator, safety gate, sandbox, quarantine, audit, confirmation broker | 500 max-confidence spikes → **167×** the high threshold, still only the low tier fires |
 | **B8** | L8 agents — supervisor, ephemeral sub-clusters, apoptosis, `ACTION_PROPOSAL` decoupling | Cap of 12 held under **60 simultaneous** spawns |
-| **B9** | L10 hardening — systemd unit, crash recovery, schema versioning, logrotate, offline verbs, CI egress test, 7-day soak | **6 of 7** criteria met; soak harness rebuilt post-B15, re-run pending (prior run void) |
+| **B9** | L10 hardening — systemd unit, crash recovery, schema versioning, logrotate, offline verbs, CI egress test, 7-day soak | **6 of 7** criteria met; soak harness rebuilt post-B15; 1-hour gate **passed 2026-09-08** (fallback path); 7-day soak not yet started |
+| **B10–B12** | Terminal reconceived — an interactive shell (B10) and a doc/graph `chat` (B11) were built, then **both withdrawn in B12** for a deterministic `ast`-based read-only project guide (`neuropaca tell` / `overview`) | A 3B-Q4 model paraphrasing a retrieved chunk is not reproducible; §4.1 records the full rejection |
+| **B13** | Resource-aware sensing (D-19) — `ProcessCollector` census, `Node` schema v3, `MemoryPressurePattern`, `HeavyAppStartedPattern`, non-inert Idle/Distraction, `RawMetricsRecorder` CSV | 484 tests green (39 new); the loop now fires under real dogfooding, not just the positive control |
+| **B14** | Web-app attribution — the browser stops being one opaque node; `NodeType.WEBAPP` (schema v4), title→allowlist-label inside the collector | ~35 tests new; **no per-tab/URL data leaves the collector** — a property of the design |
+| **B15** | The Wayland activity sensor was **deaf, not dead** — a GC'd `zcosmic_toplevel_handle_v1` proxy on ~1 in 3 starts; two `Display` connections, the second segfaulting on teardown | Strong-ref dict + one shared `WaylandConnection` + poll-pump; **0/20 restarts deaf** (was ~1/3); this is the mechanism behind B7's three zero-L5 soaks |
 
 ---
 
@@ -767,7 +782,38 @@ switch **rate** (≥ 20/h, or graph+signal growth for a single-window hour) with
 shared Wayland connection not thrashing, and `soak_state.py assess` grades the
 completed run on sensor liveness (`window_ok` > 95 % of samples, no daemon life that
 came up deaf, zero pump-errors, zero SIGSEGV markers, watchdog reconnects under
-~1/accrued-day). Re-run pending on the target box.
+~1/accrued-day).
+
+**The 1-hour gate — re-run and PASSED, 2026-09-08.** With the B15 fix in place the
+daemon came up with `window✓` live and held it. Checks 1–4 passed immediately
+(unit bound to `graphical-session.target`, `WAYLAND_DISPLAY` in `/proc/<pid>/environ`,
+activity collector healthy, `neuropaca health` over the socket). Over the 60-minute
+window: **15 app switches (15/h), 0 Wayland reconnects, 0 pump-errors, `window✓` at
+the end**, and the graph grew by 2 nodes/edges while L3 correlated 5 signals. The
+switch count did not clear the strong ≥ 20/h bar — the box was used lightly that
+hour — so the gate **passed on its single-window fallback** (graph growth **and** an
+L3 signal, with the Wayland connection not thrashing). `data/soak/gate-passed` is
+written; `scripts/soak_7day.sh` refuses to start without it. The 7-day soak **started
+2026-09-08T19:56Z** under `neuropaca-soak.service` (`systemd-inhibit
+--what=sleep:idle`, accrued-runtime accounting). `data/` was wiped first — graph,
+actions log, raw-metrics CSV, daemon log all cleared, only the gate proof kept — so
+the run records from a clean 11-hub graph at t=0. The daemon runs under
+`neuropaca.b13.toml` (full sensing: process census + web-app attribution + activity
++ memory-pressure, `action_dry_run = true`, safe tier only).
+
+Context for the fallback: at the daemon level the fix is unambiguous — `neuropaca
+health` showed `activity ✓ idle✓ window✓ · 75 switches` over ~2 h uptime, against
+the old ~4-an-hour, with every subsystem at `0 errors`. The gate's per-window switch
+delta was low only because interactive use was light during that specific hour, not
+because the sensor was deaf.
+
+**The soak harness, rebuilt for B15.** The `b9_soak_*` scripts were retired. The new
+set: `soak_probe.py` (a single authoritative JSON health sample read over the L9
+socket — never the journal, which on this box is volatile and empty), `soak_gate.sh`
+(the five pre-flight checks above), `soak_state.py` (accrues sessions across power
+cycles, `summary` / `assess`), `soak_7day.sh` (the driver + login popup), and
+`soak_dashboard.py` (a browsable HTML page that puts a plain-language description and
+a good/watch/bad band on every metric — the second layer behind the terse popup).
 
 **Why "accrued runtime" and not calendar time.** A box powered off overnight ages no process. Counting those hours would let a 3.5-day soak claim a 7-day result — which is precisely how the B2 soak reached 11 h of a 24 h window. An unclean shutdown leaves a session open; the next boot heals it from the last heartbeat, labels it `unclean`, and rounds runtime **down** rather than crediting hours the machine spent switched off. `systemd-inhibit --what=sleep:idle` wraps the driver for the same reason.
 
@@ -781,15 +827,16 @@ came up deaf, zero pump-errors, zero SIGSEGV markers, watchdog reconnects under
 
 | Metric | Value |
 | --- | --- |
-| Source lines (`src/neuropaca/`) | **10,909** |
-| Test lines (`tests/`) | **9,435** |
-| Test-to-source ratio | **0.86 : 1** |
-| Tests collected | **446** (423 default · 14 stress · 13 integration, some deselected by marker) |
-| Python modules in `src/` | 66 |
-| Validation / soak scripts | 24 in `scripts/` |
-| Git commits | **91** |
-| Merged pull requests | 16 |
-| Static analysis | `ruff check` + `ruff format --check` + `mypy` — all clean, enforced in CI |
+| Source lines (`src/neuropaca/`) | **13,254** |
+| Test lines (`tests/`) | **12,609** |
+| Test-to-source ratio | **0.95 : 1** |
+| Tests collected | **603** (**580** default · the rest stress + integration, deselected by marker) |
+| Python modules in `src/` | 72 |
+| Validation / soak scripts | 33 in `scripts/` |
+| Git commits | **102** |
+| Merged pull requests | 17 |
+| Licensing | AGPL-3.0-only; SPDX identifier + copyright header on every first-party `.py`; a covert per-file `# gen-ref:` provenance marker, `sha256(SECRET:posix_path)[:8]`, re-applied after every merge by `scripts/_provenance.py` |
+| Static analysis | `ruff check .` (bare, no `--fix`) + `ruff format --check` + `mypy` — all clean, enforced in CI |
 
 ---
 
@@ -799,10 +846,10 @@ came up deaf, zero pump-errors, zero SIGSEGV markers, watchdog reconnects under
 
 ```mermaid
 flowchart TD
-    U["Unit tests<br/>423 default-run tests<br/>fake clock, fake inference backend<br/>milliseconds"]
-    S["Stress tests<br/>14 tests, marker: stress<br/>storms, contention, throughput<br/>seconds"]
-    I["Integration tests<br/>13 tests<br/>real inotify, real sockets,<br/>real network namespace"]
-    V["Validation harnesses<br/>24 scripts in scripts/<br/>real models, real daemon,<br/>on the real target box"]
+    U["Unit tests<br/>~560 default-run tests<br/>fake clock, fake inference backend<br/>milliseconds"]
+    S["Stress tests<br/>marker: stress<br/>storms, contention, throughput<br/>seconds"]
+    I["Integration tests<br/>real inotify, real sockets,<br/>real network namespace"]
+    V["Validation harnesses<br/>33 scripts in scripts/<br/>real models, real daemon,<br/>on the real target box"]
     K["Soaks<br/>1 h → 24 h → 7 d<br/>leak slopes, drift, liveness"]
     U --> S --> I --> V --> K
     K -->|a soak that produces nothing<br/>looks identical to a healthy idle soak| P["Positive controls<br/>synthetic episodes at<br/>byte-identical thresholds"]
@@ -812,10 +859,10 @@ flowchart TD
 
 | Tier | Count | What it catches | Determinism device |
 | --- | --- | --- | --- |
-| **Unit** | 423 | Logic errors, boundary conditions, invariant violations | `FakeClock` (no `sleep`), `FakeInferenceBackend` (schema-aware), `conftest.py` wipes every singleton `_instance` between tests |
-| **Stress** | 14 (marker `stress`, excluded from the default run) | Backpressure failures, lock contention, loop stalls, heap growth | Deterministic ordering — e.g. the event storm starts dispatch **after** the burst so the drop count is exact |
-| **Integration** | 13 | Thread-boundary bugs, real `inotify` exhaustion, real socket framing, actual egress | Live `watchdog.Observer`, live Unix sockets, a real network namespace |
-| **Validation** | 24 scripts | Everything that only exists on the real box: real GGUF models, real Wayland, real systemd | Run by hand on the target box, results recorded in `memory.md` |
+| **Unit** | ~560 (default run) | Logic errors, boundary conditions, invariant violations | `FakeClock` (no `sleep`), `FakeInferenceBackend` (schema-aware), `conftest.py` wipes every singleton `_instance` between tests |
+| **Stress** | marker `stress`, excluded from the default run | Backpressure failures, lock contention, loop stalls, heap growth | Deterministic ordering — e.g. the event storm starts dispatch **after** the burst so the drop count is exact |
+| **Integration** | ~13 | Thread-boundary bugs, real `inotify` exhaustion, real socket framing, actual egress | Live `watchdog.Observer`, live Unix sockets, a real network namespace |
+| **Validation** | 33 scripts | Everything that only exists on the real box: real GGUF models, real Wayland, real systemd | Run by hand on the target box, results recorded in `memory.md` and the `B1x_TEST_REPORT.md` docs |
 
 ### 12.2 Recorded-fixture replay
 
@@ -968,7 +1015,24 @@ flowchart TD
 
 Plus: **every IPC log line is redacted** — `test_ipc_payloads_are_redacted_in_logs`, and confirmed on real disk during B5 validation (`L9 <- {"op": "heal…<redacted 17 chars>`).
 
-**A privacy finding worth stating.** Adding a browser to the app map only ever adds *app-level attendance* — a generic `app:<id>` node like any other. There is **no per-tab, per-site, or URL visibility**, by construction. This was confirmed while deciding how to classify the browser, and it is a property of the sensing design, not a policy.
+**A privacy finding worth stating.** B14 gives the browser sub-identity, but only ever adds an *attendance* label — a `webapp:<gmail>` node wired `PART_OF` its browser and its routing domain, its `access_count` a re-focus count. There is **no per-URL, per-message, or content visibility**: `derive_webapp()` returns a matched allowlist label or `None`, the raw title is a local in the collector, and an unmatched tab is invisible. This is a property of the sensing design, not a policy.
+
+### 14.4 Licensing and authorship provenance
+
+The project is **AGPL-3.0-only** (`LICENSE`), chosen deliberately: a network-copyleft licence on a system whose whole thesis is *local by construction* signals that a hosted derivative must also open its source. Every first-party Python file carries an SPDX identifier and copyright line:
+
+```python
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+```
+
+Beneath that, each file also carries a covert one-line marker appended at the end:
+
+```
+# gen-ref: a3242257
+```
+
+`scripts/_provenance.py` derives it as `sha256(f"{PROV_SECRET}:{posix_relative_path}").hexdigest()[:8]`. The secret is read only from an environment variable and never written anywhere; the script is idempotent and is re-run after every merge, so files from a merged branch get stamped and nothing else changes. To prove authorship of a disputed copy later, the author reveals the secret and this recipe, re-derives the marker for every file, and shows it matches — a check that a line-by-line rewrite of the code would not survive. `AUTHORS.md` and `.mailmap` normalise commit identity; commits and tags are SSH-signed.
 
 ---
 
@@ -1054,6 +1118,46 @@ the daemon's own work is set aside, an idle box has nothing behaviourally rich
 left. B13 makes the loop work under real interactive dogfooding and narrows the
 soak's job to plumbing, restart-safety, decay, bounded growth, and cost.
 
+### 15.10 B14 · web-app attribution — the alternatives not taken
+
+The B13 census made `app:brave-browser` one opaque node, but the operator's day is
+Gmail / GitHub / Gemini / YouTube — not one activity. The rejected ways to fix that,
+recorded for the paper:
+
+| Rejected | Why |
+| --- | --- |
+| Reuse `NodeType.APP` with an id prefix (`webapp:` on an APP node), no schema bump | A browser tab is genuinely a different kind of thing from an application, and `PART_OF` edges to *both* the browser and a routing domain need a real node type. The schema bump to v4 is honest; the prefix trick would have muddied every consumer that reads `node_type`. |
+| Read Brave's history / session files | Exactly the per-URL surface the design refuses to have. It would make "structurally cannot leak" false. |
+| A browser extension feeding the daemon | A second sensing channel, a second privacy surface, a second thing to install and keep alive — for data the compositor already exposes as the window title. |
+| Store the raw title on the node and filter at read | The raw title carries email addresses and unread counts. Filtering at read means the sensitive string still lands in `graph.json` and every backup. The membrane has to be *in the collector*. |
+
+### 15.11 B15 · the deaf sensor — why the earlier diagnoses were wrong
+
+B15 is the third and final cause of "the soak measures nothing" (after the two in
+§15.9). It is worth recording that it was **misdiagnosed twice**:
+
+- **B7's diagnosis:** "the collector cannot see Wayland under `systemd --user` —
+  `WAYLAND_DISPLAY` is missing." Partly true (the daemon started before the
+  compositor imported the session env; fixed by the `graphical-session.target`
+  binding) but not the whole story.
+- **B15's first detour (~2 h):** a missing `XDG_SESSION_ID` under systemd. Ruled out
+  by a clean-restart A/B — `systemctl --user restart` had silently *not been taking
+  effect*, so the "fix" and the "no fix" runs were the same binary.
+- **The actual cause:** the `zcosmic_toplevel_handle_v1` proxy — the only source of
+  "which window is focused" — was held in a local variable and GC'd
+  non-deterministically. A collected pywayland proxy stops delivering events
+  *silently*. ~1 in 3 daemon starts came up permanently deaf, binary per start, and
+  `health()` still printed `window✓`. This is the mechanism behind B7's three
+  zero-L5 soaks and B13's 4-switches-an-hour gate. Fixed with a strong-ref dict
+  (`0/20` restarts deaf after), one shared connection (erasing a teardown SIGSEGV),
+  and a poll-pump whose `health()` reads liveness live so a died sensor drags the
+  module unhealthy.
+
+**The lesson for the methodology:** `window✓` was a *label*, not a *check* — the same
+failure class as `chat`'s advisory grounding (§4.1) and the journal greps that read
+zero from an empty journal (§11.10). A status signal that cannot go false is not
+evidence.
+
 ---
 
 ## 16. Open problems and honest limitations
@@ -1064,7 +1168,7 @@ soak's job to plumbing, restart-safety, decay, bounded growth, and cost.
 | --- | --- | --- |
 | **T2** | The B1 1-hour RSS soak drifts ~25 % before it plateaus. Not an unbounded leak — a bounded allocator warm-up (steady-state drift 0.00 %) — but the scripted 5 % check samples *inside* the ramp and reports FAIL on a healthy system. | 🟡 Open. Options: measure the back half only; `malloc_trim(0)` after `save()`; cap the arena. |
 | **T3** | The B2 24-hour soak ran only 11 h — the machine slept. Partial-window numbers all pass. Residual risk (a leak slower than ~0.1 MiB/h, or late onset) is low. | 🟡 Open; **subsumed by the B9 7-day soak**. |
-| **T6** | `scripts/soak_state.py`'s `rss_trend()` reports a huge, misleading leak slope right after a daemon restart. It fits `(last − first) / span` over the longest daemon life; a one-time warm-up step divided by a short window extrapolates absurdly. Observed live: RSS jumped 43 → 1476 MiB in a single 60 s sample, then sat flat for 3+ hours — and the tool reported **`+5600.7 MiB/day`**, rendered verbatim in both the login popup and the tray widget. | 🔴 Open, found 2026-09-04, **not yet fixed**. |
+| **T6** | `scripts/soak_state.py`'s `rss_trend()` reported a huge, misleading leak slope right after a daemon restart — `(last − first) / span` over the longest daemon life, so a one-time warm-up step divided by a short window extrapolated absurdly. Observed live 2026-09-04: RSS jumped 43 → 1476 MiB in one 60 s sample, then sat flat for 3+ hours, and the tool reported **`+5600.7 MiB/day`** in the popup and tray widget. | 🟢 **Mitigated 2026-09-08** (B15 harness rebuild). `warm_rss_slope()` fits the slope only over samples of the longest daemon life **after RSS crosses 500 MiB** (the GGUF has mapped in), so the startup jump is outside the window; `assess` grades on that warm slope. The raw `rss_trend()` figure is kept and shown for context — a genuine post-warm-up leak still moves it. |
 
 ### 16.2 Methodological limitations — stated, not hidden
 
@@ -1074,7 +1178,7 @@ soak's job to plumbing, restart-safety, decay, bounded growth, and cost.
 | **1.12** | **Privacy makes it hard to prove it works.** A system that never sends data out cannot produce a shared benchmark dataset. | Reproducibility conflicts with the core value proposition. | 🟡 Planned: a synthetic activity generator plus a public question set with known answers, so results are reproducible without real user data. |
 | **1.10** | **Concurrency traps.** Async + threads + a shared graph + a blocking model is an inherently hazardous combination. | Four separate real bugs came from exactly here (T4, T5, and two of the three audit liveness defects). | 🟡 Mitigated by the four invariants, a dedicated stress tier, and reproduce-before-fix discipline — but the risk is structural. |
 | **1.11** | **Too big for one person.** | Ten layers, two models, systemd integration, Wayland protocols, and a research paper. | 🟡 Managed by strict phase ordering and by deferring the riskiest work (pruning) to the end where a negative result costs nothing. |
-| — | **The soak gate's check 5 is narrow.** It requires an idle transition or an app switch, and the window-switch handler returns early unless `app_id` actually changes. Someone working continuously in one application all hour produces neither, and the gate would fail a demonstrably healthy system. The passing run cleared it with roughly seven minutes to spare — closer than it should be. | Recorded rather than papered over. If re-run, widen it to accept the L2 snapshot buffer or the graph advancing. |
+| — | **The soak gate's check 5 was too narrow** (B0–B14). It required an idle transition or an app switch, and the window-switch handler returned early unless `app_id` changed; someone working in one application all hour produced neither, and the 2026-09-03 run cleared it with ~7 minutes to spare. | 🟡 **Reworked in B15**, partly exercised. Check 5 now demands a real switch **rate** (≥ 20/h) *or*, for a genuine single-window hour, graph growth **and** an L3 signal — plus the shared Wayland connection not thrashing (≤ 1 reconnect, 0 pump-errors) and `window✓` live. The 2026-09-08 pass came through the **fallback** (15 switches/h + graph + signal), so the strong rate path is proven to exist but was not itself cleared that hour; a heavier-use hour would exercise it. |
 | — | **L7 and L8 shapes came from a ruling, not the blueprint.** The source class diagram is *permanently* truncated on the right; no full-width re-export exists or will. `Architecture.md §11b` is authoritative **by ruling** (D-15). | The mitigation was carried out in full: safe actions first, `ApiCallAction` never built, every dangerous action behind the tier gate, the sandbox, and a recorded confirmation. Any future export is reconciled *against* §11b, not the reverse. |
 
 ### 16.3 What is not yet in the repository
@@ -1224,13 +1328,14 @@ scripts/soak_test_b2.py      # 24 h, telemetry CPU + RSS
 scripts/soak_test_b2_5.py    # 2 h,  Wayland fd-leak (least-squares fd slope)
 scripts/soak_test_b4.py      # 1 h,  real-model loop stability
 
-scripts/soak_gate.sh      # 1 h live gate — MUST pass before the 7-day soak
+scripts/soak_probe.py         # one JSON health sample over the L9 socket
+scripts/soak_gate.sh          # 1 h live gate — MUST pass before the 7-day soak
 # then: neuropaca-soak.service -> scripts/soak_7day.sh
 #       under systemd-inhibit --what=sleep:idle
 
-scripts/soak_state.py summary \
-    --state   data/soak/state.json \
-    --samples data/soak/samples.jsonl
+scripts/soak_state.py summary        # accrued sessions + RSS trend + warm slope
+scripts/soak_state.py assess         # PASS / FAIL verdict, incl. B15 liveness
+scripts/soak_dashboard.py --open     # the explained HTML dashboard
 ```
 
 ### 19.4 Repository map
@@ -1257,6 +1362,8 @@ scripts/soak_state.py summary \
 | `memory.md` | Living project state — **read first, update last** |
 | `problems.md` | Risk register, the research-claims section, and the testing log |
 | `pruning.md` | The deferred personal-model-pruning design |
+| `B13_PLAN.md` … `B15_PLAN.md`, `B15_TEST_REPORT.md` | Per-phase plans and live test runs for the post-B9 work |
+| `LICENSE` · `AUTHORS.md` · `.mailmap` | AGPL-3.0-only text; commit-identity normalisation |
 | **`RESEARCH_DOSSIER.md`** | **This document — the consolidated research record** |
 
 ```mermaid
@@ -1310,7 +1417,7 @@ flowchart TD
 
 ## Appendix A — decision log index
 
-Nineteen numbered rulings, each recorded so no future session re-litigates it. Full text in `memory.md`.
+Nineteen numbered rulings (D-1 … D-19), plus the B14 and B15 phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and the per-phase `B1x_PLAN.md` docs.
 
 | # | Decision, in one line |
 | --- | --- |
@@ -1331,7 +1438,10 @@ Nineteen numbered rulings, each recorded so no future session re-litigates it. F
 | **D-15** | The truncated diagram is permanent; `Architecture.md §11b` is authoritative by ruling |
 | **D-16** | L8 holds **no** gate — it publishes `ACTION_PROPOSAL`; apoptosis selects on the **node-id prefix**, not an attribute |
 | **D-17** | The ten B9 blockers ruled together — `ReadWritePaths=%t`, quarantine-and-boot-degraded, `schema_version` actually read, affirmative egress CI |
+| **D-18** | **B12 — the terminal is a read-only project guide.** No free text, no `$` / `?` / `!` grammar; the B5/B11 natural-language paths (`ask` / `diagnose` / `chat`) are withdrawn — a 3B-Q4 model paraphrasing a retrieved chunk is not reproducible. `neuropaca tell <path>` / `overview` are deterministic `ast` extraction; `--explain` keeps an optional flagged paraphrase; `$!` / `$$` survive only as an internal L9→L7 wire enum behind `neuropaca run` |
 | **D-19** | **B13 resource-aware sensing** — reuse `NodeType.APP` (no `PROCESS` type); RSS not PSS for round 1; no census exclusions in round 1; idle → last active app; new `SignalType.WORKING_SET_CHANGE` (schema v3); 200 MB name-grouped census threshold; CPU and memory stay separate patterns |
+| **B14 D2/D3** | **Web-app attribution** (operator-ratified 2026-09-08) — the focused tab's domain overrides `brave = habits`; browser tab switches feed `DistractionPattern`; `NodeType.WEBAPP` + schema v4. Rejected: an id-prefix on `NodeType.APP` (no schema bump), reading browser history/session files, a browser extension, storing the raw title and filtering at read |
+| **B15** | **The Wayland sensor fix** — a strong-ref dict for cosmic toplevel proxies (the flaky-deafness fix), one shared `WaylandConnection` collapsing two `Display` connections (erases the teardown segfault), and a `select`-based poll-pump that always `dispatch`es (the proven B2.5 shape, not `add_reader`). No systemd unit change |
 
 ---
 
@@ -1380,7 +1490,12 @@ Nineteen numbered rulings, each recorded so no future session re-litigates it. F
 | `DMN._top_nodes()` @10k, before → after | 34 ms → 9 ms (3.7×) | Audit |
 | Gate RSS, idle → DMN wake | 42.7 → 1476.1 MiB | B9 |
 | Cross-phase model RSS agreement | 1477 MiB (B4) vs 1476.1 MiB (B9) | B4 / B9 |
-| 7-day soak | prior run void (B15 §2a — deaf sensor); harness rebuilt, re-run pending | B9 / B15 |
+| Wayland focus sensor, forced-restart deafness | ~1 in 3 → **0 / 20** after the strong-ref fix | B15 |
+| Live focus switch rate, post-B15, on the target box | **~48 / hour** (`window✓`, 0 reconnects, 0 pump-errors) vs the old ~4 | B15 |
+| B13 test count / B14 / B15 | 484 green / ~524 / 561 | B13–B15 |
+| Graph schema version | **v4** (`NodeType.WEBAPP`); v1 still readable | B14 |
+| 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
+| 7-day soak | prior run void (B15 §2a — deaf sensor); harness rebuilt; gate passed; **started 2026-09-08T19:56Z from a wiped graph** (11 hubs at t=0) | B9 / B15 |
 
 ---
 
