@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 · the soak probe (`scripts/b9_soak_probe.py`).
+"""The soak probe (`scripts/soak_probe.py`).
 
 The probe turns `neuropaca health` into one sample row. It parses human-facing
 module detail strings, which means it can silently start returning zeros after a
@@ -15,11 +15,11 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "b9_soak_probe.py"
-_spec = importlib.util.spec_from_file_location("b9_soak_probe", _MODULE_PATH)
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "soak_probe.py"
+_spec = importlib.util.spec_from_file_location("soak_probe", _MODULE_PATH)
 assert _spec and _spec.loader
 probe = importlib.util.module_from_spec(_spec)
-sys.modules["b9_soak_probe"] = probe
+sys.modules["soak_probe"] = probe
 _spec.loader.exec_module(probe)
 
 
@@ -34,7 +34,11 @@ LIVE_HEALTH = {
     "events_dropped": 0,
     "modules": [
         {"name": "sensing", "ok": True, "detail": "2/2 collectors up, buffer 2/720"},
-        {"name": "activity", "ok": True, "detail": "idle✓ window✓ · 0 transitions · 3 switches"},
+        {
+            "name": "activity",
+            "ok": True,
+            "detail": "idle✓ window✓ · 0 transitions · 3 switches · 1 reconnects · 0 pump-errors",
+        },
         {
             "name": "diagnosis",
             "ok": True,
@@ -78,6 +82,10 @@ def test_the_live_health_payload_maps_onto_the_sample_row() -> None:
     assert sample["graph_nodes"] == 59
     assert sample["activity_edges"] == 0
     assert sample["app_switches"] == 3
+    # B15 · Wayland sensor liveness pulled straight from the activity detail
+    assert sample["window_ok"] is True
+    assert sample["reconnects"] == 1
+    assert sample["pump_errors"] == 0
     assert sample["pressure_events"] == 2
     assert sample["pressure_low"] == 1
     assert sample["insights"] == 0
@@ -108,6 +116,24 @@ def test_a_degraded_module_is_named_in_the_sample() -> None:
     assert probe.build_sample(health)["degraded"] == ["activity"]
 
 
+def test_a_deaf_sensor_reads_window_not_ok_even_though_the_module_tolerates_it() -> None:
+    """B15 §2a: a headless / never-started Wayland source keeps the module `ok`
+    (tolerated), but the sample must still record `window_ok=false` so a week of
+    it is visible in the summary."""
+    health = {
+        "modules": [
+            {
+                "name": "activity",
+                "ok": True,
+                "detail": "idle✗ window✗ · 0 transitions · 0 switches",
+            },
+        ]
+    }
+    sample = probe.build_sample(health)
+    assert sample["window_ok"] is False
+    assert sample["reconnects"] == 0
+
+
 def test_an_unreachable_daemon_produces_a_row_saying_so_not_an_exception() -> None:
     """A daemon that died at 03:00 is the single most important thing a week-long
     soak can record. Aborting the sampler would lose it."""
@@ -121,4 +147,4 @@ def test_fetch_health_returns_none_when_there_is_no_socket(tmp_path: Path) -> No
     assert probe.fetch_health(str(tmp_path / "absent.sock")) is None
 
 
-# gen-ref: ebed4328
+# gen-ref: f9a9663e

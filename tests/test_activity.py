@@ -283,6 +283,8 @@ class _FakeConn:
         self.stopped = 0
         self.alive = True
         self.start_raises: Exception | None = None
+        self.reconnects = 0
+        self.pump_errors = 0
         _FakeConn.instances.append(self)
 
     def add(self, handler: object) -> None:
@@ -317,8 +319,33 @@ async def test_real_path_builds_one_shared_connection_with_both_handlers(monkeyp
     assert "idle✓" in detail and "window✓" in detail
     assert collector.health().ok is True
 
+    # B15 soak instrumentation — the shared connection's watchdog counters are
+    # surfaced so a 7-day run can measure how often it self-heals (B15_PLAN §7).
+    assert "0 reconnects" in detail and "0 pump-errors" in detail
+    conn.reconnects = 3
+    conn.pump_errors = 1
+    assert "3 reconnects · 1 pump-errors" in collector.health().detail
+
     await collector.stop()
     assert conn.stopped == 1
+    await bus.stop()
+
+
+async def test_injected_doubles_path_has_no_wayland_watchdog_counters(monkeypatch) -> None:
+    # The doubles path (tests, headless) owns no shared connection, so the
+    # reconnect/pump-error suffix must not appear.
+    bus = await _running_bus()
+    collector = ActivityCollector(
+        bus,
+        Config(inference_backend="fake"),
+        idle_source=FakeIdleSource(),
+        window_source=FakeWindowSource(),
+    )
+    await collector.initialize()
+    await collector.start()
+    detail = collector.health().detail
+    assert "reconnects" not in detail and "pump-errors" not in detail
+    await collector.stop()
     await bus.stop()
 
 

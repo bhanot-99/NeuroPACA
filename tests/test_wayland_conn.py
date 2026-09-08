@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 import types
 
 import pytest
@@ -226,6 +227,10 @@ async def test_transient_error_reconnects_recovers_and_re_primes(monkeypatch) ->
     assert handler.lost_calls >= 1, "handler not told the connection was lost"
     assert handler.bound_calls >= 2 and handler.primed_calls >= 2, "handler not re-primed"
     assert displays[-1].dispatches >= 1, "new display not pumping"
+    # B15 soak instrumentation — a raised tick is a pump error, and the recovery
+    # from it is a reconnect. The 7-day summary keys "watchdog busy" off these.
+    assert conn.pump_errors >= 1, "pump error not counted"
+    assert conn.reconnects >= 1, "reconnect not counted"
 
 
 async def test_liveness_watchdog_reconnects_when_active_but_silent(monkeypatch) -> None:
@@ -261,6 +266,10 @@ async def test_liveness_watchdog_reconnects_when_active_but_silent(monkeypatch) 
         os.close(w)
     assert len(displays) >= 2, "watchdog did not force a reconnect"
     assert handler.lost_calls >= 1
+    # a watchdog reconnect is counted, but it is not a pump error — the tick
+    # never raised, the connection was just silent.
+    assert conn.reconnects >= 1
+    assert conn.pump_errors == 0
 
 
 async def test_liveness_watchdog_stays_quiet_when_user_is_idle(monkeypatch) -> None:
@@ -280,6 +289,33 @@ async def test_liveness_watchdog_stays_quiet_when_user_is_idle(monkeypatch) -> N
         os.close(r)
         os.close(w)
     assert fake.disconnected is False  # never torn down
+    assert conn.reconnects == 0 and conn.pump_errors == 0  # a quiet idle box
+
+
+async def test_a_healthy_pump_leaves_the_soak_counters_at_zero(monkeypatch) -> None:
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn._display = _FakeDisplay()
+    conn._fd = r
+    conn._last_event_at = 0.0
+    try:
+        await _run_pump(conn, 0.1)
+    finally:
+        os.close(r)
+        os.close(w)
+    assert conn.reconnects == 0
+    assert conn.pump_errors == 0
+    # nothing was ever dispatched, so the "since last event" clock never started
+    assert conn.seconds_since_event == 0.0
+
+
+def test_seconds_since_event_climbs_once_an_event_has_landed() -> None:
+    conn = WaylandConnection()
+    assert conn.seconds_since_event == 0.0  # no event yet
+    conn._last_event_at = time.monotonic() - 5.0
+    assert 4.0 < conn.seconds_since_event < 10.0
 
 
 async def test_permanent_failure_gives_up_and_reports_dead(monkeypatch) -> None:

@@ -7,7 +7,7 @@
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Version** | v4 |
 | **Dossier date** | 2026-09-05 |
-| **Status** | B9 · Hardening — B0–B9 built; 6 of 7 B9 exit criteria met; 7-day soak running (5.8 % accrued) |
+| **Status** | B9 · Hardening — B0–B9 built; 6 of 7 B9 exit criteria met; 7-day soak harness rebuilt post-B15 (prior run void — deaf sensor), re-run pending |
 | **Code size** | 10,909 lines of source · 9,435 lines of tests · 446 collected tests · 91 commits |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **Research goal** | A publishable paper — the benchmarks *and* the rejected alternatives are deliverables. |
@@ -596,7 +596,7 @@ flowchart LR
 | **B6** | L6 idle cognition — the Default Mode Network, consolidate / link-orphans / prune-stale, extractive idle thoughts | Cancel a mid-consolidate cycle in **0.1 ms**, zero corruption |
 | **B7** | L5 drive + L7 action — pressure accumulator, safety gate, sandbox, quarantine, audit, confirmation broker | 500 max-confidence spikes → **167×** the high threshold, still only the low tier fires |
 | **B8** | L8 agents — supervisor, ephemeral sub-clusters, apoptosis, `ACTION_PROPOSAL` decoupling | Cap of 12 held under **60 simultaneous** spawns |
-| **B9** | L10 hardening — systemd unit, crash recovery, schema versioning, logrotate, offline verbs, CI egress test, 7-day soak | **6 of 7** criteria met; soak at 5.8 % and running |
+| **B9** | L10 hardening — systemd unit, crash recovery, schema versioning, logrotate, offline verbs, CI egress test, 7-day soak | **6 of 7** criteria met; soak harness rebuilt post-B15, re-run pending (prior run void) |
 
 ---
 
@@ -753,29 +753,28 @@ action_enabled_tiers             = ["safe"]
 
 **Criterion 4 — the 7-day soak — is the only one that cannot be met from a keyboard.**
 
-Gate result (2026-09-03, 60-minute window): **PASSED.** RSS moved 42.7 → **1476.1 MiB** because going idle woke the DMN and lazily loaded BitNet. Cross-check: B4's independent soak recorded **1477 MiB** a whole phase earlier — **agreement within one megabyte.**
-
-Live soak state at the time of writing:
-
-```
-Progress      5.8 %  (9 h 49 m of 7 d accrued runtime)
-Wall clock    23 h 14 m since first start (2026-09-04 17:47 UTC)
-Sessions      4  (3 ended unclean — ordinary power cycles)
-Samples       431  (3 daemon restarts)
-Memory        1467 MiB now, +1 MiB over 2 h 11 m (peak 1472)
-Leak slope    +11.0 MiB/day   <- the number this soak exists to produce
-Graph         17 nodes, 10 edges
-Sensing       35 idle/active edges, 8 app switches
-Drive         0 contributions, 0 low / 0 high crossings
-Health        0 errors, 0 events dropped, 0 audit lines
-```
+**Why the 2026-09-03 gate pass and the soak run it started do not count.** The gate
+"passed" on an idle edge with ~7 minutes to spare and saw ~4 app switches in the
+hour; the soak that followed reached 5.8 % before it was stopped. B15
+(`B15_PLAN.md §2a`) then found the Wayland focus sensor had been **deaf** the whole
+time: the `zcosmic_toplevel_handle_v1` proxy carrying "which window is focused" was
+held only in a local variable and GC'd non-deterministically — measured at **~1 in 3
+daemon starts fully deaf**, binary per start. This is the same mechanism behind B7's
+three zero-L5 soaks. Fixed (a strong-ref dict, plus collapsing two `Display`
+connections into one — the second was unreliable and segfaulted on teardown). The
+soak harness was rebuilt around the fix: the gate's check 5 now requires a real
+switch **rate** (≥ 20/h, or graph+signal growth for a single-window hour) with the
+shared Wayland connection not thrashing, and `soak_state.py assess` grades the
+completed run on sensor liveness (`window_ok` > 95 % of samples, no daemon life that
+came up deaf, zero pump-errors, zero SIGSEGV markers, watchdog reconnects under
+~1/accrued-day). Re-run pending on the target box.
 
 **Why "accrued runtime" and not calendar time.** A box powered off overnight ages no process. Counting those hours would let a 3.5-day soak claim a 7-day result — which is precisely how the B2 soak reached 11 h of a 24 h window. An unclean shutdown leaves a session open; the next boot heals it from the last heartbeat, labels it `unclean`, and rounds runtime **down** rather than crediting hours the machine spent switched off. `systemd-inhibit --what=sleep:idle` wraps the driver for the same reason.
 
 **Three things that only a real machine could have caught**, none of which any test suite could:
 
 1. `neuropaca.toml` **did not exist.** The systemd unit pointed at a file nothing had ever created. `doctor` reported `config INVALID`; the daemon could not have started at all.
-2. **The unit had never been installed**, so the `graphical-session.target` binding was verified only in the reasoning. Once installed, the daemon process has `WAYLAND_DISPLAY`, the socket binds under `ProtectSystem=strict`, and `activity ✓ idle✓ window✓` — the collector that was silent through three B7 soaks is alive.
+2. **The unit had never been installed**, so the `graphical-session.target` binding was verified only in the reasoning. Once installed, the daemon process has `WAYLAND_DISPLAY`, the socket binds under `ProtectSystem=strict`, and `activity ✓ idle✓ window✓`. *(The `window✓` was still lying — B15 §2c: `health()` reported it for a source that had gone deaf. B15 made `window✓` mean the poll-pump is live.)*
 3. `journalctl --user` returns **"No journal files were found"** — journald ships `Storage=auto` and `/var/log/journal` does not exist. The gate's collector and activity checks grepped exactly that, so they would have read zero activity from an empty journal and either refused a healthy soak or passed a week of zeros. Both checks now read `neuropaca health` over the socket instead: structured, authoritative, dependency-free.
 
 ### 11.11 Codebase metrics
@@ -1029,11 +1028,14 @@ The original concept had the system retrain weekly on your data. Cut (D-3) becau
 
 ### 15.9 B13 · resource-aware sensing — the alternatives not taken (D-19)
 
-The B9 soak's "zero insights in three days" (§15.5) has two independent causes:
-inert Idle/Distraction patterns, and CPU being the wrong primary signal for
-"what is this person doing" — it is bursty and mostly ~0, while **RAM footprint**
-is the stable indicator of what is loaded and being worked with. B13 fixes both.
-The rejected alternatives, recorded for the paper:
+The B9 soak's "zero insights in three days" (§15.5) has **three** independent causes:
+inert Idle/Distraction patterns; CPU being the wrong primary signal for "what is
+this person doing" — it is bursty and mostly ~0, while **RAM footprint** is the
+stable indicator of what is loaded and being worked with; and (found later, B15
+§2a) the Wayland focus sensor was deaf that whole run — a GC'd proxy — so the
+`FocusSessionPattern` / `DistractionPattern` path had almost nothing to fire on.
+B13 fixes the first two; B15 fixes the third. The rejected alternatives for B13,
+recorded for the paper:
 
 | Rejected | Why |
 | --- | --- |
@@ -1062,7 +1064,7 @@ soak's job to plumbing, restart-safety, decay, bounded growth, and cost.
 | --- | --- | --- |
 | **T2** | The B1 1-hour RSS soak drifts ~25 % before it plateaus. Not an unbounded leak — a bounded allocator warm-up (steady-state drift 0.00 %) — but the scripted 5 % check samples *inside* the ramp and reports FAIL on a healthy system. | 🟡 Open. Options: measure the back half only; `malloc_trim(0)` after `save()`; cap the arena. |
 | **T3** | The B2 24-hour soak ran only 11 h — the machine slept. Partial-window numbers all pass. Residual risk (a leak slower than ~0.1 MiB/h, or late onset) is low. | 🟡 Open; **subsumed by the B9 7-day soak**. |
-| **T6** | `scripts/b9_soak_state.py`'s `rss_trend()` reports a huge, misleading leak slope right after a daemon restart. It fits `(last − first) / span` over the longest daemon life; a one-time warm-up step divided by a short window extrapolates absurdly. Observed live: RSS jumped 43 → 1476 MiB in a single 60 s sample, then sat flat for 3+ hours — and the tool reported **`+5600.7 MiB/day`**, rendered verbatim in both the login popup and the tray widget. | 🔴 Open, found 2026-09-04, **not yet fixed**. |
+| **T6** | `scripts/soak_state.py`'s `rss_trend()` reports a huge, misleading leak slope right after a daemon restart. It fits `(last − first) / span` over the longest daemon life; a one-time warm-up step divided by a short window extrapolates absurdly. Observed live: RSS jumped 43 → 1476 MiB in a single 60 s sample, then sat flat for 3+ hours — and the tool reported **`+5600.7 MiB/day`**, rendered verbatim in both the login popup and the tray widget. | 🔴 Open, found 2026-09-04, **not yet fixed**. |
 
 ### 16.2 Methodological limitations — stated, not hidden
 
@@ -1222,13 +1224,13 @@ scripts/soak_test_b2.py      # 24 h, telemetry CPU + RSS
 scripts/soak_test_b2_5.py    # 2 h,  Wayland fd-leak (least-squares fd slope)
 scripts/soak_test_b4.py      # 1 h,  real-model loop stability
 
-scripts/b9_soak_gate.sh      # 1 h live gate — MUST pass before the 7-day soak
-# then: neuropaca-b9-soak.service -> scripts/b9_soak_7day.sh
+scripts/soak_gate.sh      # 1 h live gate — MUST pass before the 7-day soak
+# then: neuropaca-soak.service -> scripts/soak_7day.sh
 #       under systemd-inhibit --what=sleep:idle
 
-scripts/b9_soak_state.py summary \
-    --state   data/b9_soak/state.json \
-    --samples data/b9_soak/samples.jsonl
+scripts/soak_state.py summary \
+    --state   data/soak/state.json \
+    --samples data/soak/samples.jsonl
 ```
 
 ### 19.4 Repository map
@@ -1378,9 +1380,7 @@ Nineteen numbered rulings, each recorded so no future session re-litigates it. F
 | `DMN._top_nodes()` @10k, before → after | 34 ms → 9 ms (3.7×) | Audit |
 | Gate RSS, idle → DMN wake | 42.7 → 1476.1 MiB | B9 |
 | Cross-phase model RSS agreement | 1477 MiB (B4) vs 1476.1 MiB (B9) | B4 / B9 |
-| 7-day soak progress at writing | 5.8 % — 9 h 49 m accrued, 431 samples | B9 |
-| Soak leak slope at writing | +11.0 MiB/day | B9 |
-| Soak errors / dropped events | 0 / 0 | B9 |
+| 7-day soak | prior run void (B15 §2a — deaf sensor); harness rebuilt, re-run pending | B9 / B15 |
 
 ---
 

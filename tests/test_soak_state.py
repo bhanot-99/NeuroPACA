@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 · soak bookkeeping across power cycles (`scripts/b9_soak_state.py`).
+"""Soak bookkeeping across power cycles (`scripts/soak_state.py`).
 
 The 7-day soak is no longer one uninterrupted process. It starts with the
 graphical session and stops when the machine does, so a week is a *sum* of
@@ -22,13 +22,13 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "b9_soak_state.py"
-_spec = importlib.util.spec_from_file_location("b9_soak_state", _MODULE_PATH)
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "soak_state.py"
+_spec = importlib.util.spec_from_file_location("soak_state", _MODULE_PATH)
 assert _spec and _spec.loader
 soak = importlib.util.module_from_spec(_spec)
 # Registered before exec: the module defines a slotted dataclass, and
 # `dataclasses` resolves annotations through `sys.modules[cls.__module__]`.
-sys.modules["b9_soak_state"] = soak
+sys.modules["soak_state"] = soak
 _spec.loader.exec_module(soak)
 
 
@@ -316,4 +316,103 @@ def test_a_degraded_module_is_named_in_the_popup() -> None:
     assert "DEGRADED    activity" in soak.summarise(state, samples, T0)
 
 
-# gen-ref: bceaf122
+# ------------------------------------------------------------------------------
+# B15 · Wayland sensor liveness over the run
+# ------------------------------------------------------------------------------
+
+
+def _life(minutes: int, *, window_ok: bool, switches: int = 0) -> list[dict]:
+    base = datetime(2026, 9, 4, 9, 0, tzinfo=UTC)
+    return [
+        {
+            "ts": soak._iso(base + timedelta(minutes=i)),
+            "uptime_seconds": 60 + i * 60,
+            "daemon_up": True,
+            "window_ok": window_ok,
+            "app_switches": switches,
+            "rss_mib": 1000.0,
+        }
+        for i in range(minutes)
+    ]
+
+
+def test_a_daemon_life_that_never_sees_the_focus_sensor_is_a_deaf_start() -> None:
+    assert soak.deaf_lives(_life(20, window_ok=False)) == 1
+    assert soak.deaf_lives(_life(20, window_ok=True)) == 0
+
+
+def test_a_life_too_short_to_judge_is_not_counted_as_deaf() -> None:
+    assert soak.deaf_lives(_life(5, window_ok=False)) == 0
+
+
+def test_window_ok_fraction_ignores_segfault_and_down_rows() -> None:
+    samples = [
+        *_life(4, window_ok=True),
+        {"ts": "2026-09-04T09:30:00Z", "daemon_up": False, "segfault": True},
+    ]
+    assert soak.window_ok_fraction(samples) == 1.0
+
+
+def test_segfault_markers_are_counted() -> None:
+    samples = [*_life(3, window_ok=True), {"ts": "x", "daemon_up": False, "segfault": True}]
+    assert soak.segfaults(samples) == 1
+
+
+def test_assess_passes_a_clean_completed_run() -> None:
+    state = soak.load_state(Path("/nonexistent/state.json"))
+    state["completed_utc"] = "2026-09-11T09:00:00Z"
+    state["sessions"] = [
+        {
+            "started_utc": "2026-09-04T09:00:00Z",
+            "ended_utc": "2026-09-11T09:00:00Z",
+            "heartbeat_utc": "2026-09-11T09:00:00Z",
+            "reason": "completed",
+        }
+    ]
+    samples = _life(300, window_ok=True, switches=900)
+    passed, verdict = soak.assess(state, samples)
+    assert passed, verdict
+    assert "SOAK PASSED" in verdict
+
+
+def test_assess_fails_a_run_that_was_mostly_deaf() -> None:
+    state = soak.load_state(Path("/nonexistent/state.json"))
+    state["completed_utc"] = "2026-09-11T09:00:00Z"
+    state["sessions"] = [
+        {
+            "started_utc": "2026-09-04T09:00:00Z",
+            "ended_utc": "2026-09-11T09:00:00Z",
+            "heartbeat_utc": "2026-09-11T09:00:00Z",
+            "reason": "completed",
+        }
+    ]
+    passed, verdict = soak.assess(state, _life(300, window_ok=False))
+    assert not passed
+    assert "came up deaf" in verdict
+
+
+def test_assess_fails_on_a_segfault_marker() -> None:
+    state = soak.load_state(Path("/nonexistent/state.json"))
+    state["completed_utc"] = "2026-09-11T09:00:00Z"
+    state["sessions"] = [
+        {
+            "started_utc": "2026-09-04T09:00:00Z",
+            "ended_utc": "2026-09-11T09:00:00Z",
+            "heartbeat_utc": "2026-09-11T09:00:00Z",
+            "reason": "completed",
+        }
+    ]
+    samples = [*_life(300, window_ok=True), {"ts": "x", "daemon_up": False, "segfault": True}]
+    passed, verdict = soak.assess(state, samples)
+    assert not passed
+    assert "SIGSEGV" in verdict
+
+
+def test_assess_fails_a_run_that_has_not_completed_seven_days() -> None:
+    state = soak.load_state(Path("/nonexistent/state.json"))
+    passed, verdict = soak.assess(state, _life(60, window_ok=True))
+    assert not passed
+    assert "FAILED / INCOMPLETE" in verdict
+
+
+# gen-ref: 44c049f9

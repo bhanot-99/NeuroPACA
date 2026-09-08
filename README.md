@@ -7,7 +7,7 @@
 
 | | |
 | --- | --- |
-| **Status** | **B9 · Hardening** — B0–B8 (incl. B2.5) merged to `main`; all ten layers L1–L10 exist; 6 of 7 B9 exit criteria met; the daemon runs under a hardened systemd unit. The **7-day soak** (`neuropaca-b9-soak.service`) is the last thing outstanding. Live state: [`memory.md`](memory.md). |
+| **Status** | **B9 · Hardening** — B0–B8 (incl. B2.5) merged to `main`; all ten layers L1–L10 exist; 6 of 7 B9 exit criteria met; the daemon runs under a hardened systemd unit. The **7-day soak** (`neuropaca-soak.service`) is the last thing outstanding — its harness was rebuilt after B15 found the earlier run was measuring a deaf Wayland sensor. Live state: [`memory.md`](memory.md). |
 | **Version** | v4 |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Runs on** | One laptop, CPU-only, single user, single graph. No GPU, no accounts, no telemetry. |
@@ -319,7 +319,7 @@ cannot be published without it.
 | --- | --- |
 | `src/neuropaca/` | One package per architectural layer — `core/`, `sensing/`, `diagnosis/`, `learning/`, `drive/`, `idle/`, `action/`, `agents/`, `interface/`, `orchestration/` |
 | `tests/` | Unit tests, plus `stress/` and `integration/` (both marker-gated) |
-| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), soak runners, the B9 soak tray widget, the graph viewer, `systemd/` unit templates, logrotate config |
+| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), the 7-day soak harness (`soak_*.py` / `soak_*.sh` + tray widget), the graph viewer, `systemd/` unit templates, logrotate config |
 | `spikes/` | Throwaway de-risking spikes (`b0_bitnet/`, `b2_5_activity/`, `b7_positive_control/`) — **never** imported by the daemon |
 | `models/` | gitignored — the two GGUF files |
 | `data/` | gitignored — `graph.json`, `graph_view.html`, `actions.jsonl`, `idle_cache.db`, logs, soak state |

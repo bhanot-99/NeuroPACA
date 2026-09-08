@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B9 · detailed dashboard logic (`scripts/b9_soak_dashboard.py`).
+"""detailed dashboard logic (`scripts/soak_dashboard.py`).
 
 Pure functions only -- `build_rows()`, `render()`, `_warm_slope()`, `generate()`.
-No `gi`, no toolkit; imports under the project .venv like `test_b9_soak_tray.py`.
+No `gi`, no toolkit; imports under the project .venv like `test_soak_tray.py`.
 The tray's "Open detailed dashboard" glue calls `generate()` + `xdg-open` and is
 verified live, not here.
 """
@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "b9_soak_dashboard.py"
-_spec = importlib.util.spec_from_file_location("b9_soak_dashboard", _MODULE_PATH)
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "soak_dashboard.py"
+_spec = importlib.util.spec_from_file_location("soak_dashboard", _MODULE_PATH)
 assert _spec and _spec.loader
 dash = importlib.util.module_from_spec(_spec)
-sys.modules["b9_soak_dashboard"] = dash  # registered before exec, see test_b9_soak_state.py
+sys.modules["soak_dashboard"] = dash  # registered before exec, see test_soak_state.py
 _spec.loader.exec_module(dash)
 
 T0 = datetime(2026, 9, 4, 9, 0, 0, tzinfo=UTC)
@@ -193,4 +193,4 @@ def test_generate_writes_a_page_even_with_no_soak_dir(tmp_path: pytest.TempPathF
     assert "<!doctype" in text.lower()
 
 
-# gen-ref: 0da0bfad
+# gen-ref: 2c96478c

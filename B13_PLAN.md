@@ -191,7 +191,7 @@ last_seen_at: datetime | None = None    # most recent census sighting
 
 ### B13-C · Soak re-validation
 
-Re-run the B9 7-day soak harness (`neuropaca-b9-soak.service`, session ledger, boot popup) with a `neuropaca.b13.toml` config: `process_collector_enabled = true`, `process_min_rss_mb = 200`, the new pattern config at defaults, `action_dry_run = true`.
+Re-run the B9 7-day soak harness (`neuropaca-soak.service`, session ledger, boot popup) with a `neuropaca.b13.toml` config: `process_collector_enabled = true`, `process_min_rss_mb = 200`, the new pattern config at defaults, `action_dry_run = true`.
 
 The boot popup's counter block gains: `Census   N app groups tracked, top <name>@<rss>` and `Cognition  M insights (K from idle/distraction)`.
 

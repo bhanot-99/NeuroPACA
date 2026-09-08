@@ -4,7 +4,7 @@
 """B9 companion · the graph viewer's data shaping (`scripts/neuropaca_graph.py`).
 
 The force simulation and the canvas live in `graph_view_template.html` and are
-not exercised here -- the same split `tests/test_b9_soak_tray.py` accepts for the
+not exercised here -- the same split `tests/test_soak_tray.py` accepts for the
 GTK glue. What *is* tested is everything that decides what the page receives:
 domain derivation, the time-offset conversion, the escaping, and the zero-egress
 guarantee the output has to carry (rules.md §6).
