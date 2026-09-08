@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B4 · full-pipeline memory gate (phases.md B4, D-11).
 
 Replays the recorded B3 + B2.5 traces (`tests/fixtures/trace_*.json`) into a live
@@ -247,3 +250,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: 4c6feb0c

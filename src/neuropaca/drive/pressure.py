@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L5 · `PressureAccumulator` — action gradients (Architecture.md §7, B7, D-14).
 
 Nothing in NeuroPACA acts because *one* thing happened. Evidence accumulates per
@@ -410,3 +413,6 @@ class PressureAccumulator(BaseModule):
                 self.decay()
             except Exception as exc:  # a timer tick never kills the daemon
                 self._fail("decay tick", exc)
+
+
+# gen-ref: 850aa808

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2.5b · FocusSessionPattern + DistractionPattern (D-10).
 
 Patterns are pure and synchronous, so these drive them directly with hand-built
@@ -181,3 +184,6 @@ def test_distraction_is_edge_triggered_and_rearms_when_settled() -> None:
 def test_activity_patterns_silent_with_no_activity_window() -> None:
     assert FocusSessionPattern().evaluate(_win(system=[_sys(50.0, t=0)]), _NoBaseline()) is None
     assert DistractionPattern().evaluate(_win(), _NoBaseline()) is None
+
+
+# gen-ref: ce1fd625

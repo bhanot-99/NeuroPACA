@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L8 · Agents & structural plasticity (B8, D-16, Architecture.md §11b).
 
 The five B8 exit criteria are tested here as invariants rather than as tuned
@@ -511,3 +514,6 @@ async def test_health_is_the_only_agent_surface(tmp_path) -> None:
 def test_config_refuses_an_unusable_agent_budget(bad) -> None:
     with pytest.raises(ConfigError):
         Config(inference_backend="fake", **bad)
+
+
+# gen-ref: a3275b10

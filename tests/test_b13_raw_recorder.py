@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B13 · `RawMetricsRecorder` — the append-only raw-data CSV (operator request).
 
 Passive `METRIC_COLLECTED` subscriber; driven here directly with hand-built
@@ -175,3 +178,6 @@ def test_build_modules_only_wires_the_recorder_when_a_path_is_set(tmp_path: Path
         runtime,
     )
     assert [m.name for m in on][:2] == ["sensing", "raw_recorder"]
+
+
+# gen-ref: 739c523f

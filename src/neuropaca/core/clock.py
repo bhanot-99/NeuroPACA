@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Injectable time (D-7).
 
 Every module with a poll loop, a decay timer, or an idle threshold takes a
@@ -88,3 +91,6 @@ class FakeClock:
     @property
     def pending_sleepers(self) -> int:
         return len(self._sleepers)
+
+
+# gen-ref: 8e01ebd2

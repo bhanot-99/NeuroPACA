@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · `ActionExecutor` — the module that owns the gate (Architecture.md §11b,
 B7, D-14).
 
@@ -473,3 +476,6 @@ class ActionExecutor(BaseModule):
         """Gate one action and wait for its result. For the validation scripts
         and tests — the daemon itself always goes through `_spawn`."""
         return await self.gate.run(action, trigger=trigger)
+
+
+# gen-ref: c64293d6

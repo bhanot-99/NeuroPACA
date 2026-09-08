@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B8 · All five exit criteria — agents & structural plasticity (phases.md B8, D-16).
 
 Runs the real `AgentSupervisor` and the real `ActionExecutor` against the real
@@ -350,3 +353,5 @@ async def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(_main()))
+
+# gen-ref: bb78c7ae

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`ProcessCollector` — a per-process RAM / CPU / runtime census, grouped by app
 (Architecture.md §4, B13-B2, D-19).
 
@@ -128,3 +131,6 @@ class ProcessCollector(BaseCollector):
                 proc.cpu_percent(None)
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
+
+
+# gen-ref: 6a3356ce

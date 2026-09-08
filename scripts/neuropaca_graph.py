@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Render `data/graph.json` as a browsable force-directed graph (B9 companion).
 
     python scripts/neuropaca_graph.py              # write + open in the browser
@@ -212,3 +215,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# gen-ref: 077c99f9

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · Action — every effect the daemon can have, behind one gate
 (Architecture.md §11b, B7)."""
 
@@ -32,3 +35,5 @@ __all__ = [
     "SafetyGate",
     "Sandbox",
 ]
+
+# gen-ref: 16a54c48

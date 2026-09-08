@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L4 · `BitNetPlasticity` — the learning module (Architecture.md §6, D-11).
 
 Subscribes to `SIGNAL_CORRELATED`. For each signal it runs a cheap gate, and
@@ -219,3 +222,6 @@ class BitNetPlasticity(BaseModule):
         episode = [*insight.cited_node_ids, *signal.related_node_ids]
         await self._graph.reinforce_cooccurrence(episode, _HEBBIAN_DELTA)
         return replace(insight, node_id=node_id)
+
+
+# gen-ref: 7235dbfe

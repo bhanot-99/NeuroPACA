@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The one serialiser for graph context handed to the model (rules.md §4.1, D-13).
 
 Before B6 this line format lived in three places — `BitNetRuntime`,
@@ -35,3 +38,6 @@ def build_context_from_nodes(nodes: Sequence[Node], *, indent: str = "") -> str:
 def build_aliased_context(aliased: Sequence[tuple[str, Node]], *, indent: str = "  ") -> str:
     """One line per `(alias, node)` pair, keyed by the local alias."""
     return "\n".join(format_node_line(alias, node, indent=indent) for alias, node in aliased)
+
+
+# gen-ref: 66410aee

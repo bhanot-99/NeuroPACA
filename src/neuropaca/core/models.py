@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The core dataclasses that move between layers (Architecture.md §3.5).
 
 `rules.md §2`: event payloads are typed dataclasses, not ad-hoc dicts — `Event`
@@ -99,3 +102,6 @@ def system_error_event(
         priority=10,
         payload={"module": module, "exception": exception, "severity": severity},
     )
+
+
+# gen-ref: 1370367d

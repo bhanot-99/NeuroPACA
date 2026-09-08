@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · GraphMemory lock contention under high read/write I/O (D-5, problems.md 1.10).
 
 The single ``asyncio.Lock`` serialises every mutation; ``find_related`` /
@@ -99,3 +102,6 @@ async def test_graph_survives_concurrent_upserts_and_traversals(graph_10k_path: 
     assert graph.node_count == nodes_before + new_nodes
     for hub in HUB_NODE_IDS:
         assert graph.get_node(hub) is not None
+
+
+# gen-ref: 53da3451

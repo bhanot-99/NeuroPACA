@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L10 · `Scheduler` — the daemon's background timers (Architecture.md §10, §14).
 
 B1 runs two: persist the graph when it is dirty, and recompute
@@ -55,3 +58,6 @@ class Scheduler:
             await self._graph_memory.recalculate_importance()
         except Exception:
             _log.exception("scheduler tick failed")
+
+
+# gen-ref: f388ac1f

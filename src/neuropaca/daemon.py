@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The daemon entry point (`neuropacad` console script; Architecture.md §10).
 
 `neuropaca` (no `d`) is the CLI client (B5, `interface/cli.py`); this is the
@@ -42,3 +45,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: ddcf38c9

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B4-prep peak-throttle load + latency suite.
 
 Every module here is ``pytest.mark.stress`` and excluded from the default run
@@ -6,3 +9,5 @@ B1-B3 foundation (bounded queue, single-writer graph lock, pure-CPU L3, tight
 event loop) holds under load an order of magnitude past normal before B4 puts
 in-process LLM inference on the same loop.
 """
+
+# gen-ref: c417735d

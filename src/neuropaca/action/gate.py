@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · `SafetyGate` — the single path from intent to effect
 (Architecture.md §11b, rules.md §5, D-14).
 
@@ -291,3 +294,6 @@ class SafetyGate:
                 },
             )
         )
+
+
+# gen-ref: e4af987d

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B13 · whole-pipeline replay (B13_PLAN.md §5 integration table).
 
 Synthetic `METRIC_COLLECTED` / `APP_SWITCH` events replayed one at a time through
@@ -284,3 +287,6 @@ async def test_novelty_gate_shuts_down_repeat_distraction_on_a_small_graph(tmp_p
     finally:
         await mod.stop()
         await bus.stop()
+
+
+# gen-ref: f0b79b4c

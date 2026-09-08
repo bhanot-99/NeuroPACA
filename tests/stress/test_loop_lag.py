@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · event-loop latency baseline (scripts/measure_loop_lag.py).
 
 A short CI-enforceable smoke of the B4 baseline: with the real daemon running and
@@ -39,3 +42,6 @@ async def test_loop_lag_stays_under_50ms_during_a_10s_inference() -> None:
     # not wake the 10 ms probe more than 50 ms late.
     exit_code = await _infer_stress()
     assert exit_code == 0, "inference stalled the event loop — executor offload broken (B4 exit I)"
+
+
+# gen-ref: 876f44ab

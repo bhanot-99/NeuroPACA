@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B6 · Idle Cognition (L6) — DefaultModeNetwork, graph consolidation / pruning,
 the proactive idle-thought grammar, and L9 surfacing (D-13).
 
@@ -425,3 +428,6 @@ async def test_proactive_thought_surfaces_once_and_survives_restart(tmp_path) ->
     assert again["insights"] == []  # surface-once held across the restart
     await layer2.stop()
     await bus2.stop()
+
+
+# gen-ref: a0673894

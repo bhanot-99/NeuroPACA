@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · the action audit log (rules.md §5.6, Architecture.md §11b).
 
 Every attempt writes **two** JSONL lines to `Config.action_log_path`: one before
@@ -73,3 +76,6 @@ class ActionAudit:
             fh.flush()
             os.fsync(fh.fileno())  # the log must survive the crash it is recording
         os.chmod(self._path, 0o600)
+
+
+# gen-ref: 0433b612

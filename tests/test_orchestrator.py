@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B1 · NeuroPACAOrchestrator — daemon lifecycle and the B1 exit criteria
 (Architecture.md §10, phases.md B1).
 
@@ -116,3 +119,6 @@ async def test_stop_is_idempotent(config: Config) -> None:
     await orch.stop()
     await orch.stop()  # must not raise
     assert orch.is_running is False
+
+
+# gen-ref: 5302c260

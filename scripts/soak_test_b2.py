@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2 exit criteria · 24-hour telemetry soak (phases.md B2).
 
 Boots the full daemon with the `system` and `filesystem` collectors both
@@ -124,3 +127,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: 15fdfbde

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`WindowSource` — the focused window's `app_id` / `title` (B2.5b, D-9).
 
 `WaylandWindowSource` binds `ext_foreign_toplevel_list_v1` (bundled) to enumerate
@@ -203,3 +206,6 @@ class WaylandWindowSource:
         if self._owns_connection:
             self._conn.stop()
         self._cb = None
+
+
+# gen-ref: 208f5216

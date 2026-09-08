@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L3 · `SignalCorrelator` — the diagnosis module (Architecture.md §5, D-8).
 
 Subscribes to `METRIC_COLLECTED`. For every snapshot it appends to that
@@ -273,3 +276,6 @@ class SignalCorrelator(BaseModule):
         )
         self._signals_emitted += 1
         self._last_signal_at = signal.timestamp
+
+
+# gen-ref: 8ed6f90a

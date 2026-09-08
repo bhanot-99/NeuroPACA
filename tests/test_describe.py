@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B12 · the deterministic project guide — `interface/describe.py`.
 
 `tell` / `overview` answer from the source tree with no daemon and no model, so
@@ -115,3 +118,6 @@ def test_cli_tell_explain_without_a_daemon_still_shows_the_block(capsys) -> None
     assert code == 0
     assert "WHAT IT IS" in out
     assert "--explain needs the daemon" in out
+
+
+# gen-ref: 05d1dbcc

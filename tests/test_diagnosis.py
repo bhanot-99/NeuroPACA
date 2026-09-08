@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B3 · Diagnosis (L3) — patterns, MetricBaseline, and SignalCorrelator.
 
 Patterns are pure and synchronous, so most of this file drives them directly
@@ -349,3 +352,6 @@ def test_build_patterns_is_the_registry() -> None:
         "MemoryPressurePattern",  # B13-B1 (D-19)
         "HeavyAppStartedPattern",  # B13-B4 (D-19)
     ]
+
+
+# gen-ref: 940dd9b9

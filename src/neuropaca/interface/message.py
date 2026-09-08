@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L9 · the `Message` data model (Architecture.md §9, B8).
 
 `conversation_history` is a list of these, held **in RAM only** — never written
@@ -29,3 +32,6 @@ class Message:
     content: str
     related_node_ids: tuple[str, ...] = ()
     timestamp: datetime = field(default_factory=_utcnow)
+
+
+# gen-ref: 93e57648

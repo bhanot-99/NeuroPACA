@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2.5 · ActivityCollector — real idle/activity edges (D-9).
 
 Driven by `FakeIdleSource` — no compositor, no pywayland. The live Wayland path
@@ -370,3 +373,6 @@ async def test_real_path_connection_dies_later_drags_health_unhealthy(monkeypatc
 
     await collector.stop()
     await bus.stop()
+
+
+# gen-ref: dc030f10

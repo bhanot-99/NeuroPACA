@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2 · `Clock` — deterministic time for the poll loop (D-7 B1)."""
 
 from __future__ import annotations
@@ -49,3 +52,6 @@ async def test_system_clock_sleep_is_real() -> None:
     start = time.monotonic()
     await clock.sleep(0.01)
     assert time.monotonic() - start >= 0.005
+
+
+# gen-ref: 4459ca34

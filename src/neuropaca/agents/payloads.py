@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L8 event payloads (Architecture.md §13, B8, D-16).
 
 `rules.md §2`: payloads are typed dataclasses, not ad-hoc dicts. Both are frozen
@@ -38,3 +41,6 @@ class AgentCompletedPayload:
     agent_id: str
     nodes_spawned: int
     outcome: str
+
+
+# gen-ref: 426f071f

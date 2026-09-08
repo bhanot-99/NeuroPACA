@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 · one soak measurement, taken over the L9 socket (BL-5).
 
 WHY NOT journalctl.
@@ -156,3 +159,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# gen-ref: 92da52ec

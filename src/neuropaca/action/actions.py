@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · the concrete actions (Architecture.md §11b, B7, D-14).
 
 Four ship in B7, in ascending order of what they can break:
@@ -287,3 +290,6 @@ class RunCommandAction(BaseAction):
         `DANGEROUS` and why confirmation happens *before* execution rather than
         relying on undo afterwards."""
         return False
+
+
+# gen-ref: 3e5206ef

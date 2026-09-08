@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`SystemMetricCollector` — CPU, RAM, disk, load, temperature via psutil
 (Architecture.md §4).
 
@@ -97,3 +100,6 @@ def _max_temp_c() -> float | None:
         return None
     readings = [float(s.current) for group in groups.values() for s in group if s.current]
     return round(max(readings), 1) if readings else None
+
+
+# gen-ref: e3852e41

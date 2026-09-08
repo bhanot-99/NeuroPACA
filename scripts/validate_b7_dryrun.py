@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B7 · Exit Criterion 5 — the dry-run review period (phases.md B7, D-14).
 
 The last B7 criterion is not a test, it is a *period*: "a review period in
@@ -205,3 +208,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+
+# gen-ref: 113b02d0

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L10 · `NeuroPACAOrchestrator` — constructs the daemon, owns its lifecycle
 (Architecture.md §10).
 
@@ -307,3 +310,6 @@ class NeuroPACAOrchestrator:
                 loop.add_signal_handler(sig, self.request_shutdown_nowait)
             except (NotImplementedError, RuntimeError, ValueError):
                 _log.debug("no signal handler for %s in this context", sig)
+
+
+# gen-ref: a0519b6e

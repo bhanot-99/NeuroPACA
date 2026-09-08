@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L1 · `BitNetRuntime` — the single inference gate (Architecture.md §3.3, §11).
 
 Invariants (rules.md §0, §4):
@@ -179,3 +182,6 @@ class BitNetRuntime:
         if self._interactive_backend is not None:
             total += self._interactive_backend.get_ram_usage_mb()
         return total
+
+
+# gen-ref: 9d554494

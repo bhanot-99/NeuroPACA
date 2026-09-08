@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B4 · Learning (L4) — Insight, extractive prompts, BitNetPlasticity (D-11).
 
 The model is `FakeInferenceBackend` throughout (rules.md §8): with the insight
@@ -267,3 +270,6 @@ def test_llama_backend_degrades_gracefully_without_the_wheel() -> None:
     assert backend.unavailable_reason is not None
     out = backend.infer("prompt", 48, 0.0, 'root ::= "x"')
     assert '"cited_node_id": null' in out  # the graceful abstain
+
+
+# gen-ref: c5bea22f

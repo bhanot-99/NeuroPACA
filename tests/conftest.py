@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Shared test fixtures.
 
 State isolation (D-5/D-6): `EventBus`, `GraphMemory`, and `BitNetRuntime` are
@@ -92,3 +95,6 @@ def _keep_the_log_sink_out_of_the_repo(tmp_path: Path, monkeypatch: pytest.Monke
         real(level, stream=stream, file_path=file_path)
 
     monkeypatch.setattr(np_logging, "configure", guarded)
+
+
+# gen-ref: 32c85003

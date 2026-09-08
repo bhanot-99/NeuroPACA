@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · EventBus queue saturation & dispatch recovery (rules.md §0, §2).
 
 Invariants under test:
@@ -108,3 +111,6 @@ async def test_event_storm_saturation_then_graceful_recovery(
     assert bus.dropped_count == _STORM - _QUEUE_MAXSIZE  # still nothing extra dropped
 
     await bus.stop()
+
+
+# gen-ref: 53e1c981

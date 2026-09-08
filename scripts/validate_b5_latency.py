@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B5 · Exit Criterion 2 — CLI IPC latency (phases.md B5).
 
 Times the **raw Unix-socket round-trip** for a non-inference command, with `rich`
@@ -129,3 +132,5 @@ async def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(_main()))
+
+# gen-ref: 57b6d02b

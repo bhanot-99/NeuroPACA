@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`BaseModule` — the lifecycle contract every L2-L9 module implements
 (Architecture.md §3.7).
 
@@ -43,3 +46,6 @@ class BaseModule(ABC):
     @abstractmethod
     def health(self) -> ModuleHealth:
         """A non-raising, non-blocking self-report."""
+
+
+# gen-ref: 559aec62

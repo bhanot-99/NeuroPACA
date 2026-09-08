@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The closed enumerations shared across every layer (Architecture.md §3.6).
 
 `rules.md §7`: a string literal where an enum belongs is a defect. Every event
@@ -131,3 +134,6 @@ class MessageRole(StrEnum):
     USER = auto()
     ASSISTANT = auto()
     SYSTEM = auto()
+
+
+# gen-ref: aaa10008

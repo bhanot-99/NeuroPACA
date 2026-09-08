@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """T4 before/after harness — does the scheduler stall the event loop? (problems.md T4).
 
 Loads the 10k-node graph fixture, starts a background loop-lag probe (10 ms sleep,
@@ -110,3 +113,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: 713dac65

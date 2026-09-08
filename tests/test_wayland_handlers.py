@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B15 · `WaylandWindowSource` and `WaylandIdleSource` as protocol handlers.
 
 Both are now `WaylandProtocolHandler`s bound on a shared `WaylandConnection`
@@ -308,3 +311,6 @@ def test_two_handlers_register_on_one_connection() -> None:
     WaylandIdleSource(300, connection=conn)
     WaylandWindowSource(connection=conn)
     assert len(conn._handlers) == 2
+
+
+# gen-ref: 00631d39

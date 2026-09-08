@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · the `BaseAction` contract (Architecture.md §11b, B7, D-14).
 
 Every effect the daemon can have on the world is an object with four methods and
@@ -119,3 +122,6 @@ class BaseAction(ABC):
     @abstractmethod
     async def rollback(self) -> bool:
         """Undo a completed `execute()`. False = nothing to undo."""
+
+
+# gen-ref: 17052d7e

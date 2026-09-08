@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`RawMetricsRecorder` — an append-only CSV of every collector reading (B13,
 operator request).
 
@@ -190,3 +193,6 @@ def _compact_json(data: dict[str, Any]) -> str:
         return json.dumps(data, default=str, separators=(",", ":"))[:2000]
     except (TypeError, ValueError):
         return ""
+
+
+# gen-ref: ff244ddd

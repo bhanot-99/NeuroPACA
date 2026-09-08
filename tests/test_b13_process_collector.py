@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B13-B2 · `ProcessCollector` — the per-app RAM/CPU/runtime census (D-19).
 
 `collect()` is pure and synchronous; these drive it with a fake
@@ -156,3 +159,6 @@ def test_snapshot_stays_bounded_under_process_churn(monkeypatch: pytest.MonkeyPa
     _install(monkeypatch, [_FakeProc(name=f"p{i}", rss_mb=5.0) for i in range(2000)])
     snap = ProcessCollector(min_rss_mb=200.0).collect()
     assert snap.data["processes"] == []
+
+
+# gen-ref: a7ac755e

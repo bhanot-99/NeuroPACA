@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B13 · resource-aware sensing + non-inert Idle/Distraction (B13_PLAN.md, D-19).
 
 Pure/synchronous units: the patterns are driven directly with hand-built
@@ -356,3 +359,6 @@ async def test_a_v2_graph_loads_under_v3(tmp_path: Path) -> None:
 def test_schema_version_is_v4() -> None:
     # v3: B13 resource attrs. v4: B14 NodeType.WEBAPP.
     assert graph_schema_version() == 4
+
+
+# gen-ref: a5cd4c80

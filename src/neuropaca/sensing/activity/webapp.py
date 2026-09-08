@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B14 · derive an allowlisted web-app label from a focused window title.
 
 The window title is the only place the compositor exposes *which browser tab*
@@ -175,3 +178,6 @@ def derive_webapp(
     if not enabled or not title or app_id not in browsers:
         return None
     return webapp_map.match_segments(_segments(title))
+
+
+# gen-ref: 1d0905ce

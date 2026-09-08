@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L8 · `AgentSupervisor` — bounded agents and structural plasticity
 (Architecture.md §11b, B8, D-15/D-16).
 
@@ -385,3 +388,6 @@ class AgentSupervisor(BaseModule):
         self.event_bus.publish(
             system_error_event(module="agents", exception=str(exc), severity="handler")
         )
+
+
+# gen-ref: 6de02b39

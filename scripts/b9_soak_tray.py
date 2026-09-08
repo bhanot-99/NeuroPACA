@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 soak status, live in the tray -- the same words the login popup shows.
 
 WHY THIS EXISTS
@@ -381,3 +384,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# gen-ref: d60f6d59

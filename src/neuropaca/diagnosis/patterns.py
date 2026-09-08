@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L3 · the pattern registry (Architecture.md §5, D-8 / D-10).
 
 B3 shipped two run-length patterns — `HighLoadPattern` and `IdlePattern`: a
@@ -692,3 +695,6 @@ def build_patterns(config: Config) -> list[BasePattern]:
         ),
         HeavyAppStartedPattern(),
     ]
+
+
+# gen-ref: df83b0bf

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B7 · Exit Criteria 3 & 4 — the confirmation gate and the audit log
 (phases.md B7, D-14).
 
@@ -214,3 +217,5 @@ async def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(_main()))
+
+# gen-ref: 0f15c4c1

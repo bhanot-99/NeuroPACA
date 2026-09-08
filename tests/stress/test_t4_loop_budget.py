@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · T4 regression gate — scheduler work must not stall the loop.
 
 `recalculate_importance()` and `save()` on a 10k-node graph used to stall the
@@ -28,3 +31,6 @@ async def test_recalculate_and_save_stay_under_the_50ms_loop_budget() -> None:
     # `rounds` recalculate+save cycles on the 10k fixture.
     exit_code = await _run(rounds=4)
     assert exit_code == 0, "recalculate_importance()/save() stalled the loop >= 50 ms (T4)"
+
+
+# gen-ref: bb2ae4c9

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B5/B12 · Interface (L9) — retrieval, the interactive-model seam, IPC, surfacing.
 
 Since B12 the terminal is a read-only project guide: no `$` grammar, no `chat`,
@@ -747,3 +750,6 @@ async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -
         assert w.layer._pending_insights[-1].node_id.endswith(f"d{_MAX_PENDING_INSIGHTS + 19}")
     finally:
         await _teardown(w)
+
+
+# gen-ref: 4a221db1

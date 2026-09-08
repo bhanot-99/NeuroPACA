@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · Action — the safety gate, the sandbox, and the confirmation handshake
 (B7, D-14, Architecture.md §11b, rules.md §5).
 
@@ -715,3 +718,6 @@ def test_the_gate_holds_no_action_specific_state(tmp_path) -> None:
         ConfirmationBroker(bus, 1),
     )
     assert gate.counters == {"executed": 0, "refused": 0, "dry_runs": 0, "rollbacks": 0}
+
+
+# gen-ref: 36d8f6b2

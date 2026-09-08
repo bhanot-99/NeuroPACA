@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The B0 spike's prompt + GBNF + validation-gate logic (no model needed).
 
 `spikes/b0_bitnet/_common.py` is throwaway spike code, but its grammar assembly
@@ -209,3 +212,6 @@ def test_generated_fixtures_load_back_and_cover_every_k(tmp_path: Path) -> None:
         assert [n.alias for n in f.nodes] == [f"n{i + 1}" for i in range(f.k)]
         # a non-weak fixture cites only aliases it actually contains
         assert set(f.expected_citations) <= {n.alias for n in f.nodes}
+
+
+# gen-ref: 9a39432a

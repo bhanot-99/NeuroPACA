@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`ActivityCollector` — real idle / activity / focus edges (B2.5, D-9).
 
 A BaseModule (not a polled BaseCollector — the sources are event-driven). It owns
@@ -213,3 +216,6 @@ class ActivityCollector(BaseModule):
                 },
             )
         )
+
+
+# gen-ref: 3e7c5122

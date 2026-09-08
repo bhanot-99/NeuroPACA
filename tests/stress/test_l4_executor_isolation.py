@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · B4 — the dedicated inference executor must not stall the loop (D-11).
 
 `BitNetRuntime.infer_async` holds `_inference_lock` and offloads the blocking
@@ -169,3 +172,6 @@ async def test_10s_inference_does_not_stall_the_loop_during_a_10k_event_storm(
 
     await correlator.stop()
     await bus.stop()
+
+
+# gen-ref: 27c0e1a4

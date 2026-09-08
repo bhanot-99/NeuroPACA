@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · B7 — L5 under a 5 000-signal storm (D-14).
 
 The B7 exit criteria have to hold under load, not just in a two-event unit test.
@@ -97,3 +100,6 @@ async def test_pressure_under_a_signal_storm(tmp_path) -> None:
     finally:
         await drive.stop()
         await bus.stop()
+
+
+# gen-ref: a209a184

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L9 · the deterministic project guide behind ``neuropaca tell`` / ``overview`` (B12).
 
 The terminal client is a **read-only project guide**: you ask it about the codebase
@@ -451,3 +454,6 @@ def render_overview() -> str:
     out.append("  neuropaca tell src/neuropaca/<layer>/<file>.py --explain")
     out.append("  neuropaca health                          is the daemon healthy")
     return "\n".join(out)
+
+
+# gen-ref: 700fd28c

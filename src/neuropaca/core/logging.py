@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Logging setup for the daemon.
 
 Stdlib `logging` only — no dependency (rules.md §9). One `configure()` call at
@@ -114,3 +117,6 @@ def _coerce_level(level: str | int) -> int:
     if resolved is None:
         raise ValueError(f"unknown log level: {level!r}")
     return resolved
+
+
+# gen-ref: 810c74cf

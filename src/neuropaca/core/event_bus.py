@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L1 · `EventBus` — the only channel between modules (Architecture.md §3.1, §13).
 
 Invariants (rules.md §0, §2):
@@ -218,3 +221,6 @@ class EventBus:
             return
         _log.error("subscriber %s failed handling %s: %r", name, event.event_type, exc)
         self.publish(system_error_event(module=name, exception=str(exc), severity="handler"))
+
+
+# gen-ref: f47d58cb

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B1 exit criteria · `BaseModule` lifecycle conformance (Architecture.md §3.7, §10).
 
 A minimal `NullModule` proves the orchestrator drives `initialize -> start ->
@@ -131,3 +134,6 @@ async def test_health_is_instant_synchronous_and_non_raising(config: Config) -> 
     assert ticks >= 90  # the loop kept turning between checks
 
     await orch.stop()
+
+
+# gen-ref: 9559676e

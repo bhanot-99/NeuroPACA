@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · the sandbox — the only place in NeuroPACA that writes outside the graph
 or starts a process (Architecture.md §11b, rules.md §5, D-14).
 
@@ -165,3 +168,6 @@ class Sandbox:
             proc.kill()
         with contextlib.suppress(Exception):
             await asyncio.wait_for(proc.wait(), 5.0)
+
+
+# gen-ref: 9e6c1e3d
