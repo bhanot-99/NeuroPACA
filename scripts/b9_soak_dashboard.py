@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 soak status as a browsable HTML dashboard -- the explained version.
 
 WHY THIS EXISTS
@@ -677,3 +680,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# gen-ref: 172ff50f

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Affirmative egress tests (B9/BL-8) — `rules.md §6`, zero cloud calls.
 
 Before B9 the CI egress job appended hosts to `/etc/hosts` and re-ran the same
@@ -161,3 +164,6 @@ def test_the_interface_layer_uses_only_unix_sockets() -> None:
             if f"asyncio.{tcp}" in source:
                 offenders.append(f"{rel} calls asyncio.{tcp}")
     assert not offenders, "non-Unix socket use in L9:\n  " + "\n  ".join(offenders)
+
+
+# gen-ref: 337de60c

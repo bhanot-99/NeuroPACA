@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B7 · Exit Criterion 5 — the positive control (companion to the 24 h soak).
 
 The soak (scripts/start_b7_soak.sh) proves NeuroPACA stays *quiet* under a normal
@@ -430,3 +433,5 @@ def main() -> int:
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
     sys.exit(main())
+
+# gen-ref: 312150d9

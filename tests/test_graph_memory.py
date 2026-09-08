@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B1 · GraphMemory — concurrency, traversal limits, atomic persistence, protected
 pruning (Architecture.md §3.2, D-5, problems.md 1.10).
 
@@ -352,3 +355,6 @@ async def test_a_failed_save_leaves_the_graph_dirty(tmp_path) -> None:
     with pytest.raises(GraphMemoryError):
         await gm.save()
     assert gm.dirty
+
+
+# gen-ref: 6ac6e655

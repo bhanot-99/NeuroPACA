@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The inference backend seam (Architecture.md §3.3, §11; rules.md §4, D-6).
 
 Module code never imports a concrete backend — it depends on the
@@ -268,3 +271,6 @@ def create_interactive_backend(config: Config) -> InferenceBackend | None:
             n_batch=128,  # single-shot completions; keeps the logits scratch small
         )
     return None
+
+
+# gen-ref: 21299432

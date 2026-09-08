@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B15 · `WaylandConnection` — the shared Wayland connection + poll-pump.
 
 Two layers of coverage, neither needs a compositor:
@@ -480,3 +483,6 @@ def test_connect_binds_and_primes_every_handler(monkeypatch) -> None:
     finally:
         os.close(r)
         os.close(w)
+
+
+# gen-ref: 82d035bd

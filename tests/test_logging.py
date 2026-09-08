@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Logging setup: idempotent handler, root namespacing, redaction."""
 
 from __future__ import annotations
@@ -70,3 +73,6 @@ def test_redact_hides_the_value_but_reports_its_length() -> None:
     assert np_logging.redact(secret) == f"<redacted {len(secret)} chars>"
     assert np_logging.redact(secret, keep=6).startswith("/home/")
     assert secret not in np_logging.redact(secret, keep=6)
+
+
+# gen-ref: ad54efc3

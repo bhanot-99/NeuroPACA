@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The NeuroPACA exception hierarchy.
 
 One root (`NeuroPACAError`) so a supervising layer can catch everything the
@@ -60,3 +63,6 @@ class CollectorError(NeuroPACAError):
     """An L2 collector could not set up or run — e.g. the OS refused a filesystem
     watch (inotify limit). The collector self-disables; the others keep running
     (Architecture.md §4, D-7)."""
+
+
+# gen-ref: 8e991042

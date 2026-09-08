@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`MetricSnapshot` — one reading from one collector (Architecture.md §4).
 
 L2 is dumb: `anomaly_score` is always `0.0` here. All baselining and scoring is
@@ -20,3 +23,6 @@ class MetricSnapshot:
     timestamp: datetime
     data: dict[str, Any] = field(default_factory=dict)
     anomaly_score: float = 0.0
+
+
+# gen-ref: 373f35b8

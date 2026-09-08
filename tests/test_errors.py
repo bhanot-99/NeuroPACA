@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The exception tree is a contract other layers catch against — pin its shape."""
 
 from __future__ import annotations
@@ -40,3 +43,6 @@ def test_inference_timeout_is_an_inference_error() -> None:
 def test_errors_carry_their_message() -> None:
     err = errors.GraphMemoryError("atomic save failed")
     assert str(err) == "atomic save failed"
+
+
+# gen-ref: 3c37663e

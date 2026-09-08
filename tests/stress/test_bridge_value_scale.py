@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · bridge_value math must not break the T4 chunked-yield model (D-10).
 
 `GraphMemory._recalculate_chunk_unsafe` now computes a real `bridge_value` per
@@ -102,3 +105,6 @@ async def test_bridge_value_recalc_stays_under_the_50ms_loop_budget(tmp_path: Pa
     assert scored is not None and scored.relevance_score > 0.0
     for hub_id in DOMAIN_HUB_IDS:
         assert graph._bridge_value_unsafe(hub_id) == 0.0  # hubs never bridge
+
+
+# gen-ref: 760fb979

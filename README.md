@@ -12,7 +12,7 @@
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Runs on** | One laptop, CPU-only, single user, single graph. No GPU, no accounts, no telemetry. |
 | **Goal** | A publishable research paper — the benchmarks **and** the rejected alternatives are deliverables. |
-| **License** | Proprietary — research prototype. Contributions accepted under the terms in [Contributing](#4-contributing). |
+| **License** | [AGPL-3.0-only](LICENSE). Copyright &copy; 2026 Jatin Bhanot. Contributions accepted under the terms in [Contributing](#4-contributing). |
 
 ---
 
@@ -377,6 +377,12 @@ flowchart TD
 | [`problems.md`](problems.md) | Problems & risks register, plus the testing log |
 | [`pruning.md`](pruning.md) | The deferred personal-model-pruning design (end-of-roadmap) |
 | [`RESEARCH_DOSSIER.md`](RESEARCH_DOSSIER.md) | The consolidated research record — claims, method, every measured number |
+
+---
+
+## License
+
+AGPL-3.0-only. Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>. See [LICENSE](LICENSE).
 
 ---
 

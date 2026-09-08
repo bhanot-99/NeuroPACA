@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B5 · Exit Criterion 3 — conversation history is RAM-only (phases.md B5, rules.md §6).
 
 `scripts/validate_b5_latency.py` fires a `$ <canary>` query at the daemon. That
@@ -66,3 +69,5 @@ def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_main())
+
+# gen-ref: 1c02bcdf

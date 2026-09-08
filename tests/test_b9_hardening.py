@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 · Hardening — the exit criteria, as tests (phases.md B9, BL-1..BL-10).
 
 Grouped by blocker so a failure names the thing it protects:
@@ -411,3 +414,6 @@ def test_logrotate_targets_the_configured_log_paths() -> None:
     assert Path(defaults.log_file_path).name in text
     assert Path(defaults.action_log_path).name in text
     assert "copytruncate" in text  # the daemon holds the handle open
+
+
+# gen-ref: e5b4a284

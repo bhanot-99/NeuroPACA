@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · B4 — L4 structural gating + bounded buffer under 1 000 signals (D-11).
 
 `BitNetPlasticity` must shed most of a signal storm before inference. This fires
@@ -135,3 +138,6 @@ async def test_gating_sheds_most_of_a_1000_signal_storm(tmp_path) -> None:
 
     await module.stop()
     await bus.stop()
+
+
+# gen-ref: cbb4b37d

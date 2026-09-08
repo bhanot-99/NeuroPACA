@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """The `IdleSource` protocol and its test double (B2.5, D-9).
 
 An idle source is a pure event source: `start()` captures the running loop and
@@ -55,3 +58,6 @@ class FakeIdleSource:
         if self._cb is None:
             raise RuntimeError("FakeIdleSource.emit() before start()")
         self._cb(transition)
+
+
+# gen-ref: fc105b04

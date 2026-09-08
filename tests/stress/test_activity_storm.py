@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · APP_SWITCH saturation — a window-manager glitch must not stall L3 (D-10).
 
 A compositor bug can machine-gun focus events. This publishes 20 000 rapid-fire
@@ -140,3 +143,6 @@ async def test_app_switch_storm_fires_once_and_stays_bounded(tmp_path: Path) -> 
 
     await correlator.stop()
     await bus.stop()
+
+
+# gen-ref: 2c685182

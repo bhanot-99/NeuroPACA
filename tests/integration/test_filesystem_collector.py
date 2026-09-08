@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2 integration · FileSystemCollector with a live watchdog Observer.
 
 Real threads and a real temp directory. Excluded from the default suite
@@ -186,3 +189,6 @@ async def test_inotify_exhaustion_publishes_system_error_and_isolates_others(
 
     await module.stop()
     await bus.stop()
+
+
+# gen-ref: 8b1f64dc

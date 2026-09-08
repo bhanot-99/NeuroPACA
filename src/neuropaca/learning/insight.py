@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L4 · the `Insight` data model (Architecture.md §6, D-11).
 
 An insight is **extractive**, not generated. The B0 spike proved BitNet b1.58
@@ -73,3 +76,6 @@ class Insight:
         if self.category == "proactive":
             return True
         return self.snapshot_count >= 1
+
+
+# gen-ref: 1e08e934

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Event-loop latency monitor for the B1-B3 daemon (Architecture.md §14, phases.md B4 prep).
 
 Runs the real daemon (system + filesystem collectors + the graph scheduler) while:
@@ -257,3 +260,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: d4ac87c2

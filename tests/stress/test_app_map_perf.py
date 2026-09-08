@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · AppMap classification throughput — the zero-inference fast path (D-10).
 
 Every `APP_SWITCH` is classified synchronously on the event loop before any
@@ -113,3 +116,6 @@ def test_realistic_mixed_stream_stays_in_budget(app_map: AppMap) -> None:
     assert elapsed_ms < _MIXED_BUDGET_MS, (
         f"{_LOOKUPS} mixed lookups took {elapsed_ms:.1f} ms (budget {_MIXED_BUDGET_MS:.0f} ms)"
     )
+
+
+# gen-ref: 59c6125f

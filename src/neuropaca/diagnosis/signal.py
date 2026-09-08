@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L3 · Diagnosis data model (Architecture.md §5, D-8).
 
 A pattern is pure and synchronous: it inspects a window of `MetricSnapshot`s plus
@@ -106,3 +109,6 @@ class MetricBaseline:
         if sd == 0.0:
             return 0.0
         return (value - self.mean()) / sd
+
+
+# gen-ref: 854b1b2d

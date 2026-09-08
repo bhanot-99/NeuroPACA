@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 · detailed dashboard logic (`scripts/b9_soak_dashboard.py`).
 
 Pure functions only -- `build_rows()`, `render()`, `_warm_slope()`, `generate()`.
@@ -188,3 +191,6 @@ def test_generate_writes_a_page_even_with_no_soak_dir(tmp_path: pytest.TempPathF
     assert result == out
     text = out.read_text("utf-8")
     assert "<!doctype" in text.lower()
+
+
+# gen-ref: 0da0bfad

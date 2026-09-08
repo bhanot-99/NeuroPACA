@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2.5b exit criterion · recorded-fixture replay (phases.md B2.5b, D-10).
 
     "the two patterns fire on fixtures and stay silent on negatives"
@@ -172,3 +175,6 @@ async def test_calm_trace_fires_nothing(tmp_path: Path) -> None:
     assert signals.events == []
     assert errors.events == []
     assert correlator._errors == 0
+
+
+# gen-ref: 9c36108c

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · quarantine — the reason nothing is ever destroyed (rules.md §5.7).
 
 "No action deletes user data — move to quarantine with a TTL." That applies to
@@ -113,3 +116,6 @@ class Quarantine:
         if swept:
             _log.info("L7 quarantine swept %d expired entries", swept)
         return swept
+
+
+# gen-ref: 0c1dab41

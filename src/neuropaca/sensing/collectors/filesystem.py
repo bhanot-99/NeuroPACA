@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`FileSystemCollector` — batched file-change sensing via watchdog
 (Architecture.md §4, D-7 B4/B8).
 
@@ -126,3 +129,6 @@ class FileSystemCollector(BaseCollector):
         if any(fnmatch(path, pattern) for pattern in self._ignore_globs):
             return
         self._recent.append({"path": path, "kind": kind})
+
+
+# gen-ref: e30f8407

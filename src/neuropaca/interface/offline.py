@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L9 · the three verbs that do **not** go over the socket (B9/BL-7).
 
 Every other `neuropaca` verb is a thin client: parse, send one JSONL request to
@@ -399,3 +402,5 @@ def dispatch(argv: list[str]) -> int | None:
 
 if __name__ == "__main__":
     raise SystemExit(dispatch(sys.argv[1:]) or 0)
+
+# gen-ref: d9af264f

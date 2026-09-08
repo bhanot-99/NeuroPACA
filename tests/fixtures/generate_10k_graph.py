@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Deterministic 10 000-node graph fixture for the B1 performance harness.
 
 Produces the exact on-disk form `GraphMemory.load()` consumes (Architecture.md
@@ -117,3 +120,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: 5238af62

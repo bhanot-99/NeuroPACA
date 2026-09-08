@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L4 · prompt + GBNF assembly for extractive insight classification (D-11).
 
 `rules.md §7`: every prompt string lives here; an inline prompt elsewhere is a
@@ -399,3 +402,6 @@ def parse_proactive(
         snapshot_count=0,
         detail=question,
     )
+
+
+# gen-ref: 2eedf333

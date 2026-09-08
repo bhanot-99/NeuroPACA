@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B14 · derive_webapp — the title membrane.
 
 Literal window titles in, an allowlisted label (or None) out. No Wayland, no
@@ -76,3 +79,6 @@ def test_site_name_only_matches_as_a_whole_segment() -> None:
 
 def test_empty_title_is_none() -> None:
     assert _derive("brave-browser", "") is None
+
+
+# gen-ref: 6c6b39c7

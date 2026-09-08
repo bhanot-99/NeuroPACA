@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 · tray widget status logic (`scripts/b9_soak_tray.py`).
 
 Only the pure half -- `compute_status()`, `read_status()`, `format_popup_text()`,
@@ -243,3 +246,6 @@ def test_raise_popup_never_lets_a_shell_interpret_the_summary_text() -> None:
     source = inspect.getsource(tray.raise_popup)
     assert "shell=True" not in source
     assert subprocess.list2cmdline  # sanity: real subprocess module in scope
+
+
+# gen-ref: 1f0ccdcc

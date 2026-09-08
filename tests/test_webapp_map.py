@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B14 · WebAppMap — site-name token -> routing domain allowlist.
 
 Same contract as AppMap (test_app_map.py): pure lookup, the one I/O path is a
@@ -76,3 +79,6 @@ def test_shipped_default_file_is_valid() -> None:
     assert m.match_segments(["gmail"]).domain == "domain:comms"  # type: ignore[union-attr]
     assert m.match_segments(["github"]).domain == "domain:engineering"  # type: ignore[union-attr]
     assert m.match_segments(["youtube"]).domain == "domain:habits"  # type: ignore[union-attr]
+
+
+# gen-ref: b5ae6ff8

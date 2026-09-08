@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B1 exit criteria · performance (phases.md B1).
 
 Against a deterministic 10 000-node / 25 000-edge graph:
@@ -91,3 +94,6 @@ async def test_find_related_excludes_hub_through_routes_at_scale(
 
     assert guarded <= {"YOU"}
     assert len(opened) > len(guarded)
+
+
+# gen-ref: 6dd8cc7b

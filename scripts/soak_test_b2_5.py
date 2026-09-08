@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2.5 · Wayland file-descriptor leak soak (phases.md B2.5, D-9/D-10).
 
 `WaylandIdleSource` and `WaylandWindowSource` each open a `wl_display` socket and
@@ -196,3 +199,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: 1ca6ad98

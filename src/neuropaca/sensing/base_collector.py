@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`BaseCollector` — the contract every L2 collector implements (Architecture.md §4).
 
 A collector is a pure data source: `collect()` reads the system and returns a
@@ -45,3 +48,6 @@ class BaseCollector(ABC):
 
     async def stop(self) -> None:  # noqa: B027 — optional hook, subclasses override as needed
         """Optional async teardown. Default no-op."""
+
+
+# gen-ref: 9e490402

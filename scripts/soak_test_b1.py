@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B1 exit criteria · 1-hour RSS soak (phases.md B1 — "flat RSS over a 1 h soak").
 
 Boots the daemon into its idle loop over the deterministic 10 000-node graph and
@@ -108,3 +111,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: aeabd0b8

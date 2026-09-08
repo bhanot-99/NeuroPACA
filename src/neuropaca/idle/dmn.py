@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L6 · `DefaultModeNetwork` — idle cognition (Architecture.md §8, B6, D-13).
 
 When CPU drops (you walked away) L2 publishes `IDLE_DETECTED`; the DMN starts one
@@ -238,3 +241,6 @@ class DefaultModeNetwork(BaseModule):
         for cited_id in insight.cited_node_ids:
             await self._graph.add_edge(node_id, cited_id, RelationType.RELATED_TO)
         return replace(insight, node_id=node_id)
+
+
+# gen-ref: 52020876

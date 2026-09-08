@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B15 · one shared pywayland `Display` for every activity protocol.
 
 **Why this exists.** Running two `pywayland.client.Display` connections in one
@@ -221,3 +224,6 @@ class WaylandConnection:
             self._task.cancel()
             self._task = None
         self._teardown()
+
+
+# gen-ref: 81b7d243

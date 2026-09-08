@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2.5b exit criterion · active-window live check on the target box (D-10).
 
 Runs the real `ActivityCollector` (Wayland `zcosmic_toplevel_info_v1`) wired to a
@@ -97,3 +100,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: 1c2104c9

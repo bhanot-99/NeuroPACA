@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`build_modules()` — construct the L2-L9 modules for the phases built so far,
 in dependency order (D-7 B6).
 
@@ -109,3 +112,6 @@ def build_modules(
     modules.append(idle_cognition)
     modules.append(interface)
     return modules
+
+
+# gen-ref: 79bf1837

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2.5b · AppMap — activity -> routing domain (D-10).
 
 Pure dict + glob lookup, no I/O beyond reading a TOML file under `tmp_path`.
@@ -91,3 +94,6 @@ def test_shipped_default_rules_file_is_valid() -> None:
     assert m.classify("dev.zed.Zed") == "domain:engineering"
     assert m.classify("md.obsidian.Obsidian") == "domain:research"
     assert m.classify("com.slack.Slack") == "domain:comms"
+
+
+# gen-ref: 69759a83

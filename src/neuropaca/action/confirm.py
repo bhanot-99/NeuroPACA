@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L7 · the confirmation handshake (rules.md §5.2, D-14).
 
 The rule is absolute — *dangerous actions require terminal confirmation at
@@ -137,3 +140,6 @@ class ConfirmationBroker:
             _log.debug("L7 dropped confirmation response for unknown id %r", request_id)
             return
         future.set_result(bool(event.payload.get("approved", False)))
+
+
+# gen-ref: f2b56ba1

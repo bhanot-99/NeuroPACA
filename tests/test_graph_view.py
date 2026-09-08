@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 companion · the graph viewer's data shaping (`scripts/neuropaca_graph.py`).
 
 The force simulation and the canvas live in `graph_view_template.html` and are
@@ -224,3 +227,6 @@ def test_the_rendered_page_makes_no_outbound_reference() -> None:
 def test_the_template_ships_alongside_the_script() -> None:
     assert TEMPLATE.is_file(), "neuropaca_graph.py is useless without its template"
     assert gv.PLACEHOLDER in TEMPLATE.read_text(encoding="utf-8")
+
+
+# gen-ref: bc9c70c0

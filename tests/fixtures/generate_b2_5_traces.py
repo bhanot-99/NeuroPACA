@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Recorded traces for the B2.5b exit criterion (phases.md B2.5b, D-10).
 
     "the two patterns fire on fixtures and stay silent on negatives"
@@ -127,3 +130,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# gen-ref: ca670041

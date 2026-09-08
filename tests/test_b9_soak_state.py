@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 · soak bookkeeping across power cycles (`scripts/b9_soak_state.py`).
 
 The 7-day soak is no longer one uninterrupted process. It starts with the
@@ -311,3 +314,6 @@ def test_a_degraded_module_is_named_in_the_popup() -> None:
     samples[-1]["degraded"] = ["activity"]
 
     assert "DEGRADED    activity" in soak.summarise(state, samples, T0)
+
+
+# gen-ref: bceaf122

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B9 · the soak probe (`scripts/b9_soak_probe.py`).
 
 The probe turns `neuropaca health` into one sample row. It parses human-facing
@@ -116,3 +119,6 @@ def test_an_unreachable_daemon_produces_a_row_saying_so_not_an_exception() -> No
 
 def test_fetch_health_returns_none_when_there_is_no_socket(tmp_path: Path) -> None:
     assert probe.fetch_health(str(tmp_path / "absent.sock")) is None
+
+
+# gen-ref: ebed4328

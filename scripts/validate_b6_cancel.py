@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B6 · Exit Criterion 1 — DMN cancellation latency & graph integrity (phases.md B6).
 
 Runs against the real 16 GB Wayland/COSMIC box. Loads a 10 000-node graph, pads
@@ -223,3 +226,5 @@ async def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(_main()))
+
+# gen-ref: 0582c840

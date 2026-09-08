@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B3 exit criterion · recorded-fixture replay (phases.md B3).
 
     "HighLoadPattern and IdlePattern each fire against a recorded fixture and
@@ -219,3 +222,6 @@ async def test_noise_trace_fires_nothing(tmp_path: Path) -> None:
     finally:
         await correlator.stop()
         await bus.stop()
+
+
+# gen-ref: 63927361

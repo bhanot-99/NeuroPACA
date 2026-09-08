@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L9 · `InterfaceLayer` — the only module that talks to the human
 (Architecture.md §9, B5).
 
@@ -561,3 +564,6 @@ class InterfaceLayer(BaseModule):
     @property
     def conversation_history(self) -> tuple[Message, ...]:
         return tuple(self._conversation_history)
+
+
+# gen-ref: 490a1937

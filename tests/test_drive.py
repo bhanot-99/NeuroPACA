@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L5 · Drive — the pressure gradient (B7, D-14, Architecture.md §7).
 
 The two exit criteria that live in this layer are tested as invariants, not as
@@ -308,3 +311,6 @@ async def test_health_reports_the_hottest_node(tmp_path) -> None:
 
     assert report.ok is True
     assert "top hot@0.90" in report.detail
+
+
+# gen-ref: 52006cbc

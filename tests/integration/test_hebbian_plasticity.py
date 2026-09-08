@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B4 integration · Hebbian graph math + lock safety at scale (D-11).
 
 Loads the deterministic 10 000-node fixture, wires a real `BitNetPlasticity` +
@@ -142,3 +145,6 @@ async def test_store_insight_with_50_citations_stays_off_the_loop(tmp_path: Path
     print(f"\n_store_insight(50 citations) wall {wall_ms:.1f} ms · max loop lag {max(lag):.1f} ms")
 
     await bus.stop()
+
+
+# gen-ref: 45ee7ddd

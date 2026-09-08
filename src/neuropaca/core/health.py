@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Health readouts (Architecture.md §12 — shapes are defined here, the blueprint
 leaves them open).
 
@@ -81,3 +84,6 @@ class SystemHealth:
             f"{f' drop{self.events_dropped}' if self.events_dropped else ''} · "
             f"{'model' if self.inference_loaded else 'no-model'} · {rss}"
         )
+
+
+# gen-ref: ce72b468

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L9 · the interactive ``neuropaca>`` shell — a command menu (B10, re-scoped B12).
 
 Running ``neuropaca`` with no arguments in a terminal lands here. Since B12 the
@@ -212,3 +215,6 @@ def run() -> int:
             print("\n(interrupted)")
         except Exception as exc:  # a REPL survives one bad verb; it does not crash
             print(f"\N{MULTIPLICATION SIGN} {exc}")
+
+
+# gen-ref: 55c7b35c

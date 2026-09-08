@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`Config` — loaded once at startup, immutable thereafter (Architecture.md §3.4).
 
 `from_file()` reads TOML (`tomllib`, stdlib — no dependency). Every field is
@@ -319,3 +322,6 @@ class Config:
             raise ConfigError(f"unknown config keys in {p}: {sorted(unknown)}")
 
         return cls(**raw)
+
+
+# gen-ref: a0f1b023

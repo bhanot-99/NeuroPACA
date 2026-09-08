@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L9 · the thin CLI client — a read-only project guide, terminal-side (B5, B12).
 
 `neuropaca` (the console script) is a *thin* client. Two kinds of command:
@@ -379,3 +382,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# gen-ref: bf3cad92

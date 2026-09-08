@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B14 · web-app attribution through the real pipeline + the privacy assertion.
 
 `APP_SWITCH` events (as the collector now emits them — `webapp` label, no raw
@@ -120,3 +123,6 @@ async def test_no_title_fragment_reaches_graph_json(tmp_path: Path) -> None:
     finally:
         await corr.stop()
         await bus.stop()
+
+
+# gen-ref: 69b6f5c6

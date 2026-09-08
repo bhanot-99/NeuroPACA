@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """`WaylandIdleSource` — idle/activity from `ext-idle-notify-v1` (B2.5, D-9).
 
 Spike-verified on cosmic-comp (`spikes/b2_5_activity/`). B15: a **protocol
@@ -92,3 +95,6 @@ class WaylandIdleSource:
         if self._owns_connection:
             self._conn.stop()
         self._cb = None
+
+
+# gen-ref: 0454d854

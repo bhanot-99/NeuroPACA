@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B2 · Sensing (L2) — XMetricCollector, the collectors, and orchestrator wiring.
 
 Deterministic: a `FakeCollector` + `FakeClock` + an inline `collect()` runner, so
@@ -337,3 +340,6 @@ def test_system_metric_collector_reads_the_real_machine() -> None:
     assert "mem_percent" in snapshot.data
     assert "disk_percent" in snapshot.data
     assert snapshot.anomaly_score == 0.0
+
+
+# gen-ref: b886ec4f

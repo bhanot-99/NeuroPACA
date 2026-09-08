@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L3 · `AppMap` — activity → one of the 10 routing domains (B2.5b, D-10).
 
 `problems.md 1.6`: sorting activity into the blueprint's 10 domains cannot be a
@@ -134,3 +137,6 @@ class AppMap:
                 if pattern.match(path):
                     return domain
         return None
+
+
+# gen-ref: cd27bc45

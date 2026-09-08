@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """B1 · EventBus — queue safety and subscriber isolation (Architecture.md §3.1, D-5).
 
 Skips until `core/event_bus.py` exists; it lands with these tests in one commit
@@ -198,3 +201,6 @@ async def test_stop_does_not_hang_when_the_dispatch_loop_is_gone() -> None:
     await asyncio.sleep(0)
     bus.publish(Event(event_type=EventType.METRIC_COLLECTED, source="test"))
     await asyncio.wait_for(bus.stop(), 1.0)
+
+
+# gen-ref: 9b65ab57

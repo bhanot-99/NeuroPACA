@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """L1 · `GraphMemory` — the single behavioural graph (Architecture.md §3.2, D-5/D-6).
 
 Rules that shape this file:
@@ -996,3 +999,6 @@ class GraphMemory:
                 os.close(fd)
         except OSError:
             pass  # some filesystems do not support directory fsync
+
+
+# gen-ref: a3242257

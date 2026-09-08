@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
+
 """Stress · L3 diagnosis pipeline compression (Architecture.md §5, D-8).
 
 Feeds 30 days of 60-second telemetry (~43 200 snapshots — noise, periodic
@@ -127,3 +130,6 @@ async def test_l3_replays_a_month_of_telemetry_fast_and_flat(tmp_path) -> None:
     )
 
     await bus.stop()
+
+
+# gen-ref: 47f09815
