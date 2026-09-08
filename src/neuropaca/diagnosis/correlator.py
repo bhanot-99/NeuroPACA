@@ -68,6 +68,7 @@ class SignalCorrelator(BaseModule):
         self._app_map_path = config.app_map_path
         self._app_map = AppMap.empty()
         self._known_apps: set[str] = set()
+        self._known_webapps: set[str] = set()
         self._windows: dict[str, deque[MetricSnapshot]] = {}
         self._baselines: dict[tuple[str, str], MetricBaseline] = {}
         self._signals_emitted = 0
@@ -121,24 +122,38 @@ class SignalCorrelator(BaseModule):
 
     async def on_app_switch(self, event: Event) -> None:
         """`APP_SWITCH` -> a synthetic `"activity"` snapshot classified through
-        the `AppMap`, then the same ingest path as any collector reading (D-10)."""
+        the `AppMap` (and, for a browser tab, the `webapp` label + domain the
+        collector already resolved), then the same ingest path as any collector
+        reading (D-10, B14)."""
         try:
             app_id = event.payload.get("app_id")
             if not isinstance(app_id, str) or not app_id:
                 return
-            domain = self._app_map.classify(app_id) or ""
+            raw_webapp = event.payload.get("webapp")
+            webapp = raw_webapp if isinstance(raw_webapp, str) and raw_webapp else None
+            raw_wdom = event.payload.get("webapp_domain")
+            webapp_domain = raw_wdom if isinstance(raw_wdom, str) and raw_wdom else None
+
+            app_domain = self._app_map.classify(app_id) or ""
+            if app_domain:
+                await self._classify_into_graph(app_id, app_domain)
+            if webapp is not None:
+                await self._classify_webapp_into_graph(webapp, app_id, webapp_domain)
+
+            # The focus's domain is the web-app's when we identified one, else the
+            # browser's own (`brave -> habits`). This is what FocusSessionPattern
+            # reads — so 20 min in GitHub tabs now counts as engineering focus.
+            effective_domain = webapp_domain if webapp is not None else app_domain
             snapshot = MetricSnapshot(
                 collector_name=_ACTIVITY_COLLECTOR,
                 timestamp=event.timestamp,
                 data={
                     "app_id": app_id,
+                    "webapp": webapp,
                     "previous_app_id": event.payload.get("previous_app_id"),
-                    "title": event.payload.get("title", ""),
-                    "domain": domain,
+                    "domain": effective_domain or "",
                 },
             )
-            if domain:
-                await self._classify_into_graph(app_id, domain)
             await self._ingest(snapshot)
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._errors += 1
@@ -181,6 +196,22 @@ class SignalCorrelator(BaseModule):
         if app_id not in self._known_apps:
             await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
             self._known_apps.add(app_id)
+
+    async def _classify_webapp_into_graph(
+        self, webapp: str, app_id: str, domain_id: str | None
+    ) -> None:
+        """Ensure `webapp:<label>` exists, wired `PART_OF` its browser and
+        `PART_OF` its routing domain. `_known_webapps` writes both edges exactly
+        once — re-adding an edge resets its Hebbian `weight` (rules.md §3)."""
+        node_id = f"webapp:{webapp}"
+        await self._graph.upsert_node(node_id, NodeType.WEBAPP, {"label": webapp})
+        if webapp not in self._known_webapps:
+            # the browser node may not exist yet if the browser is unclassified
+            await self._graph.upsert_node(f"app:{app_id}", NodeType.APP, {"label": app_id})
+            await self._graph.add_edge(node_id, f"app:{app_id}", RelationType.PART_OF)
+            if domain_id:
+                await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
+            self._known_webapps.add(webapp)
 
     # --------------------------------------------------------------- helpers
     def _max_samples(self, collector: str) -> int:

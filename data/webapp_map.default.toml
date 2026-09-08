@@ -1,0 +1,68 @@
+# webapp_map.default.toml — focused browser tab -> (webapp label, routing domain) (B14).
+#
+# The ActivityCollector reads this once at start (Config.webapp_map_path) when
+# the focused window's app_id is in Config.webapp_browser_app_ids. It strips the
+# browser suffix from the window TITLE (" - Brave", " - Mozilla Firefox", ...),
+# splits the remainder on " - " / em-dash / en-dash / " · " / " | ", lowercases
+# each segment, and matches:
+#   1. a whole segment that IS a key below            ("... - Gmail" -> gmail)
+#   2. a single word of the LAST segment that is a key ("Watch on Crunchyroll")
+#      — only when a delimiter actually split the title.
+#
+# The key is stored, slugified, as `webapp:<key>`. EVERYTHING ELSE in the title
+# — subject lines, addresses, episode names — is discarded inside the collector
+# and never reaches the event bus, the graph, or a log.
+#
+# The right-hand value MUST be one of the 10 routing domains:
+#   engineering  research  tools  system  habits
+#   projects     meetings  comms  mental_models  learning
+# An unknown domain, or an unknown section, is logged and skipped — never fatal.
+#
+# Tuned 2026-09-08 against the operator's real browser history (top ~18 sites).
+# Tokens for streaming / download sites are best guesses at the title text and
+# will be corrected against real titles once the soak records them — the census
+# is a way to find the right token, not a claim to already have it.
+#
+# NOTE: this file is committed. Personal / sensitive sites belong in
+# `data/webapp_map.local.toml` (gitignored) with `webapp_map_path` pointed there.
+
+[webapp]
+# --- comms ---
+"gmail"          = "comms"
+"linkedin"       = "comms"
+
+# --- tools (search + AI assistants) ---
+"google search"  = "tools"
+"google gemini"  = "tools"
+"gemini"         = "tools"
+"chatgpt"        = "tools"
+"claude"         = "tools"
+
+# --- engineering ---
+"github"         = "engineering"
+"stack overflow" = "engineering"
+
+# --- projects (docs / storage / planning) ---
+"google docs"    = "projects"
+"google sheets"  = "projects"
+"google slides"  = "projects"
+"google drive"   = "projects"
+"notion"         = "projects"
+"linear"         = "projects"
+"figma"          = "projects"
+
+# --- learning ---
+"ielts online tests" = "learning"
+
+# --- habits (video / anime / manga / downloads) ---
+"youtube"        = "habits"
+"reddit"         = "habits"
+"crunchyroll"    = "habits"
+"hotstar"        = "habits"
+"jiohotstar"     = "habits"
+"hianime"        = "habits"
+"kayoanime"      = "habits"
+"comix"          = "habits"
+"comick"         = "habits"
+"moviesmod"      = "habits"
+"modlist"        = "habits"

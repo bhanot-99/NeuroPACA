@@ -353,5 +353,6 @@ async def test_a_v2_graph_loads_under_v3(tmp_path: Path) -> None:
     assert node.ram_mb == 0.0 and node.first_seen_at is None
 
 
-def test_schema_version_is_v3() -> None:
-    assert graph_schema_version() == 3
+def test_schema_version_is_v4() -> None:
+    # v3: B13 resource attrs. v4: B14 NodeType.WEBAPP.
+    assert graph_schema_version() == 4

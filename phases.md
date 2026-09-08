@@ -352,6 +352,80 @@ documented fix (B13_PLAN.md §7).
 run. The B9 soak harness plus the new `Census` line in `scripts/b9_soak_state.py`
 covers it; running it needs the target box.
 
+### B14 · Web-app attribution — the browser stops being one node
+
+Full plan: [`B14_PLAN.md`](B14_PLAN.md). The B13 census made `app:brave-browser`
+one opaque node wired to `domain:habits`; the operator lives inside Gmail /
+GitHub / Gemini / YouTube, which are not one activity. B14 gives the browser
+sub-identity under a strict title allowlist.
+
+**The membrane.** The focused-window *title* is the only handle the compositor
+gives on which tab has focus — and it also carries email addresses, unread
+counts, document names. `derive_webapp()` (`sensing/activity/webapp.py`, pure)
+strips the browser suffix, splits on title delimiters, and returns **only** a
+matched allowlist label (`"gmail"`) + its domain, or `None`. The raw title is a
+local in the collector and never reaches the bus, the graph, or a log — the same
+"structurally impossible to leak" stance B13 took on cmdlines.
+
+**Wiring.** `window.py` fires the focus callback on a `(app_id, title)` change
+for browser app_ids (title-sensitive set), app_id-only for everything else.
+`collector.py` dedups on a focus key `(app_id, webapp_label)` — so "Inbox (351)"
+→ "(352)" is a no-op but Gmail → Gemini is one `APP_SWITCH`. Payload:
+`{app_id, webapp, webapp_domain, previous_app_id, previous_webapp}` — **no title**.
+
+**Graph.** `NodeType.WEBAPP` (schema **v4**, forward-incompatible with a v3
+reader). The correlator upserts `webapp:<label>` wired `PART_OF` its browser and
+`PART_OF` its routing domain. `access_count` is the re-focus count.
+
+**Pattern decisions (D2/D3, operator-ratified 2026-09-08):** the focused tab's
+domain overrides `brave = habits`, so 20 min in GitHub tabs fires a
+`FOCUS_SESSION` attributed to `webapp:github`; browser tab switches feed
+`DistractionPattern` (distinct set keyed on the web-app). Rejected: reusing
+`NodeType.APP` with a prefix (no schema bump), reading Brave history/session
+files, a browser extension, storing the raw title and filtering at read.
+
+**Status:** implemented on `feat/brave-webapp-attribution`. 524 pytest green
+(≈35 new: `test_webapp_derive`, `test_webapp_map`, `test_webapp_pipeline`, plus
+activity / pattern / schema extensions), ruff + mypy clean. Config
+`webapp_tracking_enabled` (kill switch), `webapp_map_path`,
+`webapp_browser_app_ids`; `data/webapp_map.default.toml` shipped as a starting
+guess — the real allowlist is a dogfood output.
+
+### B15 · The Wayland activity sensor goes deaf — GC'd proxies + one shared connection
+
+Full plan: [`B15_PLAN.md`](B15_PLAN.md), test run: `B15_TEST_REPORT.md`. Found
+during the B14 live smoke test: the daemon barely registered focus events (~1
+per session) while a standalone `ActivityCollector` on the same code caught
+dozens — the sensor was *deaf*, not dead, and `health()` still said `window✓`.
+This is the mechanism behind B7's zero-L5 soaks and B13's 4-switch-an-hour gate.
+
+**Root cause — three bugs.** (a) `_on_toplevel` held its `get_cosmic_toplevel(...)`
+proxy — the *only* source of "which window is focused" — in a **local variable**.
+Python GC collected it non-deterministically, and a collected pywayland proxy
+silently stops delivering events, so that window's focus changes went invisible.
+~1 in 3 daemon starts deaf, binary per start; in `window.py` since B2.5b. (b)
+`ActivityCollector` opened `WaylandIdleSource` + `WaylandWindowSource` as **two
+`pywayland.Display` connections** — the second's delivery is unreliable and
+teardown **SIGSEGVs** (exit 139). (c, latent) `_on_readable` swallowed every
+exception and permanently `stop()`d the source with no log — the B7 shape. (A
+~2 h detour blamed a missing `XDG_SESSION_ID` under systemd; ruled out by a clean
+restart A/B — `systemctl --user restart` had been silently not taking effect.)
+
+**Fixes.** (a) `WaylandWindowSource._cosmic_handles` holds a strong ref to every
+cosmic toplevel proxy for its lifetime — **the fix for the flaky deafness**
+(0/20 restarts deaf after, was ~1/3). (b) one shared `WaylandConnection`
+(`sensing/activity/wayland_conn.py`) — `WaylandIdleSource` / `WaylandWindowSource`
+became `WaylandProtocolHandler`s that bind on it; erases the segfault. (c) a
+poll-pump (non-blocking `select`, `read()` only when readable, **always**
+`dispatch` — the proven B2.5 spike shape, not `add_reader`), bounded reconnect,
+and `health()` reads `is_alive` live so a died sensor drags the module unhealthy.
+**No systemd unit change.**
+
+**Status:** implemented on `fix/wayland-poll-pump`. 561 pytest green (≈34 new:
+`test_wayland_conn`, `test_wayland_handlers`, activity additions), ruff + mypy
+clean. Autonomous live (`scripts/b15_live_check.py`) + 20/20 forced-focus daemon
+restarts, no deafness, no segfault.
+
 ---
 
 ## Deferred — after the rest of the project

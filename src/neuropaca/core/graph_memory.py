@@ -44,7 +44,11 @@ from neuropaca.core.models import Edge, Node
 # / `last_seen_at` — durable resource attributes for `app:<id>` nodes. All four
 # are optional and default (0.0 / None), so a v2 file loads unchanged: the keys
 # are simply absent and `_deserialise` tolerates that.
-_SCHEMA_VERSION = 3
+# v4 (B14): `NodeType.WEBAPP` added — `webapp:<slug>` nodes for identified
+# browser tabs. A v3 file loads on v4 code unchanged; a v4 file is REFUSED by a
+# v3 reader (its `NodeType` enum has no `webapp` member) — the schema-version
+# gate below catches that cleanly before any node is parsed.
+_SCHEMA_VERSION = 4
 
 # The oldest on-disk version this build can still read. v1/v2/v3 differ only by
 # added optional keys that `_deserialise` already tolerates when absent, so no

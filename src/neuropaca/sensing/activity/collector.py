@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.config import Config
@@ -22,6 +23,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, system_error_event
 from neuropaca.sensing.activity.idle import IdleSource, IdleTransition
+from neuropaca.sensing.activity.webapp import WebAppMap, derive_webapp
 from neuropaca.sensing.activity.window import WindowInfo, WindowSource
 
 _log = logging.getLogger(__name__)
@@ -46,7 +48,15 @@ class ActivityCollector(BaseModule):
         self._idle_since: datetime | None = None
         self._transitions = 0
         self._switches = 0
-        self._focused_app_id: str | None = None
+        # B14 · focus key = (app_id, webapp_label | None). A tab switch inside a
+        # browser changes the second half; "Inbox (351)" -> "(352)" does not.
+        self._focus_key: tuple[str, str | None] | None = None
+        self._webapp_enabled = config.webapp_tracking_enabled
+        self._browsers = frozenset(config.webapp_browser_app_ids)
+        self._webapp_map_path = config.webapp_map_path
+        self._webapp_map = WebAppMap.empty()
+        self._webapps_seen: set[str] = set()
+        self._wl_conn: Any = None  # the shared WaylandConnection on the real path
 
     async def initialize(self) -> None:
         return None  # publishes only; subscribes to nothing
@@ -56,19 +66,39 @@ class ActivityCollector(BaseModule):
             return
         self.is_running = True
 
-        if self._idle_source is None:
+        if self._webapp_enabled and self._browsers:
+            self._webapp_map = WebAppMap.from_file(self._webapp_map_path)
+
+        if self._idle_source is None and self._window_source is None:
+            # Real path: ONE shared Wayland connection carries both protocols
+            # (idle-notify + toplevel-info). Two Display connections in one
+            # process makes the second go deaf — see wayland_conn.py (B15).
+            from neuropaca.sensing.activity.wayland_conn import WaylandConnection
             from neuropaca.sensing.activity.wayland_idle import WaylandIdleSource
-
-            self._idle_source = WaylandIdleSource(self._idle_threshold)
-        idle = self._idle_source
-        self._idle_ok = self._try_start("idle", lambda: idle.start(self._on_transition))
-
-        if self._window_source is None:
             from neuropaca.sensing.activity.window import WaylandWindowSource
 
-            self._window_source = WaylandWindowSource()
-        window = self._window_source
-        self._window_ok = self._try_start("window", lambda: window.start(self._on_window_switch))
+            conn = WaylandConnection()
+            conn.activity_probe = lambda: not self._idle  # gates the liveness watchdog
+            self._idle_source = WaylandIdleSource(self._idle_threshold, connection=conn)
+            self._window_source = WaylandWindowSource(
+                title_sensitive_app_ids=self._browsers if self._webapp_enabled else frozenset(),
+                connection=conn,
+            )
+            self._idle_source.start(self._on_transition)  # store cb; conn not started yet
+            self._window_source.start(self._on_window_switch)
+            started = self._try_start("wayland", conn.start)
+            self._idle_ok = self._window_ok = started
+            self._wl_conn = conn
+        else:
+            # Injected doubles (tests): each source drives itself.
+            idle = self._idle_source
+            if idle is not None:
+                self._idle_ok = self._try_start("idle", lambda: idle.start(self._on_transition))
+            window = self._window_source
+            if window is not None:
+                self._window_ok = self._try_start(
+                    "window", lambda: window.start(self._on_window_switch)
+                )
 
     def _try_start(self, label: str, run: Callable[[], None]) -> bool:
         try:
@@ -93,14 +123,28 @@ class ActivityCollector(BaseModule):
             self._idle_source.stop()
         if self._window_ok and self._window_source is not None:
             self._window_source.stop()
+        if self._wl_conn is not None:
+            self._wl_conn.stop()  # the real shared connection (source.stop() is a no-op for it)
         self._idle_ok = self._window_ok = False
 
     def health(self) -> ModuleHealth:
-        idle = "idle✓" if self._idle_ok else "idle✗"
-        window = "window✓" if self._window_ok else "window✗"
+        # B15 · "✓" now means the source is started AND its poll-pump is still
+        # live. A pump that died and burned its reconnect budget flips is_alive to
+        # False, so health stops printing "✓" for a sensor that has gone deaf
+        # (the B7 failure was a dead collector that still looked healthy).
+        idle_live = self._idle_ok and self._idle_source is not None and self._idle_source.is_alive
+        window_live = (
+            self._window_ok and self._window_source is not None and self._window_source.is_alive
+        )
+        idle = "idle✓" if idle_live else "idle✗"
+        window = "window✓" if window_live else "window✗"
+        # A source that STARTED and then died drags the module unhealthy — that is
+        # the alarm B7 never had. A source that never started (headless, no
+        # compositor) stays tolerated, exactly as before.
+        died = (self._idle_ok and not idle_live) or (self._window_ok and not window_live)
         return ModuleHealth(
             name=self.name,
-            ok=self.is_running,
+            ok=self.is_running and not died,
             detail=f"{idle} {window} · {self._transitions} transitions · {self._switches} switches",
             last_event_at=self._idle_since,
         )
@@ -137,19 +181,35 @@ class ActivityCollector(BaseModule):
             )
 
     def _on_window_switch(self, window: WindowInfo) -> None:
-        if window.app_id == self._focused_app_id:
+        # The raw title is read HERE and nowhere downstream: `derive_webapp`
+        # returns only an allowlisted label, and that is all that goes on the bus
+        # (B14 — the membrane).
+        hit = derive_webapp(
+            window.app_id,
+            window.title,
+            browsers=self._browsers,
+            webapp_map=self._webapp_map,
+            enabled=self._webapp_enabled,
+        )
+        label = hit.label if hit is not None else None
+        key = (window.app_id, label)
+        if key == self._focus_key:
             return
-        previous = self._focused_app_id
-        self._focused_app_id = window.app_id
+        prev_app_id, prev_label = self._focus_key or (None, None)
+        self._focus_key = key
         self._switches += 1
+        if label is not None:
+            self._webapps_seen.add(label)
         self.event_bus.publish(
             Event(
                 event_type=EventType.APP_SWITCH,
                 source="sensing.activity",
                 payload={
                     "app_id": window.app_id,
-                    "title": window.title,
-                    "previous_app_id": previous,
+                    "webapp": label,
+                    "webapp_domain": hit.domain if hit is not None else None,
+                    "previous_app_id": prev_app_id,
+                    "previous_webapp": prev_label,
                 },
             )
         )

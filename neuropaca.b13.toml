@@ -36,6 +36,14 @@ process_min_rss_mb = 200.0
 process_exclude_names = []
 poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
 
+# B14 · web-app attribution. The browser stops being one `app:` node — a focused
+# tab is matched against the title allowlist and stored as `webapp:<label>`. The
+# raw window title never leaves the collector. On for the soak (D5): the run is
+# the only way to build the round-2 allowlist from real titles at scale.
+webapp_tracking_enabled = true
+webapp_map_path = "data/webapp_map.default.toml"
+webapp_browser_app_ids = ["brave-browser"]
+
 # B13 · the raw-data CSV. One row per reading: system metrics wide, plus one row
 # per censused app. Append-only, no rotation — sweep data/ between soak runs.
 raw_metrics_csv_path = "data/raw_metrics.csv"

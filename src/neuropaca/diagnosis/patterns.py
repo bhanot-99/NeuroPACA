@@ -318,8 +318,14 @@ class IdlePattern(_RunLengthPattern):
     def _last_app_spec(activity: Sequence[MetricSnapshot]) -> tuple[NodeSpec, ...]:
         for snapshot in reversed(activity):
             app_id = _str_field(snapshot, "app_id")
-            if app_id:
-                return (NodeSpec(node_id=f"app:{app_id}", node_type=NodeType.APP, label=app_id),)
+            if not app_id:
+                continue
+            webapp = _str_field(snapshot, "webapp")
+            if webapp:
+                return (
+                    NodeSpec(node_id=f"webapp:{webapp}", node_type=NodeType.WEBAPP, label=webapp),
+                )
+            return (NodeSpec(node_id=f"app:{app_id}", node_type=NodeType.APP, label=app_id),)
         return ()
 
 
@@ -384,17 +390,28 @@ class FocusSessionPattern(BasePattern):
 
         self._firing = True
         app_id = _str_field(current, "app_id") or "unknown"
+        webapp = _str_field(current, "webapp")
         slug = domain.split(":", 1)[1]
-        spec = NodeSpec(
-            node_id=f"app:{app_id}",
-            node_type=NodeType.APP,
-            label=app_id,
-            edges=((domain, RelationType.PART_OF),),
-        )
+        if webapp:
+            # attribute the session to the tab, not the whole browser. No edge —
+            # `webapp:X --part_of--> domain` is owned by the APP_SWITCH
+            # classification path (re-emitting it would reset the Hebbian weight,
+            # same reasoning as DistractionPattern).
+            focus_label = webapp
+            spec = NodeSpec(node_id=f"webapp:{webapp}", node_type=NodeType.WEBAPP, label=webapp)
+        else:
+            focus_label = app_id
+            spec = NodeSpec(
+                node_id=f"app:{app_id}",
+                node_type=NodeType.APP,
+                label=app_id,
+                edges=((domain, RelationType.PART_OF),),
+            )
         over = _clamp01((held - self._min_seconds) / self._min_seconds)
         confidence = 0.6 + 0.4 * over
         reason = (
-            f"{app_id} ({slug}) focused for ~{held / 60:.0f} min, cpu ~{mean_cpu:.0f}% (active)"
+            f"{focus_label} ({slug}) focused for ~{held / 60:.0f} min, "
+            f"cpu ~{mean_cpu:.0f}% (active)"
         )
         if self._ram_corroborates(app_id, windows.get("process", ())):
             confidence += _FOCUS_RAM_CORROBORATION
@@ -470,19 +487,29 @@ class DistractionPattern(BasePattern):
             return None
 
         self._firing = True
-        distinct: list[str] = []
+        # B14: a browser-tab switch is a real context switch — key the distinct
+        # set on (app_id, webapp) so Gmail -> Reddit -> YouTube counts as three.
+        distinct: list[tuple[str, str | None]] = []
         for snapshot in recent:
             app_id = _str_field(snapshot, "app_id")
-            if app_id and app_id not in distinct:
-                distinct.append(app_id)
+            if not app_id:
+                continue
+            webapp = _str_field(snapshot, "webapp") or None
+            key = (app_id, webapp)
+            if key not in distinct:
+                distinct.append(key)
         confidence = _clamp01(0.5 + 0.1 * (count - self._max_switches))
         reason = (
             f"{count} app switches in {self._window_seconds / 60:.0f} min "
             f"({len(distinct)} distinct)"
         )
         specs = tuple(
-            NodeSpec(node_id=f"app:{app_id}", node_type=NodeType.APP, label=app_id)
-            for app_id in distinct
+            NodeSpec(
+                node_id=f"webapp:{webapp}" if webapp else f"app:{app_id}",
+                node_type=NodeType.WEBAPP if webapp else NodeType.APP,
+                label=webapp or app_id,
+            )
+            for app_id, webapp in distinct
         )
         return SignalDraft(
             signal_type=self.signal_type,
