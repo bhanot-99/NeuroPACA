@@ -286,7 +286,8 @@ def test_window_list_finished_invalidates_cache_and_marks_not_alive() -> None:
     toplevel_list.dispatcher["finished"](toplevel_list)
     assert src._toplevels == {}
     assert src._foreign_handles == {} and src._cosmic_handles == {}
-    assert src.is_alive is False  # forces the connection watchdog to reconnect
+    assert src.is_alive is False
+    assert conn._reconnect_requested is True  # asked the connection to rebind
     src.bound(
         {
             "ext_foreign_toplevel_list_v1": toplevel_list,

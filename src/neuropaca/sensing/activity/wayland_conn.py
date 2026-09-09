@@ -110,9 +110,19 @@ class WaylandConnection:
         self._seen_event_since_connect = False
         self._watchdog_interval = _STALE_RECONNECT_SECONDS
         self.watchdog_reconnects = 0
+        # B16 · a handler can ask for a clean reconnect+rebind without tearing the
+        # connection down from inside a dispatch callback (re-entrant teardown
+        # while `display.dispatch()` is on the stack is unsafe). The pump acts on
+        # it at the top of the next tick. Used by the window source on `finished`.
+        self._reconnect_requested = False
 
     def add(self, handler: WaylandProtocolHandler) -> None:
         self._handlers.append(handler)
+
+    def request_reconnect(self) -> None:
+        """Ask the pump to tear down and rebind on its next tick (safe to call
+        from inside a dispatcher callback)."""
+        self._reconnect_requested = True
 
     @property
     def confirmed_live(self) -> bool:
@@ -211,7 +221,12 @@ class WaylandConnection:
         failures = 0
         while not self._stopped:
             try:
+                if self._reconnect_requested and self._display is not None:
+                    self._reconnect_requested = False
+                    _log.info("WaylandConnection reconnect requested by a handler")
+                    self._teardown()
                 if self._display is None:
+                    self._reconnect_requested = False
                     silent_for = self.seconds_since_event
                     self._connect()
                     self.reconnects += 1

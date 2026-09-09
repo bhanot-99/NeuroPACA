@@ -229,14 +229,15 @@ class WaylandWindowSource:
 
     def _on_list_finished(self, _list: Any) -> None:
         # The compositor has retired the toplevel-list global (its own shutdown,
-        # a compositor reload). Our cache is now stale; drop it and let the
-        # connection's liveness watchdog force a clean reconnect + re-bind rather
-        # than keep reporting a focus that can no longer change (B16 §3b).
-        _log.warning("ext_foreign_toplevel_list_v1 finished — window cache invalidated")
+        # a compositor reload). Our cache is now stale; drop it, mark the window
+        # half not-alive (surfaces in health), and ask the connection to rebind
+        # so a re-advertised global is picked back up (B16 §3b).
+        _log.warning("ext_foreign_toplevel_list_v1 finished — window cache invalidated, rebinding")
         self._reset_toplevels()
         self._list_finished = True
         self._focused_app_id = None
         self._focused_title = ""
+        self._conn.request_reconnect()
 
     def _set(self, key: int, attr: str, value: Any) -> None:
         top = self._toplevels.get(key)
