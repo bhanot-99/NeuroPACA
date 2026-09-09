@@ -63,6 +63,7 @@ class Observer:
         self._cosmic: dict[int, object] = {}
         self._next = 0
         self._live_names: set[str] = set()
+        self._weakrefs: list[weakref.ref] = []  # keep the finalise callbacks armed
 
     # ---- registry / bind -------------------------------------------------
     def bind(self, display: Display) -> None:
@@ -128,7 +129,7 @@ class Observer:
             self._live_names.discard(label)
             print(f"{_ts()}  >>> FINALISED {label}  (proxy destroyed)")
 
-        weakref.ref(obj, _gone)
+        self._weakrefs.append(weakref.ref(obj, _gone))
 
 
 def main() -> None:
@@ -150,23 +151,28 @@ def main() -> None:
     print(f"{_ts()}  mode={mode_name}  — switch windows / open+close a scratch window now")
     end = time.time() + args.seconds
     last_beat = time.time()
+    readable = reads = dispatched_nonzero = 0
     while time.time() < end:
         if select.select([fd], [], [], 0)[0]:
+            readable += 1
             try:
                 display.read()
+                reads += 1
             except RuntimeError as exc:
                 print(f"{_ts()}  read() raised: {exc}")
                 break
-        display.dispatch(block=False)
+        n = display.dispatch(block=False)
+        if n:
+            dispatched_nonzero += 1
         display.flush()
         gc.collect()  # force the finaliser race the daemon hits non-deterministically
         now = time.time()
         if now - last_beat >= 10.0:
             print(
-                f"{_ts()}  -- {obs.events_window} events in 10s "
-                f"(live proxies: {sorted(obs._live_names)})"
+                f"{_ts()}  -- 10s: {obs.events_window} events, fd-readable x{readable}, "
+                f"read() x{reads}, dispatch>0 x{dispatched_nonzero}  live={sorted(obs._live_names)}"
             )
-            obs.events_window = 0
+            obs.events_window = readable = reads = dispatched_nonzero = 0
             last_beat = now
         time.sleep(_POLL)
 

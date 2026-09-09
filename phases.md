@@ -73,7 +73,7 @@ flowchart TD
 | B6 | Idle Cognition (L6) | ✅ merged (PR #8) — `DefaultModeNetwork` + `GraphMemory` consolidate/link-orphan/prune-stale + extractive proactive idle-thought grammar (`{subject, object, query_template}`) + L9 `proactive` surfacing; `core/context.py` shared serialiser (A8); all 3 exit criteria validated on the target box (D-13) |
 | B7 | Drive & Action (L5 + L7) | ✅ merged (PR #9, `bd6215f`) — `PressureAccumulator` (two sources, exact half-life decay, set-test corroboration) + `SafetyGate` / sandbox / quarantine / JSONL audit / headless confirmation handshake + Notification·MemoryWrite·FileWrite·RunCommand; `$!` / `$$` live. **All 5 exit criteria met** — 1–4 on the target box; criterion 5 via the positive control (`spikes/b7_positive_control/`), the 24 h soak abandoned after 3 zero-proposal attempts (`HighLoadPattern`/Wayland blindspot). 288 pytest + 14 stress + 9 integration green |
 | B8 | Agents & structural plasticity (L8) | ✅ done (`b8-agents-structural-plasticity`, D-16) — `AgentSupervisor` + ephemeral sub-clusters + apoptosis + the `ACTION_PROPOSAL` decoupling. **All 5 exit criteria met on the target box** (`scripts/validate_b8_plasticity.py`). 311 pytest + stress + integration green |
-| B9 | Hardening | 🟡 in progress — 6 of 7 exit criteria met. Units installed and the daemon is live under the hardened unit (BL-1 confirmed on real systemd). Criterion 4 (7-day soak): the 2026-09-03 run is **void** (B15 §2a — deaf focus sensor); harness rebuilt for B15 (`scripts/soak_*`), re-run pending |
+| B9 | Hardening | 🟡 in progress — 6 of 7 exit criteria met. Units installed and the daemon is live under the hardened unit (BL-1 confirmed on real systemd). Criterion 4 (7-day soak): the 2026-09-03 run is **void** (B15 §2a); the 2026-09-08 B15-rebuilt run is **also void for focus** (B16 — the B15 fix was half of one, the sensor still deafened itself within 180 s). Fixed on `b16-wayland-subscription-stability`; soak restart pending |
 | B10 | Terminal accessibility — interactive `neuropaca>` shell | ✅ done (`bc86c2a`) — **superseded by B12** (the shell stays as a command menu; the bare-sigil forms are gone) |
 | B11 | Conversational `chat` — project-doc + general Q&A | ✅ done — **withdrawn in B12** (`chat` / `KnowledgeIndex` removed; rationale in `RESEARCH_DOSSIER.md §4.1`) |
 | B12 | Terminal reconceived — read-only project guide | ✅ done — `neuropaca tell <path>` / `overview` (deterministic, `ast`-based, `interface/describe.py`); `$` / `?` / `!` grammar removed; `$!` / `$$` → `neuropaca run` / `run --backup`; `--explain` keeps an optional flagged model paraphrase |
@@ -217,7 +217,7 @@ systemd user unit, crash recovery, graph schema versioning, full `health_check()
 | 1 | `neuropaca doctor` produces a full report with **the daemon not running** — no socket connect, no daemon required. | `test_doctor_runs_with_no_daemon_and_no_data_directory`, `test_doctor_never_opens_the_socket_when_the_daemon_is_absent`, `test_the_cli_routes_offline_verbs_without_a_socket` |
 | 2 | `neuropaca panic` leaves nothing: daemon SIGKILLed first (so nothing re-persists), then every item under `data/` gone. Refuses without the typed word, and refuses when the config will not load rather than guessing a directory. | `test_panic_wipes_the_data_directory`, `test_panic_without_the_typed_word_touches_nothing`, `test_panic_refuses_when_the_config_will_not_load` |
 | 3 | CI **affirmatively** fails an outbound connection: the egress job runs inside a network namespace with only loopback, and the test asserts that HTTP and raw TCP both raise. Static checks additionally forbid any outbound client import and any non-`AF_UNIX` socket in the shipped package. | `tests/integration/test_egress_blocked.py` (5 tests), `.github/workflows/ci.yml` `egress-test` |
-| 4 | The **7-day soak** completes, having first passed the 1-hour live gate, run under `systemd-inhibit --what=sleep:idle`. Subsumes the carried B1 T2 / B2 T3 / B4 windows, **and** proves the B15 Wayland focus sensor stays alive for a week (`soak_state.py assess`). | `scripts/soak_gate.sh` (gate) then `neuropaca-soak.service` → `scripts/soak_7day.sh` — ⚠ **the 2026-09-03 gate/soak is VOID**: B15 (`B15_PLAN.md §2a`) showed the focus sensor was deaf (GC'd cosmic proxies, ~1 in 3 starts) through that window and every B7 soak. Harness rebuilt for B15; re-run pending. |
+| 4 | The **7-day soak** completes, having first passed the 1-hour live gate, run under `systemd-inhibit --what=sleep:idle`. Subsumes the carried B1 T2 / B2 T3 / B4 windows, **and** proves the Wayland focus sensor stays alive for a week (`soak_state.py assess`). | `scripts/soak_gate.sh` (gate) then `neuropaca-soak.service` → `scripts/soak_7day.sh` — ⚠ **VOID twice**: the 2026-09-03 run (`B15_PLAN.md §2a`, GC'd cosmic proxies) and the 2026-09-08 B15-rebuilt run (`B16_PLAN.md §2` — the unreferenced *parent* toplevel proxy still self-destructed within 180 s; the liveness watchdog was doing 100% of the work). Fixed in B16; restart pending. |
 | 5 | An unreadable graph is quarantined and the daemon **boots anyway** on a fresh 11-hub graph, reporting itself degraded rather than ok. | `test_an_unreadable_graph_is_quarantined_and_the_daemon_still_boots` (×3 corruption shapes), `test_a_degraded_boot_is_visible_in_health`, `test_the_reseeded_graph_is_persisted_not_just_in_memory` |
 | 6 | `schema_version` is **read** on load: a newer-than-supported file is refused with a message rather than silently dropping fields; a v1 file still loads; a malformed record arrives as `GraphMemoryError`, not `KeyError`. | `test_a_graph_from_a_newer_build_is_refused_not_silently_loaded`, `test_a_v1_graph_still_loads`, `test_a_malformed_node_record_raises_graph_memory_error_not_key_error` |
 | 7 | The unit binds the L9 socket under `ProtectSystem=strict`, and logrotate targets files the daemon actually writes. | `test_the_systemd_unit_grants_write_access_to_the_runtime_directory`, `test_logrotate_targets_the_configured_log_paths`, `systemd-analyze --user verify` |
@@ -427,6 +427,46 @@ and `health()` reads `is_alive` live so a died sensor drags the module unhealthy
 `test_wayland_conn`, `test_wayland_handlers`, activity additions), ruff + mypy
 clean. Autonomous live (`scripts/b15_live_check.py`) + 20/20 forced-focus daemon
 restarts, no deafness, no segfault.
+
+### B16 · The focus sensor deafens itself — proxy lifetime, round two
+
+Full plan: [`B16_PLAN.md`](B16_PLAN.md), test run: `B16_TEST_REPORT.md`. Found
+~21 h into the B15-rebuilt 7-day soak: the B15 liveness watchdog — meant to be a
+rare safety net — was doing **all** the work. Soak session 2 (active use): **54
+of ~65 inter-reconnect gaps at exactly 180–181 s**, zero events dispatched
+between them. Focus was effectively polled every 3 minutes; `health()` still said
+`window✓`.
+
+**Root cause — B15's fix was half of one.** B15 strong-ref'd the *child*
+`zcosmic_toplevel_handle_v1` (carries `state`/activation) but **not** its parent
+`ext_foreign_toplevel_handle_v1` (carries `app_id`/`title`/`closed` — the only
+identity source on protocol v3), and keyed both caches by `id(handle)`.
+pywayland retains proxies only weakly (`interface.registry` = WeakValueDictionary,
+`Display._children` = WeakSet) and `Proxy.__init__` does `ffi.gc(ptr,
+wl_proxy_destroy)`, so the unreferenced parent was destroyed right after
+`_on_toplevel` returned and every later event for it was dropped as zombie
+traffic. Worse: once collected, its `id()` was reused, so a newly-opened window
+could evict a *live* cosmic handle from the cache and kill a working
+subscription — which is exactly the active-vs-idle decay in the soak numbers
+(session 1 overnight: 2.3 reconnects/h; session 2 active: ~14/h).
+
+**Fixes.** (a) `window.py` keeps a strong ref to **both** proxies
+(`_foreign_handles` + `_cosmic_handles`) keyed by a **monotonic int** — never
+`id()` — for the whole life of the toplevel, and explicitly `destroy()`s both on
+`closed`/`lost` so the compositor stops streaming to them; `_drop` is now
+reachable. (b) bind `ext_foreign_toplevel_list_v1.finished` → invalidate the
+cache and report `is_alive` False so the connection re-primes. (c) `collector.py`
+gains a `_watch_deafness` task and a third health state `window~` (alive but
+silent while the user is active) → `health().ok` False + one rate-limited
+`sensor-degraded` `SYSTEM_ERROR`. (d) `wayland_conn.py`: reconnect log carries
+seconds-silent; a tick that races shutdown exits quietly, not as a `pump_error`.
+The B15 liveness watchdog stays as a last-resort net, counted as a defect signal.
+**No systemd unit change.**
+
+**Status:** implemented on `b16-wayland-subscription-stability`. 584 pytest green
+(≈9 new: proxy-retention, `id()`-reuse regression, `finished`, deaf-while-alive
+health), ruff + mypy clean. Live: standalone `--leak`/`--hold` lifetime probe
+(`spikes/b16_toplevel_lifetime/`) + daemon A/B on the target box.
 
 ---
 
