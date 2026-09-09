@@ -114,10 +114,31 @@ Fix: the watchdog fires only while the subscription has **never** delivered an
 event (`confirmed_live` False — the came-up-deaf B15 §2a residual it exists for);
 the first real event disarms it for the connection's life. While unconfirmed the
 interval backs off 180 s → 1800 s so a deaf start the user never touches does not
-thrash. `_window_is_deaf` / `sensor-degraded` gated on `confirmed_live` too.
+thrash. `_window_is_deaf` / `sensor-degraded` gated on `confirmed_live` too. Also
+(`40bb362`): `_on_list_finished` now calls `WaylandConnection.request_reconnect()`
+(a pump-checked flag, safe from inside a dispatch callback) so a retired
+toplevel-list global is rebound rather than left dead.
+
 Unit: `test_watchdog_disarms_once_an_event_has_been_dispatched`,
 `test_watchdog_interval_backs_off_while_never_confirmed`,
-`test_window_silent_but_confirmed_live_is_not_degraded`. Daemon re-check: <!-- FILL -->
+`test_window_silent_but_confirmed_live_is_not_degraded`,
+`test_window_list_finished_invalidates_cache_and_marks_not_alive`.
+
+**Daemon re-check** (`neuropacad` restarted onto `f29e004`, sampled every 20 s):
+
+```
+01:08:04  log: "subscription confirmed live — watchdog off"  (first event, 4 s in)
+01:08:42   7 switches   watchdog-fires=0     ← priming
+01:10:24  13 switches   watchdog-fires=0     ← last real focus event
+01:12:06  13 switches   watchdog-fires=0     (1m42s stable focus)
+01:13:28  13 switches   watchdog-fires=0     (3m04s — past the old 180 s trip point)
+01:13:48  13 switches   watchdog-fires=0
+```
+
+The subscription confirmed live 4 s after start; focus then held on one window
+for 3+ minutes straight — past the point that fired the old watchdog on every
+stable window — with **0 watchdog reconnects**. `grep -c` over the daemon log
+since restart: **0** `re-rolling` / `watchdog #` lines.
 
 ---
 
@@ -130,15 +151,17 @@ Unit: `test_watchdog_disarms_once_an_event_has_been_dispatched`,
 | 3 | `health().ok` False within one sample of going silent while active + `sensor-degraded` on the bus | ✅ unit |
 | 4 | caches drain to empty after all tracked windows close | ✅ unit (`tracked == 0`) |
 | 5 | full suite + `ruff` + `mypy` green; no segfault on `collector.stop()` | ✅ |
-| 6 | 48 h soak: watchdog reconnects < ~1/day, switch count ≥ 10× pre-B16 | ⏳ pending — soak restart from the B16 build |
+| 6 | 48 h soak: watchdog reconnects < ~1/day, switch count ≥ 10× pre-B16 | ⏳ pending — the operator chose to **continue** the 2026-09-08 run from ~22 h rather than wipe+restart, so `assess` will carry mixed pre/post-B16 reconnect counts |
 
 ---
 
 ## 5 · Deferred
 
-- **The 48 h+ soak restart** (`B16_PLAN.md §5d`). The 2026-09-08 run's focus data
-  is void; its RSS/stability accrual stands but `assess` already fails it on the
-  reconnect count, so it has to restart. Not done here — it is a multi-day
+- **A clean soak restart** (`B16_PLAN.md §5d`). The 2026-09-08 run's focus data is
+  void and `assess` already fails it on the pre-B16 reconnect count; the operator
+  chose to keep it running from ~22 h (continuity of the RSS/leak-slope trend)
+  rather than wipe. A future clean restart is the only way to get a gradeable
+  focus-liveness verdict. Not done here — it is a multi-day
   measurement, and restarting wipes the graph per the soak's own protocol.
 - **`scripts/_provenance.py`** re-run after this branch merges (needs `PROV_SECRET`
   in the environment — a merge-time step, per the provenance memo).
