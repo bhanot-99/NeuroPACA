@@ -275,8 +275,10 @@ class GraphMemory:
         (`_merge_nodes_unsafe` — D-13 math, edge rewiring, resource-attr fold),
         the surviving node renamed to `app:<slug>` / `webapp:<slug>`.
 
-        A node whose bare id `is_non_app` (a thread label the census mistook for a
-        process) **and** was never focused (`access_count == 0`) is deleted.
+        A node whose bare id `is_non_app` (a thread label / bare shell the census
+        mistook for a process — `is_non_app` is written to only ever match those)
+        is deleted, with its edges. `access_count` is not a "was focused" signal —
+        it bumps on every census upsert too — so `is_non_app` alone is the gate.
 
         One `_lock` cycle per mutation, a yield between (cancellation lands
         between two mutations, never inside one). **Idempotent** — a second call
@@ -285,14 +287,12 @@ class GraphMemory:
         """
         merged = dropped = 0
 
-        # (1) drop thread-label nodes that were never focused
+        # (1) drop thread-label / bare-shell nodes the census mistook for apps
         async with self._lock:
             junk = [
                 nid
-                for nid, data in self._graph.nodes(data=True)
-                if nid.startswith("app:")
-                and is_non_app(nid[4:])
-                and int(data.get("access_count", 0)) == 0
+                for nid in list(self._graph.nodes)
+                if nid.startswith("app:") and is_non_app(nid[4:])
             ]
         for nid in junk:
             async with self._lock:

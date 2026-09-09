@@ -114,6 +114,13 @@ def clean(
     edges: list[dict[str, Any]] = list(payload.get("edges", []))
     log: list[str] = []
 
+    # (0) drop thread-label / bare-shell nodes the census mistook for apps
+    for nid in list(nodes):
+        if nid.startswith("app:") and _is_non_app(nid[4:], non_app):
+            del nodes[nid]
+            log.append(f"drop   {nid}  (not an application)")
+    edges = [e for e in edges if e.get("source") in nodes and e.get("target") in nodes]
+
     # (1) fold duplicate app:/webapp: nodes
     groups: dict[str, list[str]] = {}
     for nid in list(nodes):
@@ -175,19 +182,7 @@ def clean(
             deduped.append(e)
     edges = deduped
 
-    # (2) drop non-app nodes with no focus history
-    for nid in list(nodes):
-        bare = nid.split(":", 1)[1] if ":" in nid else nid
-        if (
-            nid.startswith("app:")
-            and _is_non_app(bare, non_app)
-            and int(nodes[nid].get("access_count", 0)) == 0
-        ):
-            del nodes[nid]
-            log.append(f"drop   {nid}  (non-app, never focused)")
-    edges = [e for e in edges if e.get("source") in nodes and e.get("target") in nodes]
-
-    # (3) drop non-hub nodes with zero edges
+    # (2) drop non-hub nodes with zero edges
     for nid in list(nodes):
         if nid not in HUB_IDS and _degree(nid, edges) == 0:
             del nodes[nid]

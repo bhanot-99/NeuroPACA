@@ -308,13 +308,18 @@ async def test_canonicalise_renames_a_lone_focus_node(tmp_path) -> None:
     assert any(e.target_id == "domain:tools" for e in gm.get_edges("app:cosmic-files"))
 
 
-async def test_canonicalise_keeps_a_focused_non_app_name(tmp_path) -> None:
+async def test_canonicalise_drops_every_non_app_node_and_its_edges(tmp_path) -> None:
+    # `is_non_app` is written to only ever match thread labels / bare shells, so
+    # it is trusted — `access_count` is not a "was focused" signal (it bumps on
+    # every census upsert), so the drop is unconditional.
     gm = await _loaded_graph(tmp_path)
     await gm.add_node("app:Thread-1", NodeType.APP, {"label": "Thread-1"})
     await gm.upsert_node("app:Thread-1", NodeType.APP, {"label": "Thread-1"})  # ac -> 1
+    await gm.add_edge("app:Thread-1", "domain:system", RelationType.RELATED_TO)
     _merged, dropped = await gm.canonicalise_app_nodes(_resolve, _is_non_app)
-    assert dropped == 0
-    assert gm.get_node("app:Thread-1") is not None  # a real focus history wins
+    assert dropped == 1
+    assert gm.get_node("app:Thread-1") is None
+    assert not any(e.source_id == "app:Thread-1" for e in gm.get_edges("domain:system"))
 
 
 async def test_canonicalise_never_touches_hubs(tmp_path) -> None:

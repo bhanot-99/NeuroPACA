@@ -54,10 +54,12 @@ _STRIP_SUFFIXES: tuple[str, ...] = (
     "-nightly",
 )
 # A process `name` (from /proc/<pid>/comm) that is a thread label, not an app.
+# Deliberately conservative — a name that reaches an `is_non_app` node is DROPPED,
+# so this must never match a real app_id. Other junk (`gmain`, `gdbus`) goes in
+# the `[non_app]` table where the operator can see and edit it.
 _THREAD_NAME_RE = re.compile(
     r"^(MainThread|Thread-\d+.*|asyncio_\d+|ThreadPoolExecutor.*|"
-    r"pool-\d+-thread-\d+|Timer-\d+|gmain|gdbus|dconf\swork.*|"
-    r"threaded-ml|llama-.*|node-.*)$"
+    r"pool-\d+-thread-\d+|Timer-\d+|tokio-runtime-w.*|rayon-.*)$"
 )
 _NON_APP_BUILTIN: frozenset[str] = frozenset(
     {"sh", "bash", "zsh", "fish", "dash", "env", "sudo", "doas", "which", "?"}
