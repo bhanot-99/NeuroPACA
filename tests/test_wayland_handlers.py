@@ -12,6 +12,7 @@ fake wayland proxies — no compositor, no pywayland import for the hook tests
 
 from __future__ import annotations
 
+import gc
 from typing import Any
 
 import pytest
@@ -33,6 +34,10 @@ class _FakeProxy:
 class _FakeCosmicHandle:
     def __init__(self) -> None:
         self.dispatcher: dict[str, Any] = {}
+        self.destroyed = 0
+
+    def destroy(self) -> None:
+        self.destroyed += 1
 
 
 class _FakeInfoManager:
@@ -50,6 +55,10 @@ class _FakeToplevelHandle:
 
     def __init__(self) -> None:
         self.dispatcher: dict[str, Any] = {}
+        self.destroyed = 0
+
+    def destroy(self) -> None:
+        self.destroyed += 1
 
 
 # ==================================================== WaylandWindowSource ===
@@ -71,7 +80,6 @@ def _add_toplevel(
 ) -> None:
     handle = _FakeToplevelHandle()
     toplevel_list.dispatcher["toplevel"](toplevel_list, handle)
-    _ = id(handle)  # handle identity is tracked internally by _on_toplevel
     handle.dispatcher["app_id"](handle, app_id)
     handle.dispatcher["title"](handle, title)
     cosmic = src._info_manager.handles[-1]
@@ -155,21 +163,71 @@ def test_window_title_sensitivity_only_for_configured_browsers() -> None:
     assert len(seen) == before  # a title tick on a non-browser is inert
 
 
-def test_window_keeps_a_strong_ref_to_every_cosmic_handle() -> None:
-    # B15 · the `state` dispatcher lives on the cosmic handle. If it is only a
-    # local in `_on_toplevel` it gets GC'd and that window's focus goes invisible
-    # (the flaky ~1-in-3 daemon deafness). It must be retained for the toplevel's
-    # life and dropped on close.
+def test_window_keeps_a_strong_ref_to_both_proxies() -> None:
+    # B15 kept the cosmic handle (carries `state`); B16 also keeps the parent
+    # ext_foreign_toplevel_handle_v1 (carries app_id/title/closed). Both must be
+    # retained for the toplevel's life and dropped + destroyed on close.
     src = _window()
     src.start(lambda w: None)
     toplevel_list, _ = _bind_window(src)
     handle = _FakeToplevelHandle()
     toplevel_list.dispatcher["toplevel"](toplevel_list, handle)
-    key = id(handle)
-    assert key in src._cosmic_handles
+    (key,) = src._foreign_handles  # one int key
+    assert src._foreign_handles[key] is handle
     assert src._cosmic_handles[key] is src._info_manager.handles[-1]
+    cosmic = src._cosmic_handles[key]
     handle.dispatcher["closed"](handle)
-    assert key not in src._cosmic_handles
+    assert key not in src._cosmic_handles and key not in src._foreign_handles
+    assert handle.destroyed == 1 and cosmic.destroyed == 1
+
+
+def test_window_foreign_handle_survives_gc_after_on_toplevel_returns() -> None:
+    # The B16 bug: pywayland retains proxies only weakly and runs wl_proxy_destroy
+    # on GC, so an unreferenced handle dies microseconds after _on_toplevel and
+    # every later event for it is dropped. _foreign_handles is the strong ref.
+    import weakref
+
+    src = _window()
+    src.start(lambda w: None)
+    toplevel_list, _ = _bind_window(src)
+
+    def add_one() -> weakref.ref[Any]:
+        h = _FakeToplevelHandle()
+        toplevel_list.dispatcher["toplevel"](toplevel_list, h)
+        return weakref.ref(h)  # `h` goes out of scope here — like pywayland's arg
+
+    ref = add_one()
+    gc.collect()
+    handle = ref()
+    assert handle is not None, "foreign toplevel handle was collected — B16 regression"
+    # and its app_id dispatcher still routes to the right toplevel
+    (key,) = src._foreign_handles
+    handle.dispatcher["app_id"](handle, "term")
+    assert src._toplevels[key].app_id == "term"
+
+
+def test_window_keys_never_collide_across_toplevel_churn() -> None:
+    # The old code keyed the caches by id(handle); once the (unreferenced) handle
+    # was collected its id() was reused and a new window evicted a live handle.
+    # The monotonic-int key must give every toplevel — past or present — a
+    # distinct slot.
+    src = _window()
+    src.start(lambda w: None)
+    toplevel_list, _ = _bind_window(src)
+    seen_keys: set[int] = set()
+    for i in range(20):
+        h = _FakeToplevelHandle()
+        toplevel_list.dispatcher["toplevel"](toplevel_list, h)
+        new = set(src._foreign_handles) - seen_keys
+        assert len(new) == 1
+        (k,) = new
+        seen_keys.add(k)
+        h.dispatcher["app_id"](h, f"app{i}")
+        src._info_manager.handles[-1].dispatcher["state"](None, [2] if i == 5 else [])
+    # every one of the 20 is still tracked with its own cosmic handle
+    assert len(src._foreign_handles) == 20
+    assert len(src._cosmic_handles) == 20
+    assert src._toplevels[sorted(seen_keys)[5]].activated is True
 
 
 def test_window_drop_recomputes_focus() -> None:
@@ -206,6 +264,50 @@ def test_window_lost_clears_all_state() -> None:
     assert src._toplevels == {}
     assert src._info_manager is None
     assert src._focused_app_id is None
+
+
+def test_window_list_finished_invalidates_cache_and_marks_not_alive() -> None:
+    # B16 §3b — the compositor retiring the toplevel-list global must not leave
+    # the source reporting a focus that can no longer change.
+    conn = WaylandConnection()
+    conn._connected = True
+
+    class _T:
+        def done(self) -> bool:
+            return False
+
+    conn._task = _T()  # type: ignore[assignment]
+    src = WaylandWindowSource(connection=conn)
+    src.start(lambda w: None)
+    toplevel_list, _ = _bind_window(src)
+    _add_toplevel(src, toplevel_list, app_id="term", title="a", activated=True)
+    assert src.is_alive is True
+
+    toplevel_list.dispatcher["finished"](toplevel_list)
+    assert src._toplevels == {}
+    assert src._foreign_handles == {} and src._cosmic_handles == {}
+    assert src.is_alive is False  # forces the connection watchdog to reconnect
+    src.bound(
+        {
+            "ext_foreign_toplevel_list_v1": toplevel_list,
+            "zcosmic_toplevel_info_v1": _FakeInfoManager(),
+        }
+    )
+    assert src.is_alive is True  # a fresh bind clears the flag
+
+
+def test_window_lost_destroys_every_held_proxy() -> None:
+    src = _window()
+    src.start(lambda w: None)
+    toplevel_list, _ = _bind_window(src)
+    _add_toplevel(src, toplevel_list, app_id="a", title="", activated=True)
+    _add_toplevel(src, toplevel_list, app_id="b", title="", activated=False)
+    foreign = list(src._foreign_handles.values())
+    cosmic = list(src._cosmic_handles.values())
+    src.lost()
+    assert all(h.destroyed == 1 for h in foreign)
+    assert all(h.destroyed == 1 for h in cosmic)
+    assert src.tracked == 0
 
 
 def test_window_is_alive_delegates_to_the_connection() -> None:

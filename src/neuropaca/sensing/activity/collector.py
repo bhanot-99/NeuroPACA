@@ -13,7 +13,9 @@ inert — the module and the rest of the daemon keep running (rules.md §2).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -30,6 +32,15 @@ from neuropaca.sensing.activity.webapp import WebAppMap, derive_webapp
 from neuropaca.sensing.activity.window import WindowInfo, WindowSource
 
 _log = logging.getLogger(__name__)
+
+# B16 · the window source is "degraded" (alive but not hearing the compositor)
+# once this long has passed with no Wayland event *while the user is active*.
+# Set above `wayland_conn._STALE_RECONNECT_SECONDS` (180 s) so the connection's
+# own liveness watchdog gets first crack at self-healing; if we are still silent
+# past this, that self-heal is not working and it belongs in health + on the bus.
+_WINDOW_DEAF_SECONDS = 240.0
+_DEAF_POLL_SECONDS = 30.0
+_DEAF_EMIT_MIN_GAP_SECONDS = 600.0
 
 
 class ActivityCollector(BaseModule):
@@ -60,6 +71,9 @@ class ActivityCollector(BaseModule):
         self._webapp_map = WebAppMap.empty()
         self._webapps_seen: set[str] = set()
         self._wl_conn: Any = None  # the shared WaylandConnection on the real path
+        self._deaf_task: asyncio.Task[None] | None = None
+        self._window_degraded = False  # alive but not hearing the compositor (B16)
+        self._last_deaf_emit = 0.0
 
     async def initialize(self) -> None:
         return None  # publishes only; subscribes to nothing
@@ -92,6 +106,8 @@ class ActivityCollector(BaseModule):
             started = self._try_start("wayland", conn.start)
             self._idle_ok = self._window_ok = started
             self._wl_conn = conn
+            if started:
+                self._deaf_task = asyncio.create_task(self._watch_deafness())
         else:
             # Injected doubles (tests): each source drives itself.
             idle = self._idle_source
@@ -122,6 +138,13 @@ class ActivityCollector(BaseModule):
         if not self.is_running:
             return
         self.is_running = False
+        if self._deaf_task is not None:
+            self._deaf_task.cancel()
+            try:
+                await self._deaf_task
+            except asyncio.CancelledError:
+                pass
+            self._deaf_task = None
         if self._idle_ok and self._idle_source is not None:
             self._idle_source.stop()
         if self._window_ok and self._window_source is not None:
@@ -130,21 +153,69 @@ class ActivityCollector(BaseModule):
             self._wl_conn.stop()  # the real shared connection (source.stop() is a no-op for it)
         self._idle_ok = self._window_ok = False
 
+    def _window_is_deaf(self) -> bool:
+        """Real path only: the window pump is alive and connected, the user is
+        active, yet no Wayland event has landed for `_WINDOW_DEAF_SECONDS`. B16 —
+        the failure mode the 7-day soak actually hit, and the one `window✓` (=
+        `is_alive`) could not see."""
+        conn = self._wl_conn
+        if conn is None or self._idle:
+            return False
+        return bool(conn.is_alive) and conn.seconds_since_event > _WINDOW_DEAF_SECONDS
+
+    async def _watch_deafness(self) -> None:
+        while self.is_running:
+            await asyncio.sleep(_DEAF_POLL_SECONDS)
+            if not self.is_running:
+                return
+            degraded = self._window_is_deaf()
+            self._window_degraded = degraded
+            if not degraded:
+                continue
+            now = time.monotonic()
+            if now - self._last_deaf_emit < _DEAF_EMIT_MIN_GAP_SECONDS:
+                continue
+            self._last_deaf_emit = now
+            conn = self._wl_conn
+            _log.warning(
+                "activity window sensor degraded — %.0fs silent while active, "
+                "%d watchdog reconnects so far",
+                conn.seconds_since_event,
+                conn.reconnects,
+            )
+            self.event_bus.publish(
+                system_error_event(
+                    module="sensing.activity.window",
+                    exception=(
+                        f"no Wayland focus event in {conn.seconds_since_event:.0f}s while the "
+                        f"user is active ({conn.reconnects} watchdog reconnects)"
+                    ),
+                    severity="sensor-degraded",
+                )
+            )
+
     def health(self) -> ModuleHealth:
         # B15 · "✓" now means the source is started AND its poll-pump is still
         # live. A pump that died and burned its reconnect budget flips is_alive to
         # False, so health stops printing "✓" for a sensor that has gone deaf
         # (the B7 failure was a dead collector that still looked healthy).
+        # B16 · "~" is the third state: alive and connected but not hearing the
+        # compositor while the user is active — the soak's actual failure.
         idle_live = self._idle_ok and self._idle_source is not None and self._idle_source.is_alive
         window_live = (
             self._window_ok and self._window_source is not None and self._window_source.is_alive
         )
+        window_deaf = window_live and self._window_degraded
         idle = "idle✓" if idle_live else "idle✗"
-        window = "window✓" if window_live else "window✗"
-        # A source that STARTED and then died drags the module unhealthy — that is
-        # the alarm B7 never had. A source that never started (headless, no
-        # compositor) stays tolerated, exactly as before.
-        died = (self._idle_ok and not idle_live) or (self._window_ok and not window_live)
+        window = "window~" if window_deaf else ("window✓" if window_live else "window✗")
+        # A source that STARTED and then died — or went deaf while alive — drags
+        # the module unhealthy. That is the alarm B7/B15 never had. A source that
+        # never started (headless, no compositor) stays tolerated, unchanged.
+        died = (
+            (self._idle_ok and not idle_live)
+            or (self._window_ok and not window_live)
+            or window_deaf
+        )
         # B15 soak instrumentation — the shared Wayland connection's watchdog
         # activity, so a 7-day run can tell "quiet" from "self-healing every
         # few minutes" (B15_PLAN.md §7). Real path only; the injected-doubles

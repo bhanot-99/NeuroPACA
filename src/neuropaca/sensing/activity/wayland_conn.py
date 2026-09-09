@@ -181,9 +181,14 @@ class WaylandConnection:
         while not self._stopped:
             try:
                 if self._display is None:
+                    silent_for = self.seconds_since_event
                     self._connect()
                     self.reconnects += 1
-                    _log.info("WaylandConnection reconnected (%d)", self.reconnects)
+                    _log.info(
+                        "WaylandConnection reconnected (%d) after %.0fs silent",
+                        self.reconnects,
+                        silent_for,
+                    )
                 assert self._display is not None
                 if select.select([self._fd], [], [], 0)[0]:
                     self._display.read()
@@ -209,6 +214,13 @@ class WaylandConnection:
                 raise
             except Exception:
                 self._connected = False
+                if self._stopped:
+                    # a tick that raced the interpreter/loop shutdown (seen once
+                    # at a soak SIGTERM: `read()` -> "Failed to read events"). Not
+                    # a defect — do not count it or log a traceback.
+                    _log.debug("WaylandConnection pump tick raised during shutdown", exc_info=True)
+                    self._teardown()
+                    return
                 self.pump_errors += 1
                 _log.exception("WaylandConnection pump tick failed — will reconnect")
                 self._teardown()

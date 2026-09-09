@@ -335,6 +335,37 @@ async def test_permanent_failure_gives_up_and_reports_dead(monkeypatch) -> None:
     assert conn.is_alive is False
 
 
+async def test_shutdown_race_is_not_counted_as_a_pump_error(monkeypatch, caplog) -> None:
+    # B16 §3d — stop() landing at the exact moment a tick raises (the SIGTERM race
+    # that logged a "Failed to read events" traceback in the soak) must exit
+    # quietly: no pump_errors, no traceback, still torn down.
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    fake = _FakeDisplay()
+    conn._display = fake
+    conn._fd = r
+
+    real_dispatch = fake.dispatch
+
+    def dispatch_then_shutdown(*, block: bool = False) -> int:
+        conn._stopped = True  # stop() lands now
+        raise RuntimeError("Failed to read events")
+
+    fake.dispatch = dispatch_then_shutdown  # type: ignore[method-assign]
+
+    with caplog.at_level("WARNING"):
+        task = asyncio.get_running_loop().create_task(conn._pump())
+        await asyncio.wait_for(task, timeout=1.0)
+    os.close(r)
+    os.close(w)
+    _ = real_dispatch
+    assert conn.pump_errors == 0
+    assert fake.disconnected is True
+    assert "pump tick failed" not in caplog.text
+
+
 async def test_cancellation_propagates(monkeypatch) -> None:
     monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.02)
     r, w = os.pipe()

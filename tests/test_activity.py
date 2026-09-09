@@ -9,6 +9,7 @@ Driven by `FakeIdleSource` — no compositor, no pywayland. The live Wayland pat
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import ClassVar
 
@@ -285,6 +286,8 @@ class _FakeConn:
         self.start_raises: Exception | None = None
         self.reconnects = 0
         self.pump_errors = 0
+        self.seconds_since_event = 0.0  # B16 — deafness probe
+        self.activity_probe = None
         _FakeConn.instances.append(self)
 
     def add(self, handler: object) -> None:
@@ -397,6 +400,63 @@ async def test_real_path_connection_dies_later_drags_health_unhealthy(monkeypatc
     dead = collector.health()
     assert dead.ok is False
     assert "idle✗" in dead.detail and "window✗" in dead.detail
+
+    await collector.stop()
+    await bus.stop()
+
+
+# ------------------------------------------------ B16 · deafness while alive
+
+
+async def test_window_deaf_while_active_degrades_health_and_emits(monkeypatch) -> None:
+    monkeypatch.setattr("neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn)
+    monkeypatch.setattr("neuropaca.sensing.activity.collector._DEAF_POLL_SECONDS", 0.01)
+    monkeypatch.setattr("neuropaca.sensing.activity.collector._WINDOW_DEAF_SECONDS", 0.0)
+    _FakeConn.instances.clear()
+    bus = await _running_bus()
+    errors: list[Event] = []
+    bus.subscribe(EventType.SYSTEM_ERROR, _collect(errors))
+    collector = ActivityCollector(bus, Config(inference_backend="fake"))
+    await collector.initialize()
+    await collector.start()
+    assert collector.health().ok is True  # healthy until proven deaf
+
+    conn = _FakeConn.instances[0]
+    conn.seconds_since_event = 999.0  # alive, connected, but silent
+    conn.reconnects = 7
+    await asyncio.sleep(0.05)  # let the deafness watchdog tick
+    await bus.join()
+
+    degraded = collector.health()
+    assert degraded.ok is False
+    assert "window~" in degraded.detail  # the third state, not window✗
+    assert any(e.payload["severity"] == "sensor-degraded" for e in errors)
+
+    conn.seconds_since_event = 0.0  # a reconnect brought events back
+    await asyncio.sleep(0.03)
+    assert collector.health().ok is True
+    assert "window✓" in collector.health().detail
+
+    await collector.stop()
+    await bus.stop()
+
+
+async def test_window_deaf_but_user_idle_is_not_degraded(monkeypatch) -> None:
+    monkeypatch.setattr("neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn)
+    monkeypatch.setattr("neuropaca.sensing.activity.collector._DEAF_POLL_SECONDS", 0.01)
+    monkeypatch.setattr("neuropaca.sensing.activity.collector._WINDOW_DEAF_SECONDS", 0.0)
+    _FakeConn.instances.clear()
+    bus = await _running_bus()
+    collector = ActivityCollector(bus, Config(inference_backend="fake"))
+    await collector.initialize()
+    await collector.start()
+    collector._idle = True  # nobody is switching windows — silence is expected
+    _FakeConn.instances[0].seconds_since_event = 999.0
+    await asyncio.sleep(0.05)
+
+    ok = collector.health()
+    assert ok.ok is True
+    assert "window✓" in ok.detail
 
     await collector.stop()
     await bus.stop()

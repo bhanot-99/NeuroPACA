@@ -5,9 +5,9 @@
 | | |
 | --- | --- |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
-| **Version** | v5 |
-| **Dossier date** | 2026-09-08 |
-| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B15 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix); 6 of 7 B9 exit criteria met; the B15 fix is live-confirmed, the **1-hour soak gate passed on 2026-09-08**, and the **7-day soak started 2026-09-08T19:56Z** from a wiped graph (`neuropaca.b13.toml`, full sensing, dry-run safe) |
+| **Version** | v6 |
+| **Dossier date** | 2026-09-10 |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B16 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2); 6 of 7 B9 exit criteria met. The 7-day soak has been **voided twice** for focus data — the 2026-09-03 run (B15 §2a) and the 2026-09-08 B15-rebuilt run (B16: the B15 fix was half of one; the sensor still deafened itself within 180 s, and its watchdog was doing 100 % of the work). B16 fixed on `b16-wayland-subscription-stability`, probe-confirmed; soak restart pending |
 | **Code size** | 13,254 lines of source · 12,609 lines of tests · 603 collected tests (580 default) · 102 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
@@ -296,7 +296,7 @@ survives as `neuropaca run` (`$!` / `$$` are now an internal L9→L7 wire enum).
 | **2** | **A single usage score reused for retention, replay, and ranking** | Retrieval systems rank by semantic similarity; caches evict by LRU; nobody has unified all three under one behaviourally-derived score and measured whether that unification costs anything. |
 | **3** | **Corroboration-gated autonomy, measured** | "Require multiple signals before acting" is folklore. We turn it into a structural set test and show it is *impossible* — not merely unlikely — for one source to cross the high threshold, with 500 max-confidence spikes producing 167× the threshold and still firing only the low tier. |
 | **4** | **A CPU-only, zero-egress agent that is proven zero-egress** | Privacy claims are usually documentation. Here they are a CI job in a network namespace that fails the build if an outbound connection succeeds. |
-| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf on 1-in-3 starts and misdiagnosed twice, a `chat` feature built over two phases then withdrawn. Negative results with numbers attached are rare and reusable. |
+| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf and misdiagnosed **four** times (missing env var, wrong env var, one GC'd proxy, then its unreferenced parent), a `chat` feature built over two phases then withdrawn. Negative results with numbers attached are rare and reusable. |
 
 ### 5.2 What makes the results credible
 
@@ -575,11 +575,12 @@ flowchart LR
     B10 --> B13["B13 ✅<br/>resource-aware sensing"]
     B13 --> B14["B14 ✅<br/>web-app attribution"]
     B14 --> B15["B15 ✅<br/>Wayland sensor fix"]
-    B15 -.->|re-run| B9
+    B15 --> B16["B16 ✅<br/>Wayland sensor fix<br/>(round two)"]
+    B16 -.->|re-run| B9
     B9 -.-> D1["D1 ⏸<br/>model pruning"]
 ```
 
-> B10–B15 are **post-B9 work**, not a linear continuation. B9's seventh criterion (the 7-day soak) is still open; B13–B15 exist because chasing *why* the soak measured nothing uncovered three separate causes (inert Idle/Distraction patterns, CPU being the wrong primary signal, and a deaf Wayland focus sensor). Each fix has its own phase, its own plan doc (`B13_PLAN.md` … `B15_PLAN.md`), and its own test report; the soak gate is now re-run against the fixed system.
+> B10–B16 are **post-B9 work**, not a linear continuation. B9's seventh criterion (the 7-day soak) is still open; B13–B16 exist because chasing *why* the soak measured nothing uncovered four separate causes (inert Idle/Distraction patterns, CPU being the wrong primary signal, and the Wayland focus sensor going deaf — twice, from two different unreferenced proxies). Each fix has its own phase, its own plan doc (`B13_PLAN.md` … `B16_PLAN.md`), and its own test report; the soak gate is now re-run against the fixed system.
 
 ### 10.1 The methodology rules
 
@@ -607,11 +608,12 @@ flowchart LR
 | **B6** | L6 idle cognition — the Default Mode Network, consolidate / link-orphans / prune-stale, extractive idle thoughts | Cancel a mid-consolidate cycle in **0.1 ms**, zero corruption |
 | **B7** | L5 drive + L7 action — pressure accumulator, safety gate, sandbox, quarantine, audit, confirmation broker | 500 max-confidence spikes → **167×** the high threshold, still only the low tier fires |
 | **B8** | L8 agents — supervisor, ephemeral sub-clusters, apoptosis, `ACTION_PROPOSAL` decoupling | Cap of 12 held under **60 simultaneous** spawns |
-| **B9** | L10 hardening — systemd unit, crash recovery, schema versioning, logrotate, offline verbs, CI egress test, 7-day soak | **6 of 7** criteria met; soak harness rebuilt post-B15; 1-hour gate **passed 2026-09-08** (fallback path); 7-day soak not yet started |
+| **B9** | L10 hardening — systemd unit, crash recovery, schema versioning, logrotate, offline verbs, CI egress test, 7-day soak | **6 of 7** criteria met; soak harness rebuilt post-B15; 1-hour gate **passed 2026-09-08** (fallback path); 7-day soak void for focus twice (B15, then B16) — restart from the B16 build pending |
 | **B10–B12** | Terminal reconceived — an interactive shell (B10) and a doc/graph `chat` (B11) were built, then **both withdrawn in B12** for a deterministic `ast`-based read-only project guide (`neuropaca tell` / `overview`) | A 3B-Q4 model paraphrasing a retrieved chunk is not reproducible; §4.1 records the full rejection |
 | **B13** | Resource-aware sensing (D-19) — `ProcessCollector` census, `Node` schema v3, `MemoryPressurePattern`, `HeavyAppStartedPattern`, non-inert Idle/Distraction, `RawMetricsRecorder` CSV | 484 tests green (39 new); the loop now fires under real dogfooding, not just the positive control |
 | **B14** | Web-app attribution — the browser stops being one opaque node; `NodeType.WEBAPP` (schema v4), title→allowlist-label inside the collector | ~35 tests new; **no per-tab/URL data leaves the collector** — a property of the design |
 | **B15** | The Wayland activity sensor was **deaf, not dead** — a GC'd `zcosmic_toplevel_handle_v1` proxy on ~1 in 3 starts; two `Display` connections, the second segfaulting on teardown | Strong-ref dict + one shared `WaylandConnection` + poll-pump; **0/20 restarts deaf** (was ~1/3); this is the mechanism behind B7's three zero-L5 soaks |
+| **B16** | B15's fix was **half of one** — it strong-ref'd the child cosmic proxy but not its parent `ext_foreign_toplevel_handle_v1`, and keyed the cache by the dead parent's `id()`; the sensor still deafened itself within 180 s and its liveness watchdog was doing 100 % of the work (soak: 54/65 gaps at exactly 180 s) | Strong-ref **both** proxies keyed by a monotonic int; reachable `_drop`; `finished` binding; a real "events arriving" health state (`window~`). `--leak`/`--hold` lifetime probe + daemon A/B confirm; 584 tests green |
 
 ---
 
@@ -806,6 +808,26 @@ health` showed `activity ✓ idle✓ window✓ · 75 switches` over ~2 h uptime,
 the old ~4-an-hour, with every subsystem at `0 errors`. The gate's per-window switch
 delta was low only because interactive use was light during that specific hour, not
 because the sensor was deaf.
+
+**Then B16 — the B15 fix was half of one (found 2026-09-09, ~21 h into the soak).**
+The B15 liveness watchdog, meant to be a rare safety net, was doing **all** the
+work: soak session 2 (active use) logged **54 of ~65 inter-reconnect gaps at
+exactly 180–181 s** — the watchdog forcing a reconnect on every window because the
+connection dispatched **zero** events between them. Focus was effectively polled
+every 3 minutes, and `assess` failed the run on `72 Wayland reconnects over 0.9d`.
+Root cause (§15.11): B15 strong-ref'd the *child* `zcosmic_toplevel_handle_v1` but
+not its parent `ext_foreign_toplevel_handle_v1`, and keyed the caches by
+`id(handle)` of the (unreferenced, immediately-collected) parent — so the parent
+self-destructed via `wl_proxy_destroy` and later events were dropped, and reused
+`id()`s evicted live handles as new windows opened (which is why session 1 —
+overnight, few new windows — decayed slowly and session 2 — active — decayed to
+total silence). B16 retains **both** proxies keyed by a monotonic int for the
+toplevel's life, makes `_drop` reachable, binds `finished`, and adds a real
+"events arriving" health state (`window~` → `health.ok` false + a `sensor-degraded`
+`SYSTEM_ERROR`) so a deaf-but-connected sensor cannot pass. Confirmed by a
+standalone lifetime probe (`--leak` reproduces the total silence, `--hold` gives a
+live stream) and a daemon A/B on the target box. The 2026-09-08 soak's **focus
+data is void**; its RSS/stability data stands. Soak restarts from the B16 build.
 
 **The soak harness, rebuilt for B15.** The `b9_soak_*` scripts were retired. The new
 set: `soak_probe.py` (a single authoritative JSON health sample read over the L9
@@ -1096,10 +1118,10 @@ The B9 soak's "zero insights in three days" (§15.5) has **three** independent c
 inert Idle/Distraction patterns; CPU being the wrong primary signal for "what is
 this person doing" — it is bursty and mostly ~0, while **RAM footprint** is the
 stable indicator of what is loaded and being worked with; and (found later, B15
-§2a) the Wayland focus sensor was deaf that whole run — a GC'd proxy — so the
-`FocusSessionPattern` / `DistractionPattern` path had almost nothing to fire on.
-B13 fixes the first two; B15 fixes the third. The rejected alternatives for B13,
-recorded for the paper:
+§2a / B16 §2) the Wayland focus sensor was deaf that whole run — a GC'd proxy, and
+then, post-B15, its unreferenced parent proxy — so the `FocusSessionPattern` /
+`DistractionPattern` path had almost nothing to fire on. B13 fixes the first two;
+B15 + B16 fix the third. The rejected alternatives for B13, recorded for the paper:
 
 | Rejected | Why |
 | --- | --- |
@@ -1131,10 +1153,11 @@ recorded for the paper:
 | A browser extension feeding the daemon | A second sensing channel, a second privacy surface, a second thing to install and keep alive — for data the compositor already exposes as the window title. |
 | Store the raw title on the node and filter at read | The raw title carries email addresses and unread counts. Filtering at read means the sensitive string still lands in `graph.json` and every backup. The membrane has to be *in the collector*. |
 
-### 15.11 B15 · the deaf sensor — why the earlier diagnoses were wrong
+### 15.11 B15 / B16 · the deaf sensor — why it was misdiagnosed *four* times
 
-B15 is the third and final cause of "the soak measures nothing" (after the two in
-§15.9). It is worth recording that it was **misdiagnosed twice**:
+The Wayland focus sensor going deaf is the third cause of "the soak measures
+nothing" (after the two in §15.9), and the single most-misdiagnosed defect in the
+project. Recorded in the order the wrong answers were given:
 
 - **B7's diagnosis:** "the collector cannot see Wayland under `systemd --user` —
   `WAYLAND_DISPLAY` is missing." Partly true (the daemon started before the
@@ -1143,20 +1166,36 @@ B15 is the third and final cause of "the soak measures nothing" (after the two i
 - **B15's first detour (~2 h):** a missing `XDG_SESSION_ID` under systemd. Ruled out
   by a clean-restart A/B — `systemctl --user restart` had silently *not been taking
   effect*, so the "fix" and the "no fix" runs were the same binary.
-- **The actual cause:** the `zcosmic_toplevel_handle_v1` proxy — the only source of
-  "which window is focused" — was held in a local variable and GC'd
+- **B15's answer (partly right):** the `zcosmic_toplevel_handle_v1` proxy — the
+  carrier of "which window is focused" — was held in a local variable and GC'd
   non-deterministically. A collected pywayland proxy stops delivering events
-  *silently*. ~1 in 3 daemon starts came up permanently deaf, binary per start, and
-  `health()` still printed `window✓`. This is the mechanism behind B7's three
-  zero-L5 soaks and B13's 4-switches-an-hour gate. Fixed with a strong-ref dict
-  (`0/20` restarts deaf after), one shared connection (erasing a teardown SIGSEGV),
-  and a poll-pump whose `health()` reads liveness live so a died sensor drags the
-  module unhealthy.
+  *silently*. ~1 in 3 daemon starts came up permanently deaf, and `health()` still
+  printed `window✓`. Fixed with a strong-ref dict (`0/20` restarts deaf after),
+  one shared connection (erasing a teardown SIGSEGV), and a poll-pump. **But this
+  was half of one bug.**
+- **B16's answer (the rest of it), found ~21 h into the B15-rebuilt soak:** the
+  liveness watchdog B15 added as a rare safety net was doing **100 %** of the work
+  — 54 of ~65 inter-reconnect gaps at exactly 180 s, zero events between them.
+  B15 strong-ref'd the *child* cosmic handle but not its *parent*
+  `ext_foreign_toplevel_handle_v1` (which carries `app_id`/`title` — the only
+  identity source on protocol v3), and keyed both caches by `id(handle)`.
+  pywayland retains proxies only weakly and runs `wl_proxy_destroy` on GC, so the
+  parent died right after `_on_toplevel` and its later events were dropped as
+  zombie traffic; and once collected, its `id()` was reused, so a new window would
+  evict a *live* cosmic handle. A standalone lifetime probe
+  (`spikes/b16_toplevel_lifetime/`) shows it in one screen: `--leak` (no parent
+  ref) → every proxy finalised within one second, `fd-readable ×0` for the rest of
+  the run; `--hold` (both refs, monotonic-int keys) → a continuous focus stream.
+  Fixed by retaining both proxies for the toplevel's whole life, plus a real
+  "events actually arriving" health state (`window~`) so a deaf-but-connected
+  sensor can no longer pass.
 
-**The lesson for the methodology:** `window✓` was a *label*, not a *check* — the same
-failure class as `chat`'s advisory grounding (§4.1) and the journal greps that read
-zero from an empty journal (§11.10). A status signal that cannot go false is not
-evidence.
+**The lesson for the methodology:** `window✓` was a *label*, not a *check*; B15's
+`window✓ = is_alive` was a *better label*, still not a check — it went true for a
+connected pump receiving nothing. Same failure class as `chat`'s advisory
+grounding (§4.1) and the journal greps that read zero from an empty journal
+(§11.10). A status signal only counts as evidence once you have shown it can go
+false for the failure you care about — which for this sensor took three tries.
 
 ---
 
@@ -1417,7 +1456,7 @@ flowchart TD
 
 ## Appendix A — decision log index
 
-Nineteen numbered rulings (D-1 … D-19), plus the B14 and B15 phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and the per-phase `B1x_PLAN.md` docs.
+Nineteen numbered rulings (D-1 … D-19), plus the B14, B15 and B16 phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and the per-phase `B1x_PLAN.md` docs.
 
 | # | Decision, in one line |
 | --- | --- |
@@ -1442,6 +1481,7 @@ Nineteen numbered rulings (D-1 … D-19), plus the B14 and B15 phase rulings, ea
 | **D-19** | **B13 resource-aware sensing** — reuse `NodeType.APP` (no `PROCESS` type); RSS not PSS for round 1; no census exclusions in round 1; idle → last active app; new `SignalType.WORKING_SET_CHANGE` (schema v3); 200 MB name-grouped census threshold; CPU and memory stay separate patterns |
 | **B14 D2/D3** | **Web-app attribution** (operator-ratified 2026-09-08) — the focused tab's domain overrides `brave = habits`; browser tab switches feed `DistractionPattern`; `NodeType.WEBAPP` + schema v4. Rejected: an id-prefix on `NodeType.APP` (no schema bump), reading browser history/session files, a browser extension, storing the raw title and filtering at read |
 | **B15** | **The Wayland sensor fix** — a strong-ref dict for cosmic toplevel proxies (the flaky-deafness fix), one shared `WaylandConnection` collapsing two `Display` connections (erases the teardown segfault), and a `select`-based poll-pump that always `dispatch`es (the proven B2.5 shape, not `add_reader`). No systemd unit change |
+| **B16** | **The Wayland sensor fix, round two** — strong-ref *both* toplevel proxies (B15 held only the child), keyed by a monotonic int not `id()` (a collected proxy's `id()` is reused and evicts live handles); make `_drop` reachable; bind `finished`; add a `window~` health state that reads "events actually arriving", not just "pump alive". Escalation to a dedicated Wayland thread held in reserve (not needed — proxy lifetime fully explains it). No systemd unit change |
 
 ---
 
@@ -1490,12 +1530,14 @@ Nineteen numbered rulings (D-1 … D-19), plus the B14 and B15 phase rulings, ea
 | `DMN._top_nodes()` @10k, before → after | 34 ms → 9 ms (3.7×) | Audit |
 | Gate RSS, idle → DMN wake | 42.7 → 1476.1 MiB | B9 |
 | Cross-phase model RSS agreement | 1477 MiB (B4) vs 1476.1 MiB (B9) | B4 / B9 |
-| Wayland focus sensor, forced-restart deafness | ~1 in 3 → **0 / 20** after the strong-ref fix | B15 |
-| Live focus switch rate, post-B15, on the target box | **~48 / hour** (`window✓`, 0 reconnects, 0 pump-errors) vs the old ~4 | B15 |
-| B13 test count / B14 / B15 | 484 green / ~524 / 561 | B13–B15 |
+| Wayland focus sensor, forced-restart deafness | ~1 in 3 → **0 / 20** after the B15 strong-ref fix | B15 |
+| B15 watchdog reconnects, 7-day soak session 2 | **54 of ~65 gaps at exactly 180 s** — the watchdog doing 100 % of the work | B16 |
+| Toplevel-proxy lifetime probe | `--leak`: every proxy finalised < 1 s, `fd-readable ×0` after · `--hold`: continuous focus stream, 0 stray finalises | B16 |
+| Daemon A/B, B16 build, ~3 min real use | **19 focus switches tracked in real time, 0 watchdog reconnects, `window✓`** (old build: count frozen, a reconnect every ~180 s) | B16 |
+| B13 test count / B14 / B15 / B16 | 484 / ~524 / 561 / **584** green | B13–B16 |
 | Graph schema version | **v4** (`NodeType.WEBAPP`); v1 still readable | B14 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
-| 7-day soak | prior run void (B15 §2a — deaf sensor); harness rebuilt; gate passed; **started 2026-09-08T19:56Z from a wiped graph** (11 hubs at t=0) | B9 / B15 |
+| 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 
 ---
 
