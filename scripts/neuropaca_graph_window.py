@@ -60,6 +60,72 @@ LOCK_PATH = REPO / "data" / "soak" / ".graph-window.lock"
 ROOT_ID = "YOU"
 DOMAIN_PREFIX = "domain:"
 
+# The 10 routing domains, in `graph_memory.DOMAIN_SLUGS` order — B17 pins the
+# hubs on a fixed ring in this order so the structure never reshuffles.
+DOMAIN_ORDER: tuple[str, ...] = (
+    "engineering",
+    "research",
+    "tools",
+    "system",
+    "habits",
+    "projects",
+    "meetings",
+    "comms",
+    "mental_models",
+    "learning",
+)
+HUB_RING = 260.0  # world-unit radius of the domain ring around YOU
+
+# B17 · readable node names. `label` on `app:`/`webapp:` nodes is the canonical
+# slug after the identity pass; everything here just title-cases it nicely.
+_PRETTY_WORDS: dict[str, str] = {
+    "vscode": "VS Code",
+    "code": "VS Code",
+    "cosmicterm": "Cosmic Term",
+    "cosmic-term": "Cosmic Term",
+    "cosmicfiles": "Cosmic Files",
+    "cosmic-files": "Cosmic Files",
+    "cosmicmonitor": "Cosmic Monitor",
+    "cosmic-comp": "Cosmic Comp",
+    "github": "GitHub",
+    "gitlab": "GitLab",
+    "youtube": "YouTube",
+    "chatgpt": "ChatGPT",
+    "whatsapp": "WhatsApp",
+    "linkedin": "LinkedIn",
+    "mental_models": "Mental Models",
+    "mental-models": "Mental Models",
+}
+_ACRONYMS: frozenset[str] = frozenset({"ai", "cli", "db", "ide", "mcp", "os", "vs", "ui", "ux"})
+
+
+def _titlecase(slug: str) -> str:
+    key = slug.strip().lower().replace("_", "-")
+    if key in _PRETTY_WORDS:
+        return _PRETTY_WORDS[key]
+    words = [w for w in key.replace("-", " ").split() if w]
+    return " ".join(w.upper() if w in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
+
+
+def pretty_label(node_id: str, node: dict[str, Any]) -> str:
+    """A human name for any node — used for every drawn label and the panel."""
+    if node_id == ROOT_ID:
+        return "You"
+    label = str(node.get("label") or "").strip()
+    if node_id.startswith(DOMAIN_PREFIX):
+        return _titlecase(node_id[len(DOMAIN_PREFIX) :])
+    if node_id.startswith(("app:", "webapp:")):
+        return _titlecase(label or node_id.split(":", 1)[1])
+    if node_id.startswith(("insight:", "idle:")):
+        first = label.splitlines()[0].strip() if label else ""
+        if first:
+            return first if len(first) <= 44 else first[:43] + "…"
+        return "Idle thought" if node_id.startswith("idle:") else "Insight"
+    if node_id.startswith("ephemeral:"):
+        parts = node_id.split(":")
+        return _titlecase(parts[1]) if len(parts) > 2 else "Note"
+    return label or node_id
+
 # Node-type fill colours -- lifted verbatim from graph_view_template.html's dark
 # palette so this window and the HTML viewer render the same graph the same way.
 TYPE_COLOUR: dict[str, tuple[float, float, float]] = {
@@ -158,14 +224,41 @@ class Layout:
         self._rng = random.Random(7)
         self.temperature = 1.0
 
+    @staticmethod
+    def hub_position(node_id: str) -> tuple[float, float] | None:
+        """Deterministic fixed position for one of the 11 master nodes, or None.
+        YOU at the origin; the 10 domains evenly on a ring, first at 12 o'clock,
+        clockwise in DOMAIN_ORDER (B17 — the structure never reshuffles)."""
+        if node_id == ROOT_ID:
+            return (0.0, 0.0)
+        if not node_id.startswith(DOMAIN_PREFIX):
+            return None
+        slug = node_id[len(DOMAIN_PREFIX) :]
+        if slug not in DOMAIN_ORDER:
+            return None
+        i = DOMAIN_ORDER.index(slug)
+        ang = -math.pi / 2 + 2 * math.pi * i / len(DOMAIN_ORDER)
+        return (HUB_RING * math.cos(ang), HUB_RING * math.sin(ang))
+
+    def pin_hubs(self, data: GraphData) -> None:
+        """Force every present master node onto its fixed position and pin it —
+        called every `sync()` so drift or a stale drag can never move a hub."""
+        for node_id in data.nodes:
+            fixed = self.hub_position(node_id)
+            if fixed is not None:
+                self.pos[node_id] = [fixed[0], fixed[1]]
+                self.pinned.add(node_id)
+
     def sync(self, data: GraphData) -> None:
         ids = set(data.nodes)
         for gone in set(self.pos) - ids:
             del self.pos[gone]
             self.pinned.discard(gone)
         n = max(len(ids), 1)
-        radius = 24.0 * math.sqrt(n)
+        radius = max(24.0 * math.sqrt(n), HUB_RING * 1.15)
         for node_id in ids - set(self.pos):
+            if self.hub_position(node_id) is not None:
+                continue  # placed by pin_hubs below
             anchor = data.domain_of.get(node_id)
             if anchor and anchor in self.pos:
                 ax, ay = self.pos[anchor]
@@ -173,14 +266,13 @@ class Layout:
                     ax + self._rng.uniform(-40, 40),
                     ay + self._rng.uniform(-40, 40),
                 ]
-            elif node_id == ROOT_ID:
-                self.pos[node_id] = [0.0, 0.0]
             else:
                 ang = self._rng.uniform(0, 2 * math.pi)
                 self.pos[node_id] = [
                     radius * math.cos(ang) * self._rng.uniform(0.3, 1.0),
                     radius * math.sin(ang) * self._rng.uniform(0.3, 1.0),
                 ]
+        self.pin_hubs(data)
         if ids - set(self.pos) == set():
             self.temperature = max(self.temperature, 0.6)
 
@@ -290,6 +382,7 @@ def _run(graph_path: Path) -> int:
         "last_reload_check": 0.0,
         "settle_frames": 0,
         "fitted": False,
+        "selected": None,  # B17 · node whose detail panel is open
     }
 
     def reload_now(*, warm: int) -> None:
@@ -300,6 +393,10 @@ def _run(graph_path: Path) -> int:
             state["settle_frames"] = 200
             if not state["fitted"] and data.nodes:
                 fit_view()
+            if state["selected"] and state["selected"] not in data.nodes:
+                select_node(None)
+            elif state["selected"]:
+                populate_panel(state["selected"])
         _update_title()
 
     # ---- view helpers ------------------------------------------------------ #
@@ -409,18 +506,34 @@ def _run(graph_path: Path) -> int:
             cr.arc(px, py, r, 0, 2 * math.pi)
             cr.fill()
 
+            selected = node_id == state["selected"]
             if node_id.startswith("ephemeral:"):
                 cr.set_dash([2.0, 2.0])
-            cr.set_source_rgba(*INK, 0.0 if dim else (0.9 if node_id == hover else 0.35))
-            cr.set_line_width(1.5 if node_id == hover else 1.0)
+            if selected:
+                cr.set_source_rgba(*INK, 1.0)
+                cr.set_line_width(2.4)
+            else:
+                cr.set_source_rgba(*INK, 0.0 if dim else (0.9 if node_id == hover else 0.35))
+                cr.set_line_width(1.5 if node_id == hover else 1.0)
             cr.arc(px, py, r, 0, 2 * math.pi)
             cr.stroke()
             cr.set_dash([])
 
-            if data.is_hub(node_id) or node_id == hover or node_id in neighbours or show_all_labels:
-                label = str(data.nodes[node_id].get("label") or node_id)
+            if (
+                data.is_hub(node_id)
+                or node_id in (hover, state["selected"])
+                or node_id in neighbours
+                or show_all_labels
+            ):
                 _label(
-                    cr, PangoCairo, Pango, px, py + r + 3, label, bold=data.is_hub(node_id), dim=dim
+                    cr,
+                    PangoCairo,
+                    Pango,
+                    px,
+                    py + r + 3,
+                    pretty_label(node_id, data.nodes[node_id]),
+                    bold=data.is_hub(node_id),
+                    dim=dim,
                 )
         return False
 
@@ -474,18 +587,88 @@ def _run(graph_path: Path) -> int:
             area.queue_draw()
         return True
 
+    # ---- detail panel (B17) ------------------------------------------- #
+    def select_node(node_id: str | None) -> None:
+        state["selected"] = node_id if node_id in data.nodes else None
+        if state["selected"]:
+            populate_panel(state["selected"])
+            panel.show()
+        else:
+            panel.hide()
+        area.queue_draw()
+
+    def _row(text: str, *, key: str = "", mono: bool = False, bold: bool = False) -> Any:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        if key:
+            k = Gtk.Label(label=key, xalign=0.0)
+            k.get_style_context().add_class("dim-label")
+            k.set_size_request(96, -1)
+            row.pack_start(k, False, False, 0)
+        v = Gtk.Label(label=text, xalign=0.0, selectable=mono, wrap=True)
+        if mono:
+            v.set_name("mono")
+        if bold:
+            v.set_markup(f"<b>{GLib.markup_escape_text(text)}</b>")
+        row.pack_start(v, True, True, 0)
+        return row
+
+    def populate_panel(node_id: str) -> None:
+        for child in panel_box.get_children():
+            panel_box.remove(child)
+        node = data.nodes.get(node_id, {})
+        panel_box.pack_start(_row(pretty_label(node_id, node), bold=True), False, False, 0)
+        panel_box.pack_start(_row(node_id, mono=True), False, False, 0)
+        panel_box.pack_start(Gtk.Separator(), False, False, 4)
+
+        def num(key: str, fmt: str = "{}") -> str:
+            val = node.get(key)
+            return fmt.format(val) if val not in (None, "", 0, 0.0) else "—"
+
+        def add(text: str, key: str = "") -> None:
+            panel_box.pack_start(_row(text, key=key), False, False, 0)
+
+        add(str(node.get("node_type", "—")), "type")
+        add(num("relevance_score", "{:.2f}"), "relevance")
+        add(num("access_count"), "focused")
+        add(num("priority"), "priority")
+        if node.get("ram_mb"):
+            add(f"{float(node['ram_mb']):.0f} MiB", "RAM")
+        if node.get("cpu_percent"):
+            add(f"{float(node['cpu_percent']):.0f}%", "CPU")
+        for key, label in (("first_seen_at", "first seen"), ("last_seen_at", "last seen")):
+            if node.get(key):
+                add(str(node[key]).replace("T", " ")[:19], label)
+
+        nbrs = sorted(
+            {(r, t) for s, t, _w, r in data.edges if s == node_id}
+            | {(r, s) for s, t, _w, r in data.edges if t == node_id}
+        )
+        panel_box.pack_start(Gtk.Separator(), False, False, 4)
+        panel_box.pack_start(_row(f"Connected to ({len(nbrs)})", bold=True), False, False, 0)
+        for relation, other in nbrs:
+            other_name = pretty_label(other, data.nodes.get(other, {}))
+            btn = Gtk.Button(label=f"{relation or 'related'} · {other_name}")
+            btn.set_relief(Gtk.ReliefStyle.NONE)
+            btn.get_child().set_xalign(0.0)
+            btn.connect("clicked", lambda _b, o=other: select_node(o))
+            panel_box.pack_start(btn, False, False, 0)
+        panel_box.show_all()
+
     # ---- interaction --------------------------------------------------- #
     def on_press(_w: Any, ev: Any) -> bool:
         if ev.button == 1:
             hit = node_at(ev.x, ev.y)
             if hit:
-                state["drag_node"] = hit
-                layout.pinned.add(hit)
+                select_node(hit)
+                if not data.is_hub(hit):  # hubs are fixed — never draggable (B17)
+                    state["drag_node"] = hit
+                    layout.pinned.add(hit)
             else:
+                select_node(None)
                 state["pan"] = (ev.x, ev.y, state["tx"], state["ty"])
         elif ev.button == 3:
             hit = node_at(ev.x, ev.y)
-            if hit:
+            if hit and not data.is_hub(hit):
                 layout.pinned.discard(hit)
                 layout.temperature = max(layout.temperature, 0.4)
         return True
@@ -555,7 +738,41 @@ def _run(graph_path: Path) -> int:
     area.connect("button-release-event", on_release)
     area.connect("motion-notify-event", on_motion)
     area.connect("scroll-event", on_scroll)
-    win.add(area)
+
+    # B17 · the node detail panel, docked right. `no_show_all` so the window's
+    # `show_all()` does not force it visible before a node is selected.
+    panel_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    panel_box.set_border_width(12)
+    panel_scroll = Gtk.ScrolledWindow()
+    panel_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    panel_scroll.add(panel_box)
+    panel = Gtk.Frame()
+    panel.set_size_request(300, -1)
+    panel.set_shadow_type(Gtk.ShadowType.NONE)
+    panel.add(panel_scroll)
+    panel.set_no_show_all(True)
+
+    _css = Gtk.CssProvider()
+    _css.load_from_data(
+        b"#mono{font-family:monospace;font-size:9pt;}"
+        b"frame{border-left:1px solid alpha(@theme_fg_color,0.15);}"
+    )
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), _css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
+    hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+    hbox.pack_start(area, True, True, 0)
+    hbox.pack_start(panel, False, False, 0)
+    win.add(hbox)
+
+    def on_key(_w: Any, ev: Any) -> bool:
+        if ev.keyval == Gdk.KEY_Escape and state["selected"]:
+            select_node(None)
+            return True
+        return False
+
+    win.connect("key-press-event", on_key)
 
     def _update_title() -> None:
         if data.error:

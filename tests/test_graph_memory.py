@@ -249,6 +249,81 @@ async def test_consolidate_is_case_insensitive_and_spares_hubs(tmp_path) -> None
         assert gm.get_node(hub) is not None
 
 
+# ------------------------------------------------------ B17 · canonicalise apps
+
+_CANON = {
+    "brave-browser": "brave",
+    "brave": "brave",
+    "com.system76.CosmicFiles": "cosmic-files",
+    "cosmic-files": "cosmic-files",
+}
+
+
+def _resolve(raw: str) -> str:
+    return _CANON.get(raw, raw)
+
+
+def _is_non_app(raw: str) -> bool:
+    return raw in {"MainThread", "Thread-1"}
+
+
+async def test_canonicalise_folds_the_two_naming_schemes(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    # the focus node: behavioural edges + access
+    await gm.add_node("app:brave-browser", NodeType.APP, {"label": "brave-browser"})
+    await gm.add_node("webapp:github", NodeType.WEBAPP, {"label": "github"})
+    await gm.add_edge("webapp:github", "app:brave-browser", RelationType.PART_OF)
+    await gm.upsert_node("app:brave-browser", NodeType.APP, {"label": "brave-browser"})  # ac -> 1
+    # the census node: RAM, no edges
+    await gm.add_node("app:brave", NodeType.APP, {"label": "brave", "ram_mb": 3811.0})
+    # junk the census mistook for a process
+    await gm.add_node("app:MainThread", NodeType.APP, {"label": "MainThread"})
+
+    merged, dropped = await gm.canonicalise_app_nodes(_resolve, _is_non_app)
+    assert (merged, dropped) == (1, 1)
+
+    assert gm.get_node("app:brave-browser") is None
+    assert gm.get_node("app:MainThread") is None
+    survivor = gm.get_node("app:brave")
+    assert survivor is not None
+    assert survivor.ram_mb == 3811.0  # census attr kept
+    assert survivor.access_count == 1  # focus count kept
+    # the webapp edge followed the merge
+    assert any(e.target_id == "app:brave" for e in gm.get_edges("webapp:github"))
+    # idempotent
+    assert await gm.canonicalise_app_nodes(_resolve, _is_non_app) == (0, 0)
+
+
+async def test_canonicalise_renames_a_lone_focus_node(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node(
+        "app:com.system76.CosmicFiles", NodeType.APP, {"label": "com.system76.CosmicFiles"}
+    )
+    await gm.add_edge("app:com.system76.CosmicFiles", "domain:tools", RelationType.PART_OF)
+    merged, dropped = await gm.canonicalise_app_nodes(_resolve, _is_non_app)
+    assert (merged, dropped) == (0, 0)  # nothing to merge or drop — just a rename
+    assert gm.get_node("app:com.system76.CosmicFiles") is None
+    node = gm.get_node("app:cosmic-files")
+    assert node is not None and node.label == "cosmic-files"
+    assert any(e.target_id == "domain:tools" for e in gm.get_edges("app:cosmic-files"))
+
+
+async def test_canonicalise_keeps_a_focused_non_app_name(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:Thread-1", NodeType.APP, {"label": "Thread-1"})
+    await gm.upsert_node("app:Thread-1", NodeType.APP, {"label": "Thread-1"})  # ac -> 1
+    _merged, dropped = await gm.canonicalise_app_nodes(_resolve, _is_non_app)
+    assert dropped == 0
+    assert gm.get_node("app:Thread-1") is not None  # a real focus history wins
+
+
+async def test_canonicalise_never_touches_hubs(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.canonicalise_app_nodes(_resolve, _is_non_app)
+    for hub in HUB_NODE_IDS:
+        assert gm.get_node(hub) is not None
+
+
 async def test_link_orphan_nodes_links_every_orphan_and_is_idempotent(tmp_path) -> None:
     gm = await _loaded_graph(tmp_path)
     for i in range(25):
