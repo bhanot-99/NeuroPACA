@@ -179,7 +179,14 @@ class ActivityCollector(BaseModule):
             if not degraded:
                 continue
             now = time.monotonic()
-            if now - self._last_deaf_emit < _DEAF_EMIT_MIN_GAP_SECONDS:
+            # `_last_deaf_emit == 0.0` means "never emitted" — always emit then.
+            # (`time.monotonic()` is small on a freshly-booted box, so a plain
+            # `now - 0.0 < gap` would wrongly suppress the first emit there.)
+            throttled = (
+                self._last_deaf_emit != 0.0
+                and now - self._last_deaf_emit < _DEAF_EMIT_MIN_GAP_SECONDS
+            )
+            if throttled:
                 continue
             self._last_deaf_emit = now
             conn = self._wl_conn

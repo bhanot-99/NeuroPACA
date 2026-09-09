@@ -428,7 +428,10 @@ async def test_window_deaf_while_active_degrades_health_and_emits(monkeypatch) -
     conn.seconds_since_event = 999.0  # alive, connected, but silent
     conn.confirmed_live = False  # ...and it never delivered an event
     conn.watchdog_reconnects = 7
-    await asyncio.sleep(0.05)  # let the deafness watchdog tick
+    for _ in range(200):  # let the deafness watchdog tick (poll, don't race a fixed sleep)
+        await asyncio.sleep(0.01)
+        if any(e.payload["severity"] == "sensor-degraded" for e in errors):
+            break
     await bus.join()
 
     degraded = collector.health()
@@ -437,7 +440,10 @@ async def test_window_deaf_while_active_degrades_health_and_emits(monkeypatch) -
     assert any(e.payload["severity"] == "sensor-degraded" for e in errors)
 
     conn.seconds_since_event = 0.0  # a reconnect brought events back
-    await asyncio.sleep(0.03)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if collector.health().ok:
+            break
     assert collector.health().ok is True
     assert "window✓" in collector.health().detail
 
