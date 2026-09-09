@@ -83,9 +83,26 @@ stream.
 
 ## 3 · Daemon A/B on the target box
 
-<!-- FILL: stop neuropacad, confirm PID gone, start on the B16 build, short live
-check (operator switches windows ~10×), then `neuropaca overview` / health.
-Pass = switches accruing in real time, window✓, 0 watchdog reconnects. -->
+`systemctl --user restart neuropacad` (editable install → picks up B16). New PID
+58908 at 00:40:40. `neuropaca health` sampled every 15 s for ~3.5 min while the
+operator used the machine normally:
+
+```
+00:41:07  window✓ ·  5 switches · 0 reconnects      ← priming snapshot
+00:41:38  window✓ · 11 switches · 0 reconnects
+00:42:23  window✓ · 15 switches · 0 reconnects
+00:43:09  window✓ · 19 switches · 0 reconnects
+00:43:55  window✓ · 23 switches · 0 reconnects
+00:44:25  window✓ · 23 switches · 0 reconnects
+```
+
+Switch count climbs in real time in bursts that track actual window-switching,
+plateaus when the operator is still — **0 watchdog reconnects**, **0 pump-errors**,
+**0 `sensor-degraded` events**, `window✓` throughout. `journalctl --user -u
+neuropacad` since the restart: **0** `wayland_conn` / "no Wayland events" /
+reconnect lines. On the pre-B16 build the same 3.5 min would have logged its first
+180 s watchdog reconnect and advanced the count only in reconnect-priming batches
+(soak session 2: a reconnect every ~180 s, 23 in the first hour of active use).
 
 ---
 
@@ -94,8 +111,22 @@ Pass = switches accruing in real time, window✓, 0 watchdog reconnects. -->
 | # | criterion | status |
 |---|---|---|
 | 1 | probe `--hold` streams focus across switches, 0 stray finalises; `--leak` reproduces silence | ✅ both |
-| 2 | daemon, real use: < 1 watchdog reconnect, real-time switches | <!-- FILL: daemon A/B --> |
+| 2 | daemon, real use: < 1 watchdog reconnect, real-time switches | ✅ 3.5 min: 5→23 switches real-time, 0 reconnects, 0 journal wayland lines |
 | 3 | `health().ok` False within one sample of going silent while active + `sensor-degraded` on the bus | ✅ unit |
 | 4 | caches drain to empty after all tracked windows close | ✅ unit (`tracked == 0`) |
 | 5 | full suite + `ruff` + `mypy` green; no segfault on `collector.stop()` | ✅ |
-| 6 | 48 h soak: watchdog reconnects < ~1/day, switch count ≥ 10× pre-B16 | <!-- FILL: after soak restart --> |
+| 6 | 48 h soak: watchdog reconnects < ~1/day, switch count ≥ 10× pre-B16 | ⏳ pending — soak restart from the B16 build |
+
+---
+
+## 5 · Deferred
+
+- **The 48 h+ soak restart** (`B16_PLAN.md §5d`). The 2026-09-08 run's focus data
+  is void; its RSS/stability accrual stands but `assess` already fails it on the
+  reconnect count, so it has to restart. Not done here — it is a multi-day
+  measurement, and restarting wipes the graph per the soak's own protocol.
+- **`scripts/_provenance.py`** re-run after this branch merges (needs `PROV_SECRET`
+  in the environment — a merge-time step, per the provenance memo).
+- The soak gate's `assess` still reads the B15 counters; they carry through
+  unchanged (`reconnects`, `pump_errors`), and B16 adds `sensor-degraded` events
+  that a future `assess` revision could also grade on.
