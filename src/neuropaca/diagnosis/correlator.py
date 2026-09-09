@@ -28,6 +28,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, system_error_event
+from neuropaca.diagnosis.app_identity import AppIdentity
 from neuropaca.diagnosis.app_map import AppMap
 from neuropaca.diagnosis.patterns import BasePattern, build_patterns
 from neuropaca.diagnosis.signal import MetricBaseline, Signal, SignalDraft
@@ -59,6 +60,7 @@ class SignalCorrelator(BaseModule):
         graph_memory: GraphMemory,
         *,
         patterns: Sequence[BasePattern] | None = None,
+        identity: AppIdentity | None = None,
     ) -> None:
         super().__init__("diagnosis", event_bus, config)
         self._graph = graph_memory
@@ -70,6 +72,8 @@ class SignalCorrelator(BaseModule):
         self._poll_intervals.setdefault(_ACTIVITY_COLLECTOR, _ACTIVITY_NOMINAL_POLL)
         self._app_map_path = config.app_map_path
         self._app_map = AppMap.empty()
+        self._identity_path = config.app_identity_path
+        self._identity = identity if identity is not None else AppIdentity.empty()
         self._known_apps: set[str] = set()
         self._known_webapps: set[str] = set()
         self._windows: dict[str, deque[MetricSnapshot]] = {}
@@ -81,6 +85,8 @@ class SignalCorrelator(BaseModule):
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
         self._app_map = AppMap.from_file(self._app_map_path)
+        if self._identity.alias_count == 0:
+            self._identity = AppIdentity.from_file(self._identity_path)
         self.event_bus.subscribe(EventType.METRIC_COLLECTED, self.on_metric_event)
         self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
 
@@ -190,15 +196,21 @@ class SignalCorrelator(BaseModule):
             # (5-7) publish
             self._publish(pattern, signal)
 
+    def _canon_app_id(self, raw: str) -> tuple[str, str]:
+        """`(node_id, label)` for an app, canonicalised so one real app is one
+        node no matter which sensor's name reached here (B17)."""
+        key = self._identity.resolve(raw) or raw
+        return f"app:{key}", self._identity.pretty(key) or key
+
     async def _classify_into_graph(self, app_id: str, domain_id: str) -> None:
-        """Ensure `app:<id>` exists and is wired to its domain hub. Bounded by
-        the number of distinct apps ever seen — `_known_apps` skips the repeat
+        """Ensure `app:<canonical>` exists and is wired to its domain hub. Bounded
+        by the number of distinct apps ever seen — `_known_apps` skips the repeat
         edge write on every subsequent switch to the same app (rules.md §3)."""
-        node_id = f"app:{app_id}"
-        await self._graph.upsert_node(node_id, NodeType.APP, {"label": app_id})
-        if app_id not in self._known_apps:
+        node_id, label = self._canon_app_id(app_id)
+        await self._graph.upsert_node(node_id, NodeType.APP, {"label": label})
+        if node_id not in self._known_apps:
             await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
-            self._known_apps.add(app_id)
+            self._known_apps.add(node_id)
 
     async def _classify_webapp_into_graph(
         self, webapp: str, app_id: str, domain_id: str | None
@@ -208,10 +220,11 @@ class SignalCorrelator(BaseModule):
         once — re-adding an edge resets its Hebbian `weight` (rules.md §3)."""
         node_id = f"webapp:{webapp}"
         await self._graph.upsert_node(node_id, NodeType.WEBAPP, {"label": webapp})
+        browser_id, browser_label = self._canon_app_id(app_id)
         if webapp not in self._known_webapps:
             # the browser node may not exist yet if the browser is unclassified
-            await self._graph.upsert_node(f"app:{app_id}", NodeType.APP, {"label": app_id})
-            await self._graph.add_edge(node_id, f"app:{app_id}", RelationType.PART_OF)
+            await self._graph.upsert_node(browser_id, NodeType.APP, {"label": browser_label})
+            await self._graph.add_edge(node_id, browser_id, RelationType.PART_OF)
             if domain_id:
                 await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
             self._known_webapps.add(webapp)
@@ -231,15 +244,33 @@ class SignalCorrelator(BaseModule):
     def _window_view(self, pattern: BasePattern) -> dict[str, tuple[MetricSnapshot, ...]]:
         return {name: tuple(self._windows.get(name, ())) for name in pattern.collectors}
 
+    def _canon_node_id(self, node_id: str) -> tuple[str, str | None]:
+        """Canonicalise an `app:` node id from a pattern's `NodeSpec` (B17). The
+        census keys these by process name; the focus sensor by Wayland app_id —
+        one real app must be one node. Non-`app:` ids pass through unchanged."""
+        if not node_id.startswith("app:"):
+            return node_id, None
+        canon, label = self._canon_app_id(node_id[4:])
+        return canon, label
+
     async def _update_graph(self, draft: SignalDraft) -> Signal:
         related: list[str] = []
+        canon_of: dict[str, str] = {}
         for spec in draft.node_specs:
-            attrs: dict[str, object] = {"label": spec.label, **dict(spec.attributes)}
-            await self._graph.upsert_node(spec.node_id, spec.node_type, attrs)
-            related.append(spec.node_id)
+            node_id, relabel = self._canon_node_id(spec.node_id)
+            canon_of[spec.node_id] = node_id
+            attrs: dict[str, object] = {
+                "label": relabel or spec.label,
+                **dict(spec.attributes),
+            }
+            await self._graph.upsert_node(node_id, spec.node_type, attrs)
+            related.append(node_id)
         for spec in draft.node_specs:
+            source_id = canon_of[spec.node_id]
             for target_id, relation in spec.edges:
-                await self._graph.add_edge(spec.node_id, target_id, relation)
+                await self._graph.add_edge(
+                    source_id, self._canon_node_id(target_id)[0], relation
+                )
         return Signal(
             signal_type=draft.signal_type,
             confidence=round(_clamp01(draft.confidence), 3),

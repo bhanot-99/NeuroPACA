@@ -25,6 +25,7 @@ greps this module and fails if any of those tokens appear.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +38,14 @@ from neuropaca.sensing.snapshot import MetricSnapshot
 # psutil attributes read per process. Names only — extending this list is a
 # privacy review block (rules.md §6).
 _PROC_ATTRS = ("name", "memory_info", "cpu_percent", "create_time")
+
+# B17 · `psutil` reads /proc/<pid>/comm, which a runtime can set to a *thread*
+# label (`MainThread`, `Thread-7`, `tokio-runtime-w`). Grouping those as "an app"
+# put `app:MainThread` in the graph. Drop the row — names only, still no cmdline.
+_THREAD_NAME_RE = re.compile(
+    r"^(MainThread|Thread-\d+.*|asyncio_\d+|ThreadPoolExecutor.*|pool-\d+-thread-\d+|"
+    r"Timer-\d+|tokio-runtime-w.*|rayon-.*|threaded-ml)$"
+)
 
 
 def _utcnow() -> datetime:
@@ -87,7 +96,7 @@ class ProcessCollector(BaseCollector):
             try:
                 info = proc.info
                 name = (info.get("name") or "?").strip() or "?"
-                if name.lower() in self._exclude:
+                if name.lower() in self._exclude or _THREAD_NAME_RE.match(name):
                     continue
                 mem = info.get("memory_info")
                 rss = float(getattr(mem, "rss", 0.0)) if mem is not None else 0.0

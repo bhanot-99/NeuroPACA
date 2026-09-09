@@ -107,7 +107,9 @@ async def test_idle_signal_attaches_the_last_active_app(tmp_path: Path) -> None:
         events += [_metric("system", {"cpu_percent": 2.0}, t=i * 60) for i in range(6)]
         await _feed(corr, bus, events)
         idle = [s for s in sig.signals if s.signal_type is SignalType.IDLE]
-        assert idle and idle[0].related_node_ids == ("app:com.system76.CosmicTerm",)
+        # B17 · the id is canonicalised — CosmicTerm's Wayland app_id folds to the
+        # same slug the process census ("cosmic-term") would produce.
+        assert idle and idle[0].related_node_ids == ("app:cosmic-term",)
     finally:
         await corr.stop()
         await bus.stop()

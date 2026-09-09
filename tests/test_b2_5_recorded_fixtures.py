@@ -131,11 +131,11 @@ async def test_focus_trace_fires_focus_session_once_and_wires_the_domain(tmp_pat
 
     assert _types(signals) == [SignalType.FOCUS_SESSION]
     signal = signals.signals[0]
-    assert signal.related_node_ids == ("app:dev.zed.Zed",)
+    assert signal.related_node_ids == ("app:zed",)
 
-    node = correlator._graph.get_node("app:dev.zed.Zed")
+    node = correlator._graph.get_node("app:zed")
     assert node is not None
-    edges = correlator._graph.get_edges("app:dev.zed.Zed")
+    edges = correlator._graph.get_edges("app:zed")
     assert any(
         e.target_id == "domain:engineering" and e.relation is RelationType.PART_OF for e in edges
     )
@@ -152,13 +152,14 @@ async def test_distraction_trace_fires_distraction_once_and_no_focus(tmp_path: P
     assert _types(signals) == [SignalType.DISTRACTION]
     # B13-A: the distraction signal now attaches the distinct thrashed apps
     # (was nodeless through B2.5b), so L4/L5 have something to act on.
+    # B17 · ids are canonicalised (`a.Alpha` -> `a-alpha` via the normaliser)
     assert set(signals.signals[0].related_node_ids) == {
-        "app:a.Alpha",
-        "app:b.Bravo",
-        "app:c.Charlie",
-        "app:d.Delta",
-        "app:e.Echo",
-        "app:f.Foxtrot",
+        "app:a-alpha",
+        "app:b-bravo",
+        "app:c-charlie",
+        "app:d-delta",
+        "app:e-echo",
+        "app:f-foxtrot",
     }
     for node_id in signals.signals[0].related_node_ids:
         assert correlator._graph.get_node(node_id) is not None

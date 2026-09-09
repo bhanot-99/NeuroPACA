@@ -63,7 +63,7 @@ async def test_webapp_node_wired_to_browser_and_domain(tmp_path: Path) -> None:
             for e in graph.get_edges("webapp:github")
             if e.source_id == "webapp:github"
         }
-        assert ("app:brave-browser", "part_of") in targets
+        assert ("app:brave", "part_of") in targets
         assert ("domain:engineering", "part_of") in targets
     finally:
         await corr.stop()
@@ -93,7 +93,7 @@ async def test_unidentified_tab_writes_no_webapp_node(tmp_path: Path) -> None:
         await corr.on_app_switch(_switch("brave-browser", None, None, t=0))
         await bus.join()
         assert not any(nid.startswith("webapp:") for nid in graph.node_ids)
-        assert graph.get_node("app:brave-browser") is not None  # classified via app_map
+        assert graph.get_node("app:brave") is not None  # via app_map; canonical id (B17)
     finally:
         await corr.stop()
         await bus.stop()

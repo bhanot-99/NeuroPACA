@@ -106,6 +106,21 @@ def test_exclude_names_are_filtered(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [r["name"] for r in rows] == ["brave"]
 
 
+def test_thread_label_rows_are_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    # B17 · psutil reads /proc/<pid>/comm, which a runtime can set to a thread
+    # name — those must not become census rows (they became `app:MainThread`).
+    _install(
+        monkeypatch,
+        [
+            *[_FakeProc(name="MainThread", rss_mb=60.0) for _ in range(5)],
+            *[_FakeProc(name="Thread-7 (worker)", rss_mb=60.0) for _ in range(5)],
+            _FakeProc(name="zed", rss_mb=900.0),
+        ],
+    )
+    rows = ProcessCollector(min_rss_mb=200.0).collect().data["processes"]
+    assert [r["name"] for r in rows] == ["zed"]
+
+
 def test_access_denied_on_one_process_does_not_abort_the_census(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
