@@ -96,13 +96,28 @@ operator used the machine normally:
 00:44:25  window✓ · 23 switches · 0 reconnects
 ```
 
-Switch count climbs in real time in bursts that track actual window-switching,
-plateaus when the operator is still — **0 watchdog reconnects**, **0 pump-errors**,
-**0 `sensor-degraded` events**, `window✓` throughout. `journalctl --user -u
-neuropacad` since the restart: **0** `wayland_conn` / "no Wayland events" /
-reconnect lines. On the pre-B16 build the same 3.5 min would have logged its first
-180 s watchdog reconnect and advanced the count only in reconnect-priming batches
-(soak session 2: a reconnect every ~180 s, 23 in the first hour of active use).
+Switch count climbs in real time in bursts that track actual window-switching
+(5 → 36 over the session), plateaus when the operator is still. On the pre-B16
+build the same use would have logged a 180 s watchdog reconnect on every stable
+window and advanced the count only in reconnect-priming batches.
+
+### 3a · The watchdog false-positive it exposed (fixed, commit `f29e004`)
+
+Longer observation (20 min post-merge) showed the B15 liveness watchdog still
+firing **3×** — but now as a false positive. B16 makes "delivered once → delivers
+forever" structurally true (retained proxies), so "no events in 180 s while
+active" no longer means deafness — it means the focused window has not changed,
+the normal state of single-window work. The `--hold` probe shows the same:
+`fd-readable ×0` whenever switching stops.
+
+Fix: the watchdog fires only while the subscription has **never** delivered an
+event (`confirmed_live` False — the came-up-deaf B15 §2a residual it exists for);
+the first real event disarms it for the connection's life. While unconfirmed the
+interval backs off 180 s → 1800 s so a deaf start the user never touches does not
+thrash. `_window_is_deaf` / `sensor-degraded` gated on `confirmed_live` too.
+Unit: `test_watchdog_disarms_once_an_event_has_been_dispatched`,
+`test_watchdog_interval_backs_off_while_never_confirmed`,
+`test_window_silent_but_confirmed_live_is_not_degraded`. Daemon re-check: <!-- FILL -->
 
 ---
 

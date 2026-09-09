@@ -613,7 +613,7 @@ flowchart LR
 | **B13** | Resource-aware sensing (D-19) — `ProcessCollector` census, `Node` schema v3, `MemoryPressurePattern`, `HeavyAppStartedPattern`, non-inert Idle/Distraction, `RawMetricsRecorder` CSV | 484 tests green (39 new); the loop now fires under real dogfooding, not just the positive control |
 | **B14** | Web-app attribution — the browser stops being one opaque node; `NodeType.WEBAPP` (schema v4), title→allowlist-label inside the collector | ~35 tests new; **no per-tab/URL data leaves the collector** — a property of the design |
 | **B15** | The Wayland activity sensor was **deaf, not dead** — a GC'd `zcosmic_toplevel_handle_v1` proxy on ~1 in 3 starts; two `Display` connections, the second segfaulting on teardown | Strong-ref dict + one shared `WaylandConnection` + poll-pump; **0/20 restarts deaf** (was ~1/3); this is the mechanism behind B7's three zero-L5 soaks |
-| **B16** | B15's fix was **half of one** — it strong-ref'd the child cosmic proxy but not its parent `ext_foreign_toplevel_handle_v1`, and keyed the cache by the dead parent's `id()`; the sensor still deafened itself within 180 s and its liveness watchdog was doing 100 % of the work (soak: 54/65 gaps at exactly 180 s) | Strong-ref **both** proxies keyed by a monotonic int; reachable `_drop`; `finished` binding; a real "events arriving" health state (`window~`). `--leak`/`--hold` lifetime probe + daemon A/B confirm; 584 tests green |
+| **B16** | B15's fix was **half of one** — it strong-ref'd the child cosmic proxy but not its parent `ext_foreign_toplevel_handle_v1`, and keyed the cache by the dead parent's `id()`; the sensor still deafened itself within 180 s and its liveness watchdog was doing 100 % of the work (soak: 54/65 gaps at exactly 180 s) | Strong-ref **both** proxies keyed by a monotonic int; reachable `_drop`; `finished` binding; a real "events arriving" health state (`window~`); watchdog re-scoped to fire only for a *never-delivered* subscription (the proxy fix exposed the old one as a false-positive generator). `--leak`/`--hold` probe + daemon A/B confirm; 587 tests green |
 
 ---
 
@@ -1173,7 +1173,7 @@ project. Recorded in the order the wrong answers were given:
   printed `window✓`. Fixed with a strong-ref dict (`0/20` restarts deaf after),
   one shared connection (erasing a teardown SIGSEGV), and a poll-pump. **But this
   was half of one bug.**
-- **B16's answer (the rest of it), found ~21 h into the B15-rebuilt soak:** the
+- **B16's answer (most of the rest), found ~21 h into the B15-rebuilt soak:** the
   liveness watchdog B15 added as a rare safety net was doing **100 %** of the work
   — 54 of ~65 inter-reconnect gaps at exactly 180 s, zero events between them.
   B15 strong-ref'd the *child* cosmic handle but not its *parent*
@@ -1189,13 +1189,25 @@ project. Recorded in the order the wrong answers were given:
   Fixed by retaining both proxies for the toplevel's whole life, plus a real
   "events actually arriving" health state (`window~`) so a deaf-but-connected
   sensor can no longer pass.
+- **The fifth wrong answer, exposed by the fourth being right:** once B16 made
+  "delivered once → delivers forever" structurally true, the liveness watchdog
+  turned into a false-positive generator — it kept firing on "no events in 180 s
+  while active," which after B16 just means *the focused window has not changed*
+  (the compositor sends nothing when focus is stable; the probe shows it as
+  `fd-readable ×0`). Measured 3 spurious reconnects in 20 min of single-window use
+  on the freshly-merged daemon. Fix (commit `f29e004`): the watchdog fires only
+  while the subscription has **never** delivered an event — the came-up-deaf case
+  it actually exists for — and the first real event disarms it for the
+  connection's life; while unconfirmed the interval backs off 180 s → 1800 s.
 
 **The lesson for the methodology:** `window✓` was a *label*, not a *check*; B15's
 `window✓ = is_alive` was a *better label*, still not a check — it went true for a
-connected pump receiving nothing. Same failure class as `chat`'s advisory
+connected pump receiving nothing; and B15's watchdog was a check for the *wrong
+thing* (it treated "quiet" as "deaf"). Same failure class as `chat`'s advisory
 grounding (§4.1) and the journal greps that read zero from an empty journal
 (§11.10). A status signal only counts as evidence once you have shown it can go
-false for the failure you care about — which for this sensor took three tries.
+false **exactly** for the failure you care about and stay true otherwise — which
+for this one sensor took five tries.
 
 ---
 
@@ -1534,7 +1546,7 @@ Nineteen numbered rulings (D-1 … D-19), plus the B14, B15 and B16 phase ruling
 | B15 watchdog reconnects, 7-day soak session 2 | **54 of ~65 gaps at exactly 180 s** — the watchdog doing 100 % of the work | B16 |
 | Toplevel-proxy lifetime probe | `--leak`: every proxy finalised < 1 s, `fd-readable ×0` after · `--hold`: continuous focus stream, 0 stray finalises | B16 |
 | Daemon A/B, B16 build, ~3 min real use | **19 focus switches tracked in real time, 0 watchdog reconnects, `window✓`** (old build: count frozen, a reconnect every ~180 s) | B16 |
-| B13 test count / B14 / B15 / B16 | 484 / ~524 / 561 / **584** green | B13–B16 |
+| B13 test count / B14 / B15 / B16 | 484 / ~524 / 561 / **587** green | B13–B16 |
 | Graph schema version | **v4** (`NodeType.WEBAPP`); v1 still readable | B14 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
