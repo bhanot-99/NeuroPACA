@@ -1,0 +1,77 @@
+# app_identity.default.toml — one canonical key per real application (B17, D-20).
+#
+# The focus sensor names an app by its Wayland `app_id` (reverse-DNS:
+# `com.system76.CosmicFiles`); the B13 process census names it by the Unix
+# process name (`cosmic-files`). Without this file both become separate `app:`
+# nodes in the graph. `AppIdentity.resolve()` maps every alias to one slug.
+#
+# Resolution: exact [alias] entry -> normalise (lowercase, strip -browser /
+# -desktop / -bin / -gtk / -wayland, separators -> "-") -> the normalised form.
+# So you only need an [alias] entry when the two names do NOT share a stem —
+# every reverse-DNS id, and helper processes that report their own name.
+#
+# This file is meant to be edited. Copy it, point Config.app_identity_path at
+# your copy, and add the apps you actually use. Same pattern as
+# data/app_map.default.toml and data/webapp_map.default.toml.
+
+# non_app — process `name` values the census sometimes reports that are NOT an
+# application (thread labels, bare shells). Thread patterns (MainThread,
+# Thread-<n>, asyncio_<n>, …) are matched by a regex in code and need no entry
+# here. Add anything else you see polluting the census. (TOML: this top-level
+# array must sit above every [table] header.)
+non_app = [
+  "MainThread",
+  "gmain",
+  "gdbus",
+  "pool-spawner",
+  "tokio-runtime-w",
+  "systemd",
+  "(sd-pam)",
+]
+
+[alias]
+# --- COSMIC (Pop!_OS) ---
+"com.system76.CosmicTerm" = "cosmic-term"
+"com.system76.CosmicFiles" = "cosmic-files"
+"cosmicfiles" = "cosmic-files"
+"com.system76.CosmicMonitor" = "cosmic-monitor"
+"com.system76.CosmicEdit" = "cosmic-edit"
+"com.system76.CosmicSettings" = "cosmic-settings"
+"com.system76.CosmicStore" = "cosmic-store"
+"cosmic-comp" = "cosmic-comp"
+
+# --- browsers (process name vs app_id) ---
+"brave-browser" = "brave"
+"Brave-Browser" = "brave"
+"com.brave.Browser" = "brave"
+"google-chrome" = "chrome"
+"google-chrome-stable" = "chrome"
+"com.google.Chrome" = "chrome"
+"org.mozilla.firefox" = "firefox"
+"firefox-esr" = "firefox"
+"chromium-browser" = "chromium"
+
+# --- editors / dev ---
+"com.visualstudio.code" = "vscode"
+"code-oss" = "vscode"
+"dev.zed.Zed" = "zed"
+"org.wezfurlong.wezterm" = "wezterm"
+"com.mitchellh.ghostty" = "ghostty"
+"org.gnome.Console" = "gnome-console"
+"sublime_text" = "sublime-text"
+
+# --- Electron / desktop apps that report a helper name ---
+"com.anthropic.Claude" = "claude"
+"claude-desktop" = "claude"
+"Claude" = "claude"
+"md.obsidian.Obsidian" = "obsidian"
+"com.obsidian.Obsidian" = "obsidian"
+"com.slack.Slack" = "slack"
+"com.discordapp.Discord" = "discord"
+"com.spotify.Client" = "spotify"
+"org.telegram.desktop" = "telegram"
+"us.zoom.Zoom" = "zoom"
+"com.github.IsmaelMartinez.teams_for_linux" = "teams"
+
+# --- calendars / misc ---
+"com.morgen.app" = "morgen"

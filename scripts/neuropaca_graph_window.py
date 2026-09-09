@@ -126,6 +126,7 @@ def pretty_label(node_id: str, node: dict[str, Any]) -> str:
         return _titlecase(parts[1]) if len(parts) > 2 else "Note"
     return label or node_id
 
+
 # Node-type fill colours -- lifted verbatim from graph_view_template.html's dark
 # palette so this window and the HTML viewer render the same graph the same way.
 TYPE_COLOUR: dict[str, tuple[float, float, float]] = {

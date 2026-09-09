@@ -6,6 +6,7 @@
 !/data/.gitkeep
 !/data/app_map.default.toml
 !/data/webapp_map.default.toml
+!/data/app_identity.default.toml
 # ...but a personal override stays untracked
 /data/webapp_map.local.toml
 *.log

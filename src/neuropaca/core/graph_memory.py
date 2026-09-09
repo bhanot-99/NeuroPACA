@@ -326,9 +326,10 @@ class GraphMemory:
                 else:
                     survivor = max(
                         present,
-                        key=lambda m: (self._graph.degree(m), -_as_dt(
-                            self._graph.nodes[m].get("created_at", _utcnow())
-                        ).timestamp()),
+                        key=lambda m: (
+                            self._graph.degree(m),
+                            -_as_dt(self._graph.nodes[m].get("created_at", _utcnow())).timestamp(),
+                        ),
                     )
                     nx.relabel_nodes(self._graph, {survivor: canon_id}, copy=False)
                     self._graph.nodes[canon_id]["label"] = canon_id.split(":", 1)[1]

@@ -268,9 +268,7 @@ class SignalCorrelator(BaseModule):
         for spec in draft.node_specs:
             source_id = canon_of[spec.node_id]
             for target_id, relation in spec.edges:
-                await self._graph.add_edge(
-                    source_id, self._canon_node_id(target_id)[0], relation
-                )
+                await self._graph.add_edge(source_id, self._canon_node_id(target_id)[0], relation)
         return Signal(
             signal_type=draft.signal_type,
             confidence=round(_clamp01(draft.confidence), 3),

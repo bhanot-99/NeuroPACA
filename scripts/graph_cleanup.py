@@ -86,9 +86,7 @@ def _load_identity(path: Path) -> tuple[dict[str, str], set[str]]:
                 canon = _normalise(v)
                 alias[str(k)] = canon
                 alias.setdefault(str(k).lower(), canon)
-    non_app = {
-        str(x).lower() for x in (raw.get("non_app") or []) if isinstance(x, str)
-    }
+    non_app = {str(x).lower() for x in (raw.get("non_app") or []) if isinstance(x, str)}
     return alias, non_app
 
 
@@ -126,7 +124,7 @@ def clean(
     for nid in list(nodes):
         for prefix in ("app:", "webapp:"):
             if nid.startswith(prefix):
-                canon = f"{prefix}{_resolve(nid[len(prefix):], alias)}"
+                canon = f"{prefix}{_resolve(nid[len(prefix) :], alias)}"
                 groups.setdefault(canon, []).append(nid)
                 break
 
