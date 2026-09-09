@@ -62,3 +62,6 @@ coverage.xml
 # that matters is the summary quoted in phases.md, not 10 080 sample rows.
 data/b9_soak/
 data/graph_view.html
+
+# session scratch — never committed
+scratchpad/
