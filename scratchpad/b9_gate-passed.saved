@@ -1,0 +1,9 @@
+gate passed 20260904T164703Z
+window_minutes 60
+daemon_pid 76722
+activity_edges 14
+desk_events 7
+graph_growth 6
+signals 1
+pressure_mentions 0
+log /home/bhanot/NeuroPaca/data/b9_gate_20260904T164703Z.log

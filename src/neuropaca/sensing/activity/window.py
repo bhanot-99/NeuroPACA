@@ -11,6 +11,21 @@ makes the second go deaf (see `wayland_conn.py`). Given no connection it creates
 a private one (standalone use); the `ActivityCollector` passes in the connection
 it also shares with `WaylandIdleSource`.
 
+**B16 · proxy lifetime, round two.** B15 held a strong ref to the
+`zcosmic_toplevel_handle_v1` proxy (the `state`/activation carrier) but *not* to
+its parent `ext_foreign_toplevel_handle_v1` (the `app_id`/`title` carrier), and
+keyed both caches by `id(handle)`. pywayland retains proxies only weakly and runs
+`wl_proxy_destroy` on GC, so the unreferenced parent handle died microseconds
+after `_on_toplevel` returned — its later `app_id`/`title`/`closed` events landed
+on a dead id and libwayland dropped them silently. Worse, once the parent was
+collected its `id()` was reused, so a newly-opened window could evict a *live*
+cosmic handle from the cache and kill a working subscription. Net effect in the
+7-day soak: the connection dispatched **zero** events between the 180 s liveness
+watchdog's forced reconnects — focus was effectively polled every 3 minutes.
+B16 keeps a strong ref to **both** proxies, keyed by a monotonic int that is
+never reused, for the whole life of the toplevel, and destroys them explicitly on
+close so the compositor stops streaming to them.
+
 pywayland is optional + lazy-imported; a missing library, no compositor, or a
 compositor without the protocol raises `CollectorError`, which `ActivityCollector`
 turns into a graceful self-disable (rules.md §2).
@@ -87,6 +102,21 @@ class _Toplevel:
         self.activated = False
 
 
+def _safe_destroy(proxy: Any) -> None:
+    """Best-effort `wl_proxy` destructor. The protocol says a client should
+    `destroy` a handle once it is done with it (and always after `closed`);
+    doing it explicitly — rather than waiting for GC to run `wl_proxy_destroy`
+    via a reference cycle — is what actually tells the compositor to stop
+    streaming events to that id."""
+    destroy = getattr(proxy, "destroy", None)
+    if destroy is None:
+        return
+    try:
+        destroy()
+    except Exception:  # a double-destroy or a torn-down display must not propagate
+        _log.debug("toplevel handle destroy() raised", exc_info=True)
+
+
 class WaylandWindowSource:
     def __init__(
         self,
@@ -95,14 +125,24 @@ class WaylandWindowSource:
         connection: WaylandConnection | None = None,
     ) -> None:
         self._cb: WindowCallback | None = None
+        self._toplevel_list: Any = None
         self._info_manager: Any = None
+        # B16 · one monotonic int per toplevel, bound into every dispatcher lambda
+        # as a default arg. NEVER `id(handle)` — that is reused the instant the
+        # (unreferenced) handle is collected, and a reused key silently evicts a
+        # live subscription.
+        self._next_key = 0
         self._toplevels: dict[int, _Toplevel] = {}
-        # B15 · hold a strong ref to every zcosmic_toplevel_handle_v1 proxy. Its
-        # `state` dispatcher is the ONLY source of "which window is focused"; if
-        # the proxy is only a local in `_on_toplevel` it can be GC'd before the
-        # first `state` event arrives and that window becomes permanently
-        # focus-invisible (the flaky ~1-in-3 deafness).
+        # B16 · strong ref to the ext_foreign_toplevel_handle_v1 proxy — the
+        # ONLY carrier of app_id / title / closed on this protocol version. B15
+        # missed this one; without it the handle is GC'd (→ wl_proxy_destroy)
+        # microseconds after creation and every later event for it is discarded.
+        self._foreign_handles: dict[int, Any] = {}
+        # B15 · strong ref to every zcosmic_toplevel_handle_v1 proxy — the carrier
+        # of `state` (focus/activation). Kept for the toplevel's life, dropped on
+        # close.
         self._cosmic_handles: dict[int, Any] = {}
+        self._list_finished = False
         self._focused_app_id: str | None = None
         # B14 · for these app_ids (browsers) a *title* change is a real focus
         # change (a new tab) and must fire the callback; for everything else only
@@ -124,7 +164,13 @@ class WaylandWindowSource:
 
     @property
     def is_alive(self) -> bool:
-        return self._conn.is_alive
+        return self._conn.is_alive and not self._list_finished
+
+    @property
+    def tracked(self) -> int:
+        """How many toplevels the source is currently holding proxies for. Used
+        by the soak to confirm the caches drain as windows close (B16 §6.4)."""
+        return len(self._foreign_handles)
 
     # ------------------------------------------- WaylandConnection protocol hooks
     def wants(self) -> dict[str, tuple[type, int]]:
@@ -146,10 +192,12 @@ class WaylandWindowSource:
             raise CollectorError(
                 "compositor lacks ext_foreign_toplevel_list_v1 + zcosmic_toplevel_info_v1"
             )
+        self._toplevel_list = toplevel_list
         self._info_manager = info
         toplevel_list.dispatcher["toplevel"] = self._on_toplevel
-        self._toplevels.clear()
-        self._cosmic_handles.clear()
+        toplevel_list.dispatcher["finished"] = self._on_list_finished
+        self._reset_toplevels()
+        self._list_finished = False
         self._focused_app_id = None
         self._focused_title = ""
 
@@ -157,24 +205,38 @@ class WaylandWindowSource:
         self._recompute_focus()
 
     def lost(self) -> None:
+        self._toplevel_list = None
         self._info_manager = None
-        self._toplevels.clear()
-        self._cosmic_handles.clear()
+        self._reset_toplevels()
+        self._list_finished = False
         self._focused_app_id = None
         self._focused_title = ""
 
     # ------------------------------------------------------ dispatcher callbacks
     def _on_toplevel(self, _list: Any, handle: Any) -> None:
-        key = id(handle)
+        key = self._next_key
+        self._next_key += 1
         self._toplevels[key] = _Toplevel()
-        handle.dispatcher["app_id"] = lambda h, app_id: self._set(id(h), "app_id", app_id)
-        handle.dispatcher["title"] = lambda h, title: self._set(id(h), "title", title)
-        handle.dispatcher["closed"] = lambda h: self._drop(id(h))
+        self._foreign_handles[key] = handle  # B16 — the strong ref B15 missed
+        handle.dispatcher["app_id"] = lambda _h, app_id, k=key: self._set(k, "app_id", app_id)
+        handle.dispatcher["title"] = lambda _h, title, k=key: self._set(k, "title", title)
+        handle.dispatcher["closed"] = lambda _h, k=key: self._drop(k)
         cosmic_handle = self._info_manager.get_cosmic_toplevel(handle)
-        self._cosmic_handles[key] = cosmic_handle  # strong ref — see __init__
-        cosmic_handle.dispatcher["state"] = lambda _ch, state: self._set(
-            key, "activated", _STATE_ACTIVATED in list(state)
+        self._cosmic_handles[key] = cosmic_handle
+        cosmic_handle.dispatcher["state"] = lambda _ch, state, k=key: self._set(
+            k, "activated", _STATE_ACTIVATED in list(state)
         )
+
+    def _on_list_finished(self, _list: Any) -> None:
+        # The compositor has retired the toplevel-list global (its own shutdown,
+        # a compositor reload). Our cache is now stale; drop it and let the
+        # connection's liveness watchdog force a clean reconnect + re-bind rather
+        # than keep reporting a focus that can no longer change (B16 §3b).
+        _log.warning("ext_foreign_toplevel_list_v1 finished — window cache invalidated")
+        self._reset_toplevels()
+        self._list_finished = True
+        self._focused_app_id = None
+        self._focused_title = ""
 
     def _set(self, key: int, attr: str, value: Any) -> None:
         top = self._toplevels.get(key)
@@ -183,9 +245,24 @@ class WaylandWindowSource:
             self._recompute_focus()
 
     def _drop(self, key: int) -> None:
-        self._cosmic_handles.pop(key, None)
-        if self._toplevels.pop(key, None) is not None:
+        cosmic = self._cosmic_handles.pop(key, None)
+        handle = self._foreign_handles.pop(key, None)
+        removed = self._toplevels.pop(key, None) is not None
+        if cosmic is not None:
+            _safe_destroy(cosmic)
+        if handle is not None:
+            _safe_destroy(handle)
+        if removed:
             self._recompute_focus()
+
+    def _reset_toplevels(self) -> None:
+        for handle in self._foreign_handles.values():
+            _safe_destroy(handle)
+        for cosmic in self._cosmic_handles.values():
+            _safe_destroy(cosmic)
+        self._toplevels.clear()
+        self._foreign_handles.clear()
+        self._cosmic_handles.clear()
 
     def _recompute_focus(self) -> None:
         focused = next((t for t in self._toplevels.values() if t.activated), None)
