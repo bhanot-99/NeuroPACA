@@ -46,12 +46,21 @@ _RECONNECT_DELAYS_SECONDS = (2.0, 4.0, 8.0, 16.0, 32.0)
 # toplevel list makes each handler send a `get_cosmic_toplevel` request; a
 # further round collects the `state` replies to those.
 _PRIME_ROUNDTRIPS = 2
-# Liveness watchdog: if the user has had input recently (the `activity_probe`
-# says not-idle) but this connection has dispatched **zero** events for this
-# long, the toplevel-info subscription has probably half-established on a bad
-# start (~1 in 20). Force one reconnect — cheap (~50 ms) and it re-rolls the
-# dice. On a genuinely idle machine the probe is False and this never fires.
+# Liveness watchdog. The failure it exists for: the subscription half-establishes
+# on a bad start and this connection dispatches **zero** events for its whole life
+# (~1 in 20 starts pre-B16; the B15 §2a residual). Force a reconnect — cheap and
+# it re-rolls the dice.
+#
+# B16 · it must only fire while the connection has **never** dispatched an event
+# (`_seen_event_since_connect` False). Once one real event has landed, B16's
+# retained proxies guarantee the stream stays live for the connection's life, so
+# "no events for 180 s" then just means the focused window has not changed — the
+# normal state of someone working in one window, NOT deafness. Firing there is
+# crying wolf (measured: 3 spurious reconnects in 20 min of single-window use).
+# And while still unconfirmed, the interval backs off exponentially so a genuine
+# came-up-deaf start that the user never interacts with does not thrash.
 _STALE_RECONNECT_SECONDS = 180.0
+_WATCHDOG_MAX_INTERVAL_SECONDS = 1800.0
 
 
 class WaylandProtocolHandler(Protocol):
@@ -93,9 +102,25 @@ class WaylandConnection:
         # counts pump ticks that raised.
         self.reconnects = 0
         self.pump_errors = 0
+        # B16 · has the pump dispatched a single real event since the current
+        # `_connect()`? Until it has, the connection is unproven and the liveness
+        # watchdog is armed; once it has, the watchdog disarms for this
+        # connection's life (retained proxies keep the stream live). `watchdog_reconnects`
+        # counts only watchdog-forced reconnects, split out from `reconnects`.
+        self._seen_event_since_connect = False
+        self._watchdog_interval = _STALE_RECONNECT_SECONDS
+        self.watchdog_reconnects = 0
 
     def add(self, handler: WaylandProtocolHandler) -> None:
         self._handlers.append(handler)
+
+    @property
+    def confirmed_live(self) -> bool:
+        """True once a real event has been dispatched since the last connect —
+        i.e. the subscription is proven, not just `is_alive`. B16: `health()`
+        uses this to tell 'connected but never delivered' (a real problem) from
+        'connected, delivered, now quiet because focus is stable' (normal)."""
+        return self._seen_event_since_connect
 
     @property
     def is_alive(self) -> bool:
@@ -175,6 +200,12 @@ class WaylandConnection:
         display.flush()
         self._connected = True
         self._last_event_at = time.monotonic()
+        # A reconnect off a subscription that *had* been delivering is a fresh
+        # start — reset the watchdog interval. A reconnect while still chasing a
+        # never-delivered one keeps the backed-off interval so it does not thrash.
+        if self._seen_event_since_connect:
+            self._watchdog_interval = _STALE_RECONNECT_SECONDS
+        self._seen_event_since_connect = False
 
     async def _pump(self) -> None:
         failures = 0
@@ -199,15 +230,26 @@ class WaylandConnection:
                 now = time.monotonic()
                 if dispatched:
                     self._last_event_at = now
+                    if not self._seen_event_since_connect:
+                        self._seen_event_since_connect = True
+                        _log.info("WaylandConnection subscription confirmed live — watchdog off")
                 elif (
-                    now - self._last_event_at > _STALE_RECONNECT_SECONDS
+                    # B16 · only chase a subscription that has NEVER delivered
+                    not self._seen_event_since_connect
+                    and now - self._last_event_at > self._watchdog_interval
                     and self.activity_probe is not None
                     and self.activity_probe()
                 ):
+                    self.watchdog_reconnects += 1
+                    self._watchdog_interval = min(
+                        self._watchdog_interval * 2, _WATCHDOG_MAX_INTERVAL_SECONDS
+                    )
                     _log.warning(
-                        "no Wayland events in %.0fs while the user is active — "
-                        "reconnecting in case the subscription half-established",
+                        "no Wayland events since connect + %.0fs active — re-rolling "
+                        "(watchdog #%d, next probe in %.0fs)",
                         now - self._last_event_at,
+                        self.watchdog_reconnects,
+                        self._watchdog_interval,
                     )
                     self._teardown()  # next tick reconnects; the sleep below keeps this bounded
             except asyncio.CancelledError:

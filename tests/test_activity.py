@@ -285,8 +285,10 @@ class _FakeConn:
         self.alive = True
         self.start_raises: Exception | None = None
         self.reconnects = 0
+        self.watchdog_reconnects = 0
         self.pump_errors = 0
         self.seconds_since_event = 0.0  # B16 — deafness probe
+        self.confirmed_live = True  # B16 — subscription has delivered ≥1 event
         self.activity_probe = None
         _FakeConn.instances.append(self)
 
@@ -324,10 +326,11 @@ async def test_real_path_builds_one_shared_connection_with_both_handlers(monkeyp
 
     # B15 soak instrumentation — the shared connection's watchdog counters are
     # surfaced so a 7-day run can measure how often it self-heals (B15_PLAN §7).
-    assert "0 reconnects" in detail and "0 pump-errors" in detail
+    assert "0 reconnects (0 watchdog)" in detail and "0 pump-errors" in detail
     conn.reconnects = 3
+    conn.watchdog_reconnects = 2
     conn.pump_errors = 1
-    assert "3 reconnects · 1 pump-errors" in collector.health().detail
+    assert "3 reconnects (2 watchdog) · 1 pump-errors" in collector.health().detail
 
     await collector.stop()
     assert conn.stopped == 1
@@ -423,7 +426,8 @@ async def test_window_deaf_while_active_degrades_health_and_emits(monkeypatch) -
 
     conn = _FakeConn.instances[0]
     conn.seconds_since_event = 999.0  # alive, connected, but silent
-    conn.reconnects = 7
+    conn.confirmed_live = False  # ...and it never delivered an event
+    conn.watchdog_reconnects = 7
     await asyncio.sleep(0.05)  # let the deafness watchdog tick
     await bus.join()
 
@@ -452,6 +456,32 @@ async def test_window_deaf_but_user_idle_is_not_degraded(monkeypatch) -> None:
     await collector.start()
     collector._idle = True  # nobody is switching windows — silence is expected
     _FakeConn.instances[0].seconds_since_event = 999.0
+    _FakeConn.instances[0].confirmed_live = False
+    await asyncio.sleep(0.05)
+
+    ok = collector.health()
+    assert ok.ok is True
+    assert "window✓" in ok.detail
+
+    await collector.stop()
+    await bus.stop()
+
+
+async def test_window_silent_but_confirmed_live_is_not_degraded(monkeypatch) -> None:
+    # B16 · the false-positive fix: a subscription that HAS delivered events and
+    # then goes quiet (stable focused window) is healthy, not deaf — the 3
+    # spurious reconnects in 20 min of single-window use this closes.
+    monkeypatch.setattr("neuropaca.sensing.activity.wayland_conn.WaylandConnection", _FakeConn)
+    monkeypatch.setattr("neuropaca.sensing.activity.collector._DEAF_POLL_SECONDS", 0.01)
+    monkeypatch.setattr("neuropaca.sensing.activity.collector._WINDOW_DEAF_SECONDS", 0.0)
+    _FakeConn.instances.clear()
+    bus = await _running_bus()
+    collector = ActivityCollector(bus, Config(inference_backend="fake"))
+    await collector.initialize()
+    await collector.start()
+    conn = _FakeConn.instances[0]
+    conn.seconds_since_event = 999.0  # long silence
+    conn.confirmed_live = True  # ...but it delivered before
     await asyncio.sleep(0.05)
 
     ok = collector.health()

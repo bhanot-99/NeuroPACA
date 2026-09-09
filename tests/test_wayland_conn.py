@@ -269,7 +269,76 @@ async def test_liveness_watchdog_reconnects_when_active_but_silent(monkeypatch) 
     # a watchdog reconnect is counted, but it is not a pump error — the tick
     # never raised, the connection was just silent.
     assert conn.reconnects >= 1
+    assert conn.watchdog_reconnects >= 1
     assert conn.pump_errors == 0
+
+
+async def test_watchdog_disarms_once_an_event_has_been_dispatched(monkeypatch) -> None:
+    # B16 · the false-positive fix. A subscription that delivers even one event is
+    # proven; after that, silence is a stable focused window, not deafness, so the
+    # watchdog must never fire again for this connection.
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(wc, "_STALE_RECONNECT_SECONDS", 0.05)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn.activity_probe = lambda: True  # user active the whole time
+    conn._last_event_at = 0.0
+
+    fake = _FakeDisplay()
+    calls = {"n": 0}
+
+    def dispatch_once(*, block: bool = False) -> int:
+        calls["n"] += 1
+        return 1 if calls["n"] == 1 else 0  # one event, then silence forever
+
+    fake.dispatch = dispatch_once  # type: ignore[method-assign]
+    conn._display = fake
+    conn._fd = r
+    try:
+        await _run_pump(conn, 0.3)  # many times the stale window
+    finally:
+        os.close(r)
+        os.close(w)
+    assert conn.confirmed_live is True
+    assert conn.watchdog_reconnects == 0, "watchdog fired on a proven subscription"
+    assert fake.disconnected is False
+
+
+async def test_watchdog_interval_backs_off_while_never_confirmed(monkeypatch) -> None:
+    # B16 · a came-up-deaf connection whose user never interacts must not thrash —
+    # each fruitless re-roll doubles the interval.
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(wc, "_STALE_RECONNECT_SECONDS", 0.02)
+    monkeypatch.setattr(wc, "_RECONNECT_DELAYS_SECONDS", (0.01,) * 5)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn.activity_probe = lambda: True
+    conn._last_event_at = 0.0
+    conn.add(_FakeHandler())
+
+    def fake_connect() -> None:
+        d = _FakeDisplay()
+        conn._display = d
+        conn._fd = r
+        conn._connected = True
+        conn._last_event_at = 0.0  # still nothing ever dispatched
+        for h in conn._handlers:
+            h.bound({})
+            h.primed()
+
+    monkeypatch.setattr(conn, "_connect", fake_connect)
+    fake_connect()
+    start_interval = conn._watchdog_interval
+    try:
+        await _run_pump(conn, 0.3)
+    finally:
+        os.close(r)
+        os.close(w)
+    assert conn.watchdog_reconnects >= 2
+    assert conn._watchdog_interval > start_interval, "interval did not back off"
+    assert conn._watchdog_interval <= wc._WATCHDOG_MAX_INTERVAL_SECONDS
 
 
 async def test_liveness_watchdog_stays_quiet_when_user_is_idle(monkeypatch) -> None:
@@ -306,6 +375,7 @@ async def test_a_healthy_pump_leaves_the_soak_counters_at_zero(monkeypatch) -> N
         os.close(r)
         os.close(w)
     assert conn.reconnects == 0
+    assert conn.watchdog_reconnects == 0
     assert conn.pump_errors == 0
     # nothing was ever dispatched, so the "since last event" clock never started
     assert conn.seconds_since_event == 0.0

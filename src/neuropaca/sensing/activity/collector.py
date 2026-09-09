@@ -154,14 +154,20 @@ class ActivityCollector(BaseModule):
         self._idle_ok = self._window_ok = False
 
     def _window_is_deaf(self) -> bool:
-        """Real path only: the window pump is alive and connected, the user is
-        active, yet no Wayland event has landed for `_WINDOW_DEAF_SECONDS`. B16 —
-        the failure mode the 7-day soak actually hit, and the one `window✓` (=
-        `is_alive`) could not see."""
+        """Real path only: the window pump is alive and connected and the user is
+        active, but the subscription has **never delivered an event** and has now
+        been silent past `_WINDOW_DEAF_SECONDS`. B16 — this is the came-up-deaf
+        residual (B15 §2a). A connection that *did* deliver and then went quiet is
+        not deaf, it is a stable focused window (retained proxies keep the stream
+        live), so `confirmed_live` gates this out."""
         conn = self._wl_conn
         if conn is None or self._idle:
             return False
-        return bool(conn.is_alive) and conn.seconds_since_event > _WINDOW_DEAF_SECONDS
+        return (
+            bool(conn.is_alive)
+            and not conn.confirmed_live
+            and conn.seconds_since_event > _WINDOW_DEAF_SECONDS
+        )
 
     async def _watch_deafness(self) -> None:
         while self.is_running:
@@ -187,8 +193,8 @@ class ActivityCollector(BaseModule):
                 system_error_event(
                     module="sensing.activity.window",
                     exception=(
-                        f"no Wayland focus event in {conn.seconds_since_event:.0f}s while the "
-                        f"user is active ({conn.reconnects} watchdog reconnects)"
+                        f"no Wayland focus event since connect + {conn.seconds_since_event:.0f}s "
+                        f"of active use ({conn.watchdog_reconnects} watchdog re-rolls)"
                     ),
                     severity="sensor-degraded",
                 )
@@ -224,6 +230,7 @@ class ActivityCollector(BaseModule):
         if self._wl_conn is not None:
             wl = (
                 f" · {self._wl_conn.reconnects} reconnects"
+                f" ({self._wl_conn.watchdog_reconnects} watchdog)"
                 f" · {self._wl_conn.pump_errors} pump-errors"
             )
         return ModuleHealth(
