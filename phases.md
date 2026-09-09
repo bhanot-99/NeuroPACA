@@ -463,10 +463,49 @@ seconds-silent; a tick that races shutdown exits quietly, not as a `pump_error`.
 The B15 liveness watchdog stays as a last-resort net, counted as a defect signal.
 **No systemd unit change.**
 
-**Status:** implemented on `b16-wayland-subscription-stability`. 584 pytest green
-(≈9 new: proxy-retention, `id()`-reuse regression, `finished`, deaf-while-alive
-health), ruff + mypy clean. Live: standalone `--leak`/`--hold` lifetime probe
-(`spikes/b16_toplevel_lifetime/`) + daemon A/B on the target box.
+**Status:** merged to `main` (`ff278fd` + `f29e004` + `40bb362` + `ad0a55a`).
+587 pytest green, ruff + mypy clean, CI green. Live: standalone `--leak`/`--hold`
+lifetime probe + two daemon A/B runs (real-time focus, 0 watchdog reconnects
+across 3+ min of stable focus).
+
+### B17 · One app, one node — canonical identity, readable names, structured graph view
+
+Full plan: [`B17_PLAN.md`](B17_PLAN.md), test run: `B17_TEST_REPORT.md`. Graph
+review found one real app as **two or three `app:` nodes**: the focus sensor keys
+by Wayland `app_id` (`app:com.system76.CosmicFiles`), the B13 census by Unix
+process name (`app:cosmic-files`), and `upsert_node` de-dups by exact id only. The
+behavioural edges land on one node, the RAM/CPU on the other. Plus `app:MainThread`
+(a thread name `psutil` reported as a process) and the raw ids read nothing like
+English.
+
+**Fix.** `diagnosis/app_identity.py` — `AppIdentity.resolve()` maps every alias of
+one app (from `data/app_identity.default.toml`: an `[alias]` table + a minimal
+normaliser) to one canonical slug. The correlator resolves every `app:` node id
+and edge target through it — one chokepoint each in `_classify_into_graph` and
+`_update_graph` — so no new duplicate is ever written. `GraphMemory.canonicalise_app_nodes()`
+folds a **pre-B17** graph's duplicates once at boot (idempotent, reuses
+`_merge_nodes_unsafe`), dropping `is_non_app` census junk. `ProcessCollector` now
+skips thread-label rows; `process_exclude_names` gains a real default (B13 §7(8),
+soak-informed — the daemon and its tooling are not "an activity").
+
+**Graph window** (`scripts/neuropaca_graph_window.py`, presentation only):
+`pretty_label` names every node in plain English; the 11 master nodes are **pinned
+on a fixed ring** (YOU at origin, 10 domains evenly at `2πi/10` in `DOMAIN_ORDER`)
+that never reshuffles and cannot be dragged; **click a node → a docked detail
+panel** with its attributes and a click-through neighbour list.
+`scripts/graph_cleanup.py` (new) is the reusable one-off manual tidy — fold app
+dupes, drop `is_non_app` nodes, drop edgeless non-hub nodes; `--dry-run` default.
+
+**Status:** implemented on `b17-app-identity-canonicalization`. 643 pytest green
+(≈50 new: `test_app_identity`, `test_graph_window`, `test_graph_cleanup`,
+`canonicalise_app_nodes`, thread-guard; pipeline assertions updated to canonical
+ids), ruff + mypy clean. Live: the real soak graph cleaned 63 → 57 nodes (24 → 19
+`app:`/`webapp:`, resource + focus attrs preserved, 0 dangling edges), daemon
+restarted onto it — orchestrator canonical pass a confirming no-op. **No systemd
+unit change.**
+
+**Deferred (found in the same review, not B17):** every Hebbian edge weight in the
+graph is `0.0` — reinforcement is not accumulating.
 
 ---
 
