@@ -31,7 +31,7 @@ import json
 import math
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -259,6 +259,90 @@ class GraphMemory:
             if swept == 0:
                 break  # nothing in that pass was still mergeable — stop, do not spin
         return merged
+
+    async def canonicalise_app_nodes(
+        self,
+        resolve: Callable[[str], str],
+        is_non_app: Callable[[str], bool],
+    ) -> tuple[int, int]:
+        """B17 · fold every `app:` / `webapp:` node onto one canonical id.
+
+        The focus sensor keys these by Wayland `app_id`
+        (`app:com.system76.CosmicFiles`), the B13 census by process name
+        (`app:cosmic-files`) — so one real app is two or three nodes, the
+        behavioural edges on one and the RAM/CPU on another. `resolve(bare id)`
+        gives the canonical slug; nodes that collapse to the same slug are merged
+        (`_merge_nodes_unsafe` — D-13 math, edge rewiring, resource-attr fold),
+        the surviving node renamed to `app:<slug>` / `webapp:<slug>`.
+
+        A node whose bare id `is_non_app` (a thread label the census mistook for a
+        process) **and** was never focused (`access_count == 0`) is deleted.
+
+        One `_lock` cycle per mutation, a yield between (cancellation lands
+        between two mutations, never inside one). **Idempotent** — a second call
+        returns `(0, 0)`. Run once by the orchestrator after `load()`.
+        Returns `(merged, dropped)`.
+        """
+        merged = dropped = 0
+
+        # (1) drop thread-label nodes that were never focused
+        async with self._lock:
+            junk = [
+                nid
+                for nid, data in self._graph.nodes(data=True)
+                if nid.startswith("app:")
+                and is_non_app(nid[4:])
+                and int(data.get("access_count", 0)) == 0
+            ]
+        for nid in junk:
+            async with self._lock:
+                if nid in self._graph and nid not in HUB_NODE_IDS:
+                    self._graph.remove_node(nid)
+                    self._dirty = True
+                    dropped += 1
+            await asyncio.sleep(0)
+
+        # (2) group the survivors by canonical id
+        async with self._lock:
+            groups: dict[str, list[str]] = {}
+            for nid in list(self._graph.nodes):
+                for prefix in ("app:", "webapp:"):
+                    if nid.startswith(prefix):
+                        bare = nid[len(prefix) :]
+                        canon = resolve(bare) or bare
+                        groups.setdefault(f"{prefix}{canon}", []).append(nid)
+                        break
+
+        for canon_id, members in groups.items():
+            if len(members) == 1 and members[0] == canon_id:
+                continue  # already canonical, nothing to do
+            # survivor: prefer the exact canonical id, else the most-connected
+            async with self._lock:
+                present = [m for m in members if m in self._graph]
+                if not present:
+                    continue
+                if canon_id in present:
+                    survivor = canon_id
+                else:
+                    survivor = max(
+                        present,
+                        key=lambda m: (self._graph.degree(m), -_as_dt(
+                            self._graph.nodes[m].get("created_at", _utcnow())
+                        ).timestamp()),
+                    )
+                    nx.relabel_nodes(self._graph, {survivor: canon_id}, copy=False)
+                    self._graph.nodes[canon_id]["label"] = canon_id.split(":", 1)[1]
+                    self._dirty = True
+                    survivor = canon_id
+            for victim in present:
+                if victim == survivor:
+                    continue
+                async with self._lock:
+                    if self._merge_nodes_unsafe(survivor, victim):
+                        merged += 1
+                await asyncio.sleep(0)
+
+        return merged, dropped
 
     async def link_orphan_nodes(self) -> int:
         """Give every non-hub node with total degree 0 a `RELATED_TO` edge to

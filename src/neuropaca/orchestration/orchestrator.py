@@ -103,6 +103,7 @@ class NeuroPACAOrchestrator:
             create_interactive_backend(self._config),  # B5 · L9 $ / $? model (D-12)
         )
         await self._load_graph_with_recovery()
+        await self._canonicalise_app_nodes()
         self._scheduler = Scheduler(self._graph_memory, self._config)
         if self._module_builder is not None:
             self._modules.extend(
@@ -120,6 +121,29 @@ class NeuroPACAOrchestrator:
             self._config.inference_backend,
             len(self._modules),
         )
+
+    async def _canonicalise_app_nodes(self) -> None:
+        """B17 · one real app = one `app:` node. A pre-B17 graph has the same app
+        under both its Wayland `app_id` and its process name; this folds them once
+        at boot. Idempotent — a no-op on every start after the first. Never raises:
+        a graph that fails to tidy still boots (like `link_orphan_nodes`)."""
+        assert self._graph_memory is not None
+        try:
+            from neuropaca.diagnosis.app_identity import AppIdentity
+
+            identity = AppIdentity.from_file(self._config.app_identity_path)
+            merged, dropped = await self._graph_memory.canonicalise_app_nodes(
+                identity.resolve, identity.is_non_app
+            )
+            if merged or dropped:
+                _log.info(
+                    "B17 app-identity pass: merged %d duplicate app node(s), "
+                    "dropped %d non-app node(s)",
+                    merged,
+                    dropped,
+                )
+        except Exception:
+            _log.exception("B17 app-identity pass failed — booting with the graph as loaded")
 
     async def _load_graph_with_recovery(self) -> None:
         """Load the graph; if it is unreadable, quarantine it and boot on a fresh

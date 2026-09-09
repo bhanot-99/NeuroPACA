@@ -161,6 +161,12 @@ class Config:
     # editable app_id/wm_class/path-glob -> domain rules file SignalCorrelator
     # loads at startup. A missing file is non-fatal — activity stays unclassified.
     app_map_path: str = "data/app_map.default.toml"
+    # B17 (D-20) · app_identity_path points at the editable alias/non_app rules
+    # file `SignalCorrelator` loads at startup so one real app is one `app:` node
+    # regardless of whether the focus sensor (Wayland app_id) or the B13 census
+    # (process name) saw it. A missing file is non-fatal — apps merge by
+    # normalisation only.
+    app_identity_path: str = "data/app_identity.default.toml"
     # B2.5 · Process & Activity Sensing (D-9). activity_enabled turns on the
     # Wayland ext-idle-notify ActivityCollector (needs `pip install .[activity]`);
     # when on, XMetricCollector stops emitting its CPU-derived idle stand-in.
@@ -172,11 +178,22 @@ class Config:
     # this person working with" signal (Architecture.md §4). Names only, never
     # cmdline. `process_min_rss_mb` is the grouped-total threshold to census an
     # app (200 MB — an Electron renderer idles at 200-500 MB, D-19(f)).
-    # `process_exclude_names` is the round-2 name-based exclusion list; empty in
-    # round 1 (D-19(c) — the operator wants the unfiltered census first).
+    # `process_exclude_names` is the name-based exclusion list. Populated in B17
+    # (D-20), soak-informed (D-19(c) kept it empty in round 1 so the operator
+    # could see the raw census — it has been seen): the daemon's own footprint
+    # and its tooling are not "an activity". Still a list the operator can empty.
     process_collector_enabled: bool = True
     process_min_rss_mb: float = 200.0
-    process_exclude_names: list[str] = field(default_factory=list)
+    process_exclude_names: list[str] = field(
+        default_factory=lambda: [
+            "neuropacad",
+            "python3",
+            "node",
+            "chrome-devtools-mcp",
+            "cosmic-comp",
+            "Xwayland",
+        ]
+    )
     # B14 · web-app attribution. When the focused window's app_id is in
     # `webapp_browser_app_ids`, the ActivityCollector matches the window TITLE
     # against `webapp_map_path` (a site-name -> domain allowlist) and emits the
