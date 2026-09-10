@@ -1089,7 +1089,7 @@ class GraphMemory:
 
     def _related_between_unsafe(self, a: str, b: str) -> bool:
         rel = RelationType.RELATED_TO
-        return self._graph.has_edge(a, b, rel) or self._graph.has_edge(b, a, rel)
+        return bool(self._graph.has_edge(a, b, rel) or self._graph.has_edge(b, a, rel))
 
     def _association_step_unsafe(self, a: str, b: str, rate: float) -> str | None:
         """One Hebbian step on the association edge between two activity nodes
