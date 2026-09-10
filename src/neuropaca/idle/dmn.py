@@ -80,6 +80,8 @@ class DefaultModeNetwork(BaseModule):
         self._errors = 0
         self._last_at: datetime | None = None
         self._last_summary = ""
+        # V-1 · Hebbian decay is paced by uptime; downtime is not "disuse"
+        self._last_decay_mono = self._clock.monotonic()
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
@@ -177,8 +179,15 @@ class DefaultModeNetwork(BaseModule):
         # T7 · "use it or lose it" — decay the Hebbian co-occurrence mesh and
         # drop edges that faded below the floor, *before* linking orphans (a node
         # left edgeless by a prune is re-attached to YOU on the next line).
+        # V-1: the factor follows daemon uptime since the last sweep. A fixed
+        # factor per cycle made decay depend on how often the CPU went idle, so
+        # a day of many short idle spells erased every pair used only once.
+        now = self._clock.monotonic()
+        elapsed = max(0.0, now - self._last_decay_mono)
+        self._last_decay_mono = now
+        half_life = self.config.hebbian_half_life_hours * 3600.0
         faded = await self._graph.decay_cooccurrence_edges(
-            self.config.hebbian_decay_factor, self.config.hebbian_floor
+            0.5 ** (elapsed / half_life), self.config.hebbian_floor
         )
         linked = await self._graph.link_orphan_nodes()
         ttl = timedelta(hours=self.config.dmn_idle_thought_ttl_hours)

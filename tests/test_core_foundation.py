@@ -131,6 +131,14 @@ def test_llama_backend_requires_existing_model_path() -> None:
             {"inference_backend": "fake", "interactive_model_context_tokens": -1},
             "interactive_model_context_tokens",
         ),
+        # V-1: the Hebbian rate is a fraction of the gap to 1.0
+        ({"inference_backend": "fake", "hebbian_delta": 1.5}, "hebbian_delta"),
+        ({"inference_backend": "fake", "hebbian_half_life_hours": 0}, "hebbian_half_life_hours"),
+        (
+            # a floor at/above one step prunes every new pair before it can recur
+            {"inference_backend": "fake", "hebbian_delta": 0.02, "hebbian_floor": 0.02},
+            "must be < hebbian_delta",
+        ),
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs: dict[str, object], needle: str) -> None:

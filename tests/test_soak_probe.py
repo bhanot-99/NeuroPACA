@@ -152,7 +152,7 @@ def test_fetch_health_returns_none_when_there_is_no_socket(tmp_path: Path) -> No
 
 def test_hebbian_weight_stats_reads_the_co_occurrence_distribution(tmp_path: Path) -> None:
     """T7: the soak needs `weight_nonzero_fraction` climbing off zero and a
-    `max_cooccurrence_weight` above `hebbian_base` as proof the wiring fires."""
+    `max_cooccurrence_weight` above one step (`hebbian_delta`) as proof the wiring fires."""
 
     def edge(source: str, target: str, relation: str, weight: float) -> dict[str, object]:
         return {"source": source, "target": target, "relation": relation, "weight": weight}

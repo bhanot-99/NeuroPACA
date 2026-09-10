@@ -124,6 +124,13 @@ def _is_cooccurrence_node(node_id: str) -> bool:
     return node_id.startswith(("app:", "webapp:"))
 
 
+def _hebbian_step(weight: float, rate: float) -> float:
+    """V-1 · saturating Hebbian update: close `rate` of the remaining gap to 1.0.
+    Weights stay in [0, 1) however often a pair recurs, so a weight reads as an
+    affinity on a fixed scale instead of a raw, unbounded co-occurrence count."""
+    return weight + rate * (1.0 - weight)
+
+
 def _as_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -270,25 +277,27 @@ class GraphMemory:
         node_ids: Sequence[str],
         *,
         delta: float,
-        base: float,
         max_episode: int = 8,
         max_new_edges: int = 12,
     ) -> tuple[int, int]:
-        """Hebbian "fire together, wire together" for one co-occurrence episode
-        (T7). For every unordered pair of `node_ids`:
+        """Hebbian "fire together, wire together" for one *episode* whose
+        members genuinely co-occurred all at once — the L4 insight path (T7).
+        For every unordered pair of `node_ids`:
 
-        - an edge that already exists between them (either direction, any
-          parallel relation) gains `delta` — identical to
-          `reinforce_cooccurrence`;
-        - otherwise, when **both** ends are activity nodes (`app:` / `webapp:`),
-          one `RELATED_TO` edge is created at `weight = base`.
+        - two activity nodes (`app:` / `webapp:`) get their association edge
+          (`RELATED_TO`) stepped by `delta` with the saturating rule
+          (`_hebbian_step`), created on first co-occurrence — unless the pair is
+          already structurally linked by `PART_OF` (a tab and its own browser),
+          which says nothing new (V-1);
+        - any other pair only has an *existing* `RELATED_TO` edge bumped by
+          `delta`. `PART_OF` edges are structure and never carry Hebbian weight.
 
-        This builds the peer co-occurrence mesh the correlator never makes — it
-        wires activity nodes to `domain:` hubs, never to each other, so
-        `reinforce_cooccurrence` alone had nothing to bump. `node_ids` is taken
-        most-relevant-first and truncated to `max_episode`; no more than
-        `max_new_edges` edges are created per call. Ids absent from the graph
-        are skipped. **One `_lock` cycle** — O(max_episode^2) small dict ops.
+        A focus switch is *not* an episode — it is one new focus against a set of
+        recent ones; use `wire_coactivation` for that, or every recent app gets
+        re-wired to every other on each switch (the V-1 clique). `node_ids` is
+        taken most-relevant-first and truncated to `max_episode`; no more than
+        `max_new_edges` edges are created per call. Ids absent from the graph are
+        skipped. **One `_lock` cycle** — O(max_episode^2) small dict ops.
         Returns `(created, bumped)`.
         """
         unique = list(dict.fromkeys(node_ids))[:max_episode]
@@ -297,37 +306,72 @@ class GraphMemory:
             present = [n for n in unique if n in self._graph]
             for i, a in enumerate(present):
                 for b in present[i + 1 :]:
-                    hit = self._reinforce_edge_unsafe(a, b, delta)
-                    if hit:
-                        bumped += hit
-                        continue
-                    if (
-                        created < max_new_edges
-                        and _is_cooccurrence_node(a)
-                        and _is_cooccurrence_node(b)
-                    ):
-                        self._bump_or_create_edge_unsafe(
-                            a, b, RelationType.RELATED_TO, delta=delta, base=base
+                    if _is_cooccurrence_node(a) and _is_cooccurrence_node(b):
+                        if created >= max_new_edges and not self._related_between_unsafe(a, b):
+                            continue
+                        outcome = self._association_step_unsafe(a, b, delta)
+                        created += outcome == "created"
+                        bumped += outcome == "bumped"
+                    else:
+                        bumped += self._reinforce_edge_unsafe(
+                            a, b, delta, relation=RelationType.RELATED_TO
                         )
-                        created += 1
+        return created, bumped
+
+    async def wire_coactivation(
+        self, focus_id: str, peers: Sequence[tuple[str, float]], *, rate: float
+    ) -> tuple[int, int]:
+        """V-1 · the focus-switch Hebbian update. Step the association edge
+        between `focus_id` and each recently active `(peer, strength)` by
+        `rate * strength` (saturating, `_hebbian_step`), creating it on first
+        co-activation. `strength` in (0, 1] is how close in time the peer was
+        last active — a switch straight from A to B is full credit, one near
+        the edge of the window is little.
+
+        **Star-shaped:** only focus<->peer pairs are touched, never peer<->peer.
+        Wiring all pairs of the window on every switch re-bumped every recent
+        app against every other no matter what was focused, which is exactly
+        what grew the 6-node clique. Only activity nodes (`app:` / `webapp:`)
+        take part; a pair already linked by `PART_OF` is skipped. One `_lock`
+        cycle, O(len(peers)). Returns `(created, bumped)`."""
+        created = bumped = 0
+        async with self._lock:
+            if focus_id not in self._graph or not _is_cooccurrence_node(focus_id):
+                return 0, 0
+            for peer, strength in peers:
+                if (
+                    peer == focus_id
+                    or strength <= 0.0
+                    or peer not in self._graph
+                    or not _is_cooccurrence_node(peer)
+                ):
+                    continue
+                outcome = self._association_step_unsafe(focus_id, peer, rate * min(1.0, strength))
+                created += outcome == "created"
+                bumped += outcome == "bumped"
         return created, bumped
 
     async def decay_cooccurrence_edges(self, factor: float, floor: float) -> int:
         """ "Use it or lose it" for the Hebbian mesh (T7, B6 idle sweep). Every
-        `RELATED_TO` edge with `weight > 0` is multiplied by `factor` (< 1); an
-        edge that then sits below `floor` is removed — unless it is the last
-        edge on either endpoint (never re-orphan a node; `link_orphan_nodes`
-        would only re-add a `-> YOU` edge right after). One `_lock` cycle.
+        `RELATED_TO` edge with `weight > 0` is multiplied by `factor` (<= 1 —
+        the caller derives it from elapsed time, V-1); an edge that then sits
+        below `floor` is removed — unless it is the last edge on either endpoint
+        (never re-orphan a node; `link_orphan_nodes` would only re-add a
+        `-> YOU` edge right after). Hebbian weight on any other relation is
+        stray — pre-V-1 builds bumped structural `PART_OF` edges — and is reset
+        to 0.0 here, so the sweep also heals an old graph. One `_lock` cycle.
         Returns edges pruned.
         """
         async with self._lock:
             faded: list[tuple[str, str, Any]] = []
             touched = False
             for u, v, key, data in self._graph.edges(keys=True, data=True):
-                if RelationType(key) is not RelationType.RELATED_TO:
-                    continue
                 weight = float(data.get("weight", 0.0))
                 if weight <= 0.0:
+                    continue
+                if RelationType(key) is not RelationType.RELATED_TO:
+                    data["weight"] = 0.0
+                    touched = True
                     continue
                 data["weight"] = round(weight * factor, 6)
                 touched = True
@@ -1043,22 +1087,28 @@ class GraphMemory:
         self._dirty = True
         return edge
 
-    def _bump_or_create_edge_unsafe(
-        self, source_id: str, target_id: str, relation: RelationType, *, delta: float, base: float
-    ) -> str:
-        """Hebbian create-or-strengthen for one directed `(source, relation,
-        target)` (T7). If the edge exists, `weight += delta` and return
-        ``"bumped"``; else create it at `weight = base` and return
-        ``"created"``. Both nodes must already exist (caller's job)."""
-        rel = RelationType(relation)
-        if self._graph.has_edge(source_id, target_id, rel):
-            data = self._graph.edges[source_id, target_id, rel]
-            data["weight"] = float(data.get("weight", 0.0)) + delta
-            self._dirty = True
-            return "bumped"
-        self._graph.add_edge(
-            source_id, target_id, key=rel, weight=float(base), created_at=_utcnow()
-        )
+    def _related_between_unsafe(self, a: str, b: str) -> bool:
+        rel = RelationType.RELATED_TO
+        return self._graph.has_edge(a, b, rel) or self._graph.has_edge(b, a, rel)
+
+    def _association_step_unsafe(self, a: str, b: str, rate: float) -> str | None:
+        """One Hebbian step on the association edge between two activity nodes
+        (T7 / V-1): the `RELATED_TO` edge in either direction is stepped with
+        `_hebbian_step` (``"bumped"``), or created as `a -> b` at
+        `_hebbian_step(0, rate)` (``"created"``). A pair already linked by
+        `PART_OF` (a web-app and its own browser) is left alone — ``None``.
+        Both nodes must already exist (caller's job)."""
+        part_of = RelationType.PART_OF
+        if self._graph.has_edge(a, b, part_of) or self._graph.has_edge(b, a, part_of):
+            return None
+        rel = RelationType.RELATED_TO
+        for u, v in ((a, b), (b, a)):
+            if self._graph.has_edge(u, v, rel):
+                data = self._graph.edges[u, v, rel]
+                data["weight"] = _hebbian_step(float(data.get("weight", 0.0)), rate)
+                self._dirty = True
+                return "bumped"
+        self._graph.add_edge(a, b, key=rel, weight=_hebbian_step(0.0, rate), created_at=_utcnow())
         self._dirty = True
         return "created"
 
@@ -1097,12 +1147,16 @@ class GraphMemory:
         self._dirty = True
         return self._node_from_attrs(node_id, data)
 
-    def _reinforce_edge_unsafe(self, node_a: str, node_b: str, delta: float) -> int:
+    def _reinforce_edge_unsafe(
+        self, node_a: str, node_b: str, delta: float, *, relation: RelationType | None = None
+    ) -> int:
         bumped = 0
         for u, v in ((node_a, node_b), (node_b, node_a)):
             if not self._graph.has_edge(u, v):
                 continue
             for key in list(self._graph[u][v]):
+                if relation is not None and RelationType(key) is not relation:
+                    continue
                 data = self._graph[u][v][key]
                 data["weight"] = float(data.get("weight", 0.0)) + delta
                 bumped += 1
