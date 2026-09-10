@@ -90,7 +90,9 @@ def _apply_header(text: str) -> tuple[str, bool]:
 def _apply_ref(text: str, ref: str) -> tuple[str, bool]:
     if REF_MARK in text:
         return text, False
-    return f"{text.rstrip()}\n\n{REF_MARK} {ref}\n", True
+    # two blank lines: ruff format requires them before a module-level comment
+    # that follows a top-level def/class, and CI runs `ruff format --check`
+    return f"{text.rstrip()}\n\n\n{REF_MARK} {ref}\n", True
 
 
 def main() -> int:

@@ -120,4 +120,5 @@ def test_default_file_has_the_known_dupes(ident: AppIdentity) -> None:
     # guards against someone trimming the shipped table below usefulness
     assert ident.alias_count >= 20
 
+
 # gen-ref: 75245d34

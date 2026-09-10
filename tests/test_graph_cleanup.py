@@ -130,4 +130,5 @@ def test_main_apply_writes_valid_json(tmp_path: Path) -> None:
     out = json.loads(g.read_text())
     assert {n["id"] for n in out["nodes"]} == {"app:brave", "YOU"}
 
+
 # gen-ref: 58d9d9e3
