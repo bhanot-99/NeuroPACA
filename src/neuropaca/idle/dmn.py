@@ -189,10 +189,16 @@ class DefaultModeNetwork(BaseModule):
         faded = await self._graph.decay_cooccurrence_edges(
             0.5 ** (elapsed / half_life), self.config.hebbian_floor
         )
+        # V-3a · a node that gained a real edge gives its `-> YOU` placeholder
+        # back before orphans are (re)linked — YOU stays a hub of true orphans
+        released = await self._graph.release_you_links()
         linked = await self._graph.link_orphan_nodes()
         ttl = timedelta(hours=self.config.dmn_idle_thought_ttl_hours)
         pruned = await self._graph.prune_stale_nodes(ttl)
-        return f"merged {merged} · faded {faded} · linked {linked} · pruned {pruned}"
+        return (
+            f"merged {merged} · faded {faded} · released {released} · "
+            f"linked {linked} · pruned {pruned}"
+        )
 
     async def _imagination(self) -> int:
         """Returns the count made *this cycle* (for the summary line). The running

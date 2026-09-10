@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from neuropaca.core import logging as np_logging
 from neuropaca.core.base_module import BaseModule
@@ -39,11 +40,35 @@ from neuropaca.core.inference import create_backend, create_interactive_backend
 from neuropaca.core.models import Event
 from neuropaca.orchestration.scheduler import Scheduler
 
+if TYPE_CHECKING:
+    from neuropaca.diagnosis.app_identity import AppIdentity
+
 _log = logging.getLogger(__name__)
 
 _SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 
 ModuleBuilder = Callable[[Config, EventBus, GraphMemory, BitNetRuntime], list[BaseModule]]
+
+
+def non_activity_app(config: Config, identity: AppIdentity) -> Callable[[str], bool]:
+    """V-3c · the boot tidy's "is this `app:` node not really an app?" test:
+    B17's thread-label / bare-shell check, plus every name the config says is
+    not an activity — `process_exclude_names` (the daemon's own footprint,
+    D-20) and `focus_exclude_app_ids` (dialogs, portals). Those filters only
+    stop *new* nodes; nodes minted before a filter existed — or while a config
+    file overrode it with `[]` — were never removed. Matched on the raw name
+    and on its canonical id, case-insensitively."""
+    excluded = {
+        name.strip().lower()
+        for name in (*config.process_exclude_names, *config.focus_exclude_app_ids)
+        if name.strip()
+    }
+
+    def is_non_activity(bare: str) -> bool:
+        canon = identity.resolve(bare) or bare
+        return identity.is_non_app(bare) or bare.lower() in excluded or canon.lower() in excluded
+
+    return is_non_activity
 
 
 class NeuroPACAOrchestrator:
@@ -133,7 +158,7 @@ class NeuroPACAOrchestrator:
 
             identity = AppIdentity.from_file(self._config.app_identity_path)
             merged, dropped = await self._graph_memory.canonicalise_app_nodes(
-                identity.resolve, identity.is_non_app
+                identity.resolve, non_activity_app(self._config, identity)
             )
             if merged or dropped:
                 _log.info(
@@ -142,6 +167,11 @@ class NeuroPACAOrchestrator:
                     merged,
                     dropped,
                 )
+            # V-3a · idle cycles can be rare, so the boot tidy also hands back
+            # every `-> YOU` placeholder a node no longer needs
+            released = await self._graph_memory.release_you_links()
+            if released:
+                _log.info("V-3a: released %d stale -> YOU placeholder link(s)", released)
         except Exception:
             _log.exception("B17 app-identity pass failed — booting with the graph as loaded")
 

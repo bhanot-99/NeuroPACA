@@ -597,6 +597,42 @@ class GraphMemory:
 
         return merged, dropped
 
+    async def release_you_links(self) -> int:
+        """V-3a · take the `-> YOU` placeholder back off a node that has since
+        gained a real edge. `link_orphan_nodes` gives a degree-0 node a
+        `RELATED_TO YOU` edge so ordinary decay can manage it, but nothing ever
+        removed that edge again — every app that was briefly an orphan (before
+        its domain edge or first co-use arrived) kept it for life, and `YOU`
+        became a hub of stale spokes. Only that exact placeholder (node ->
+        `YOU`, `RELATED_TO`, weight 0) is removed, and only while the node keeps
+        an edge to something other than `YOU` — this never re-orphans a node.
+        Candidates in one pass; one `_lock` cycle per removal with a yield
+        between (rules.md §3). Returns placeholders removed."""
+        async with self._lock:
+            candidates = (
+                [n for n in self._graph.predecessors("YOU") if n not in HUB_NODE_IDS]
+                if "YOU" in self._graph
+                else []
+            )
+        released = 0
+        for node_id in candidates:
+            async with self._lock:
+                if self._is_stale_you_link_unsafe(node_id):
+                    self._graph.remove_edge(node_id, "YOU", RelationType.RELATED_TO)
+                    self._dirty = True
+                    released += 1
+            await asyncio.sleep(0)
+        return released
+
+    def _is_stale_you_link_unsafe(self, node_id: str) -> bool:
+        rel = RelationType.RELATED_TO
+        if node_id not in self._graph or not self._graph.has_edge(node_id, "YOU", rel):
+            return False
+        if float(self._graph.edges[node_id, "YOU", rel].get("weight", 0.0)) > 0.0:
+            return False  # not the placeholder — something set a real weight on it
+        graph = self._graph
+        return any(n != "YOU" for n in (*graph._succ[node_id], *graph._pred[node_id]))
+
     async def link_orphan_nodes(self) -> int:
         """Give every non-hub node with total degree 0 a `RELATED_TO` edge to
         `YOU`, so ordinary score decay can then manage it rather than it floating

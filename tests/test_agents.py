@@ -8,7 +8,8 @@ numbers, the same way B7's were:
 
 - the ephemeral cap holds *structurally* — it is checked under a lock before the
   mutation, so a burst larger than the cap cannot race past it;
-- apoptosis reaps on age and on ephemerality, and on nothing else;
+- apoptosis reaps only ephemeral nodes, and only on age or (V-3b) when every
+  node the probe is about is gone;
 - an `ACTION_PROPOSAL` reaches L7's single `SafetyGate` and comes back, and a
   proposal L7 does not recognise is refused rather than raised;
 - an over-budget agent is cancelled and still closes its own record;
@@ -207,6 +208,25 @@ async def test_apoptosis_leaves_no_dangling_edges(tmp_path) -> None:
         for edge in graph.get_edges(survivor):
             assert graph.get_node(edge.source_id) is not None
             assert graph.get_node(edge.target_id) is not None
+    await agents.stop()
+
+
+async def test_apoptosis_reaps_a_fresh_probe_whose_subject_is_gone(tmp_path) -> None:
+    """V-3b · a probe is a note about its `spec.refs`. Once its app is deleted
+    it describes nothing — reaped now, not left to be linked to YOU as an
+    orphan and linger out the 14 d TTL. A fresh probe about a live app stays."""
+    clock = FakeClock(wall=datetime.now(UTC))
+    agents, _bus, graph = await _supervisor(tmp_path, clock=clock, agent_idle_ttl_days=14)
+    await graph.add_node("app:gone", NodeType.APP, {"label": "gone"})
+
+    orphaned = await agents.spawn_node("summary/L4.anomaly", trigger_node="app:gone")
+    kept = await agents.spawn_node("summary/L4.anomaly", trigger_node="app:code")
+    assert orphaned and kept
+    await graph.delete_node("app:gone")  # e.g. pruned by the DMN's stale sweep
+
+    assert await agents.apoptosis() == 1
+    assert graph.get_node(orphaned) is None
+    assert graph.get_node(kept) is not None, "inside its TTL and its subject exists"
     await agents.stop()
 
 

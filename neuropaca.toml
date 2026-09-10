@@ -46,11 +46,12 @@ log_file_path = "data/neuropaca.log"
 activity_enabled = true
 top_process_count = 5
 # B13-B2 (D-19) · the per-app RAM/CPU/runtime census. On by default; spelled out
-# here for visibility. `process_exclude_names` is empty in round 1 — the census
-# is unfiltered, and the round-2 exclusion list is a soak output.
+# here for visibility. `process_exclude_names` is deliberately NOT set: the
+# Config default (D-20 — the daemon's own footprint and tooling) applies. V-3c:
+# the round-1 `process_exclude_names = []` left here overrode that default and
+# let neuropacad / python3 / cosmic-comp into the graph as apps.
 process_collector_enabled = true
 process_min_rss_mb = 200.0
-process_exclude_names = []
 poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
 
 # B14 · web-app attribution. A focused browser tab is matched against the title

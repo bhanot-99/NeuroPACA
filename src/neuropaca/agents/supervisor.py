@@ -329,7 +329,12 @@ class AgentSupervisor(BaseModule):
 
     async def apoptosis(self) -> int:
         """Reap every ephemeral node untouched for `agent_idle_ttl_days` — keyed
-        on `last_accessed` (B18), so a probe that keeps being reinforced lives on.
+        on `last_accessed` (B18), so a probe that keeps being reinforced lives on
+        — and, V-3b, every probe whose subject is gone: a probe is a note *about*
+        the nodes in its `spec.refs`, and once none of them exists it describes
+        nothing. Left alone it would lose its only edge, be linked to `YOU` as
+        an orphan, and linger to its TTL. The 14 d TTL (D-15/D-16) is unchanged
+        for probes whose subject still exists; reaping stays L8's own job.
 
         One lock cycle per deletion with a yield between, exactly like the DMN's
         graph jobs — a cancellation lands between two deletions, never inside one
@@ -339,7 +344,12 @@ class AgentSupervisor(BaseModule):
         reaped = 0
         for node_id in self._ephemeral_ids():
             node = self._graph.get_node(node_id)
-            if node is None or node.last_accessed > cutoff:
+            if node is None:
+                continue
+            subject_gone = node.spec is not None and not any(
+                self._graph.has_node(ref) for ref in node.spec.refs
+            )
+            if node.last_accessed > cutoff and not subject_gone:
                 continue
             if await self.kill_node(node_id):
                 reaped += 1
