@@ -214,7 +214,7 @@ async def test_v4_graph_migrates_to_facts(tmp_path: Path) -> None:
 
     await gm.save()
     saved = json.loads(path.read_text())
-    assert saved["schema_version"] == 5
+    assert saved["schema_version"] == 6  # saved by the current (V-2) build
     reloaded = GraphMemory(path)
     await reloaded.load()
     assert sorted(reloaded.node_ids) == sorted(gm.node_ids), "v5 round-trips unchanged"

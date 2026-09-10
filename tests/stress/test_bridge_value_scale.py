@@ -66,7 +66,8 @@ async def test_bridge_value_recalc_stays_under_the_50ms_loop_budget(tmp_path: Pa
     leaves = [n for n in graph.node_ids if n.startswith("leaf:")]
     probe_leaf = rng.choice(leaves)
     await graph.add_edge(probe_leaf, hubs[0], RelationType.PART_OF)
-    await graph.add_edge(probe_leaf, hubs[1], RelationType.PART_OF)  # -> two domains
+    await graph.add_edge(probe_leaf, hubs[1], RelationType.PART_OF)
+    await graph.add_edge(probe_leaf, hubs[2], RelationType.PART_OF)  # -> three domains (V-2)
     for _ in range(_INJECTED_EDGES):
         await graph.add_edge(rng.choice(leaves), rng.choice(hubs), RelationType.PART_OF)
 
