@@ -5,10 +5,10 @@
 | | |
 | --- | --- |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
-| **Version** | v8 |
-| **Dossier date** | 2026-09-10 |
-| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. |
-| **Code size** | 13,254 lines of source · 12,609 lines of tests · 603 collected tests (580 default) · 102 commits · 17 merged PRs |
+| **Version** | v9 |
+| **Dossier date** | 2026-09-11 |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. V-2 (`da78779`, 2026-09-11) rebuilds `relevance_score` — a decaying activity counter (schema **v6**), learned association strength, real cross-domain bridges — so the score spans 0.69–10 instead of 2.98–9 (§21.9). V-3 (`f79f42b`) removes accumulated cruft: stale `→ YOU` placeholders released (18 → 10), the daemon's own processes purged after a config override was found disabling the exclude list, subject-less probes reaped (§21.10). All three run on the live daemon; `main` pushed to GitHub. |
+| **Code size** | 15,028 lines of source · 14,761 lines of tests · 743 collected tests (719 default) · 139 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
 | **Research goal** | A publishable paper — the benchmarks *and* the rejected alternatives are deliverables. |
@@ -39,7 +39,7 @@
 18. [Research claims and publication plan](#18-research-claims-and-publication-plan)
 19. [Reproducing everything](#19-reproducing-everything)
 20. [Glossary](#20-glossary)
-21. [The post-B9 build chronicle — B13 to B18, step by step](#21-the-post-b9-build-chronicle--b13-to-b18-step-by-step)
+21. [The post-B9 build chronicle — B13 to V-3, step by step](#21-the-post-b9-build-chronicle--b13-to-v-3-step-by-step)
 
 ---
 
@@ -134,30 +134,30 @@ The "neuromorphic" name is earned by four concrete mechanisms, not by vibes:
 
 ### 3.1 The formula
 
+Since **V-2** (2026-09-11, §21.9):
+
 ```
-relevance_score = normalize(
-      frequency            × 3.0    # how often you touch it
-    + decay(last_seen)     × 3.0    # how recently
-    + log(connections)     × 2.0    # how connected it is in the graph
-    + bridge_value         × 2.0    # does it link different domains together
-)
+relevance_score = 6 × activity     # how much, and how recently, you use it
+                + 2 × strength     # how strongly it is tied to other things you use
+                + 2 × bridge       # does it link different areas of your work
+# each term is 0–1, so the score is 0–10
 ```
 
-- `frequency` — the node's `access_count`.
-- `decay(last_seen)` — exponential recency decay; a node untouched for weeks sinks.
-- `log(connections)` — degree, log-damped so a hub does not dominate.
-- `bridge_value` — 0.0 / 0.5 / 1.0 depending on how many distinct `domain:*` hubs the node can reach. A file used by both `engineering` and `research` is structurally more valuable than one used by neither.
+- `activity` — a **decaying access counter** (`Node.activity`, schema v6): every touch first ages the counter by a 7-day half-life, then adds 1; creation counts as one sighting. Scored as `log1p(activity) / log1p(the graph's largest)`, so the busiest node reaches 1 and a once-seen node sits near the bottom. This one term replaces the old separate *frequency* and *recency* terms (the idea browsers call "frecency").
+- `strength` — the sum of learned Hebbian weights on the node's association edges (V-1), plus 0.1 per other structural edge; log-normalised against the graph's largest. Edges to a hub count nothing (`YOU` is only an orphan placeholder; domains belong to `bridge`), and neither do a generated node's provenance edges — the system's own notes neither earn nor lend relevance by existing.
+- `bridge` — the distinct `domain:*` hubs the node reaches directly **or through an association of weight ≥ 0.1**: one domain 0, two 0.5, three or more 1. An app used alongside tools from engineering, research and habits bridges them even though its own `PART_OF` edge names one domain.
 
-Weights are `3 / 3 / 2 / 2` — recency and frequency are deliberately equal and dominant; structural terms are secondary. This is a design choice, not a fitted parameter, and it is one of the ablations §18 calls for.
+Weights are `6 / 2 / 2` — usage dominant, structure secondary, the same 60/40 balance the original formula intended. Still a design choice, not a fitted parameter, and still one of the ablations §18 calls for.
+
+> **The original formula (B1–V-1), kept for the record:** `3·min(1, access_count/100) + 3·0.5^(age_days/7) + 2·log1p(degree)/log1p(20) + 2·min(1, domains/2)`. On the live graph it gave every node ~3 points for merely having been touched this week, maxed frequency out for only the two busiest apps, counted a probe's bookkeeping edge like a real one, and let `bridge` mean "is listed in `app_map`" — 70 nodes squeezed into 2.98–9.0. §21.9 has the full diagnosis.
 
 ### 3.2 The four jobs
 
 ```mermaid
 flowchart TD
-    F["frequency ×3.0"] --> S
-    D["decay(last_seen) ×3.0"] --> S
-    C["log(connections) ×2.0"] --> S
-    B["bridge_value ×2.0"] --> S
+    F["activity ×6<br/>(decaying use counter)"] --> S
+    C["strength ×2<br/>(learned associations)"] --> S
+    B["bridge ×2<br/>(domains reached)"] --> S
     S(("relevance_score<br/>0 – 10"))
     S --> J1["JOB 1 · Retention<br/>low-score, long-untouched nodes<br/>are pruned from the graph"]
     S --> J2["JOB 2 · Memory replay<br/>the DMN replays high-score nodes often,<br/>low-score nodes rarely"]
@@ -297,7 +297,7 @@ survives as `neuropaca run` (`$!` / `$$` are now an internal L9→L7 wire enum).
 | **2** | **A single usage score reused for retention, replay, and ranking** | Retrieval systems rank by semantic similarity; caches evict by LRU; nobody has unified all three under one behaviourally-derived score and measured whether that unification costs anything. |
 | **3** | **Corroboration-gated autonomy, measured** | "Require multiple signals before acting" is folklore. We turn it into a structural set test and show it is *impossible* — not merely unlikely — for one source to cross the high threshold, with 500 max-confidence spikes producing 167× the threshold and still firing only the low tier. |
 | **4** | **A CPU-only, zero-egress agent that is proven zero-egress** | Privacy claims are usually documentation. Here they are a CI job in a network namespace that fails the build if an outbound connection succeeds. |
-| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf and misdiagnosed **five** times, a `chat` feature built over two phases then withdrawn, one real app landing as 2–3 graph nodes because two sensors named it differently, and a Hebbian rule whose "wire together" half was never built so every edge weight sat at zero for the life of the project until T7 (2026-09-10) — a green integration test that pre-wired its own fixture hid it — and then, the same day, a T7 rule that learned only inside a 6-node clique because it wired every recent pair on every switch and decayed per CPU-idle spell instead of per unit of time (V-1). Negative results with numbers attached are rare and reusable. |
+| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf and misdiagnosed **five** times, a `chat` feature built over two phases then withdrawn, one real app landing as 2–3 graph nodes because two sensors named it differently, and a Hebbian rule whose "wire together" half was never built so every edge weight sat at zero for the life of the project until T7 (2026-09-10) — a green integration test that pre-wired its own fixture hid it — and then, the same day, a T7 rule that learned only inside a 6-node clique because it wired every recent pair on every switch and decayed per CPU-idle spell instead of per unit of time (V-1); a relevance score whose three structural terms were near-constant across real nodes, so it could only separate the two busiest apps from everything else (V-2); and an exclusion list that worked in code and in its tests but was switched off in production by a stale `= []` in every shipped config (V-3). Negative results with numbers attached are rare and reusable. |
 
 ### 5.2 What makes the results credible
 
@@ -456,7 +456,7 @@ Two gates would have meant two audit writers and two confirmation brokers racing
 
 - **Graph type:** `networkx.MultiDiGraph` — parallel edges are required, because the same pair of nodes can be connected by *different* `RelationType`s simultaneously.
 - **Identifiers:** every node id and node-reference field is a `str`. Only `Event.id` is a `UUID`.
-- **Schema version 4.** `_SCHEMA_VERSION = 4`, `_MIN_READABLE_SCHEMA_VERSION = 1`. v3 (B13) added `ram_mb` / `cpu_percent` / `first_seen_at` / `last_seen_at` to `Node` — populated from the process census, **not** fed into `relevance_score` (importance is behavioural salience, not memory footprint); `first_seen_at` is write-once. v4 (B14) added `NodeType.WEBAPP` and is forward-incompatible with a v3 reader. A newer-than-supported file is refused with a message (B9 criterion 6).
+- **Schema version 6** (since V-2). `_SCHEMA_VERSION = 6`, `_MIN_READABLE_SCHEMA_VERSION = 1`. v6 (V-2) added `Node.activity`, the decaying access counter behind `relevance_score`; a v5 file loads with `activity = access_count + 1` and is written back as v6 (a one-way door for older builds — back up first). v5 (B18) added `Node.spec`, the structured `LabelSpec` a generated node is about. v3 (B13) added `ram_mb` / `cpu_percent` / `first_seen_at` / `last_seen_at` to `Node` — populated from the process census, **not** fed into `relevance_score` (importance is behavioural salience, not memory footprint); `first_seen_at` is write-once. v4 (B14) added `NodeType.WEBAPP` and is forward-incompatible with a v3 reader. A newer-than-supported file is refused with a message (B9 criterion 6).
 - **Node id conventions carry meaning:**
 
 | Prefix | Meaning | Lifetime |
@@ -467,7 +467,7 @@ Two gates would have meant two audit writers and two confirmation brokers racing
 | `file:<abs path>` | A file in a watched path | Score-decayed |
 | `insight:<uuid>` | An L4 extractive insight | 48 h TTL |
 | `idle:<uuid12>` | An L6 idle thought | 48 h TTL |
-| `ephemeral:<facet>:<uuid>` | An L8 diagnostic sub-cluster node | 14 d apoptosis |
+| `ephemeral:<facet>:<uuid>` | An L8 diagnostic sub-cluster node | 14 d apoptosis, or as soon as every node it is about is gone (V-3b) |
 
 > **A hard-won design constraint.** `GraphMemory` builds its networkx node data from the **fixed** `Node` field set, and serialisation round-trips only those same fields. An ad-hoc attribute is silently discarded at creation *and again on every save*. This is why apoptosis selects on the **node-id prefix**, not on an `is_ephemeral` attribute — with an attribute, one daemon restart would make every ephemeral node look permanent, the sweep would reap nothing, and the graph would grow without bound, silently. (Decision D-16(d-bis).)
 
@@ -580,6 +580,8 @@ flowchart LR
     B16 --> B17["B17 ✅<br/>canonical app identity<br/>+ structured graph view"]
     B17 --> T7["T7 ✅<br/>Hebbian wire-together"]
     T7 --> V1["V-1 ✅<br/>Hebbian rule rework"]
+    V1 --> V2["V-2 ✅<br/>relevance score rework"]
+    V2 --> V3["V-3 ✅<br/>cruft removal"]
     B17 --> B18["B18 ✅<br/>one labeling system"]
     B18 -.->|re-run| B9
     B9 -.-> D1["D1 ⏸<br/>model pruning"]
@@ -622,6 +624,8 @@ flowchart LR
 | **B17** | One real app was **2–3 `app:` nodes** — the focus sensor keys by Wayland `app_id` (`app:com.system76.CosmicFiles`), the B13 census by process name (`app:cosmic-files`), `upsert_node` de-dups by exact id; the behavioural edges on one, the RAM/CPU on the other. B13 §7 deferred the "round-2 name map". Also `app:MainThread` (a thread name `psutil` reported as a process). | `AppIdentity.resolve()` (alias table + minimal normaliser) canonicalises every `app:` id at one correlator chokepoint; `canonicalise_app_nodes()` folds a pre-B17 graph once at boot. Graph window: readable names, the 11 hubs pinned on a fixed ring, a click-to-open node detail panel. Real soak graph 63 → 57 nodes; 643 tests green |
 | **T7** | Every Hebbian edge weight was `0.0` — "wire together" was never built | `wire_cooccurrence` (create-or-bump), a co-activation window on focus switches, decay in the idle sweep (§16.1) |
 | **V-1** | T7's learning stayed inside a **6-node clique**: 11 of 84 edges weighted, all among 6 nodes; unmapped apps never took part, every switch re-wired all recent pairs, decay ticked per CPU-idle spell, `PART_OF` edges collected weight | Star-shaped `wire_coactivation` with time-proximity credit; saturating `w += rate·(1 − w)`; decay by uptime half-life (72 h); `PART_OF` pairs skipped and healed; unmapped focused apps join; a 30 s per-pair refractory. Simulation: 6 → 8 apps, weight range 0.03–0.26 → 0.02–0.98; storm loop lag held at `main`'s level; 719 tests (§21.8) |
+| **V-2** | `relevance_score` barely discriminated: 70 nodes in 2.98–9.0 (median 3.38), a cliff after the two busiest apps, generated probes outranking real tools (8 of 29 apps). Causes: a flat ~3-point recency floor, frequency saturating at 100 accesses, plain degree counting bookkeeping edges, `bridge` meaning "is in `app_map`", a never-decaying `access_count` | `6·activity + 2·strength + 2·bridge`: a decaying access counter (`Node.activity`, schema v6), learned association strength with hub and provenance edges excluded, bridge through associations; two-pass chunked recalc with one cached adjacency walk per node. Live graph 0.69–10.0 (median 1.34); 10k recalc 83 ms (`main` 59 ms; a first cut was 388 ms); retention unchanged; 724 tests (§21.9) |
+| **V-3** | Cruft: `YOU` wired to 18 nodes, 3 of them no longer orphans; the daemon's own processes (`neuropacad`, `python3`, `cosmic-comp`, …) living as apps; probes about deleted apps lingering; a "dedup every restart" report | `release_you_links()` (boot + idle sweep); the root cause of the exclude-list failure was **config** — every shipped TOML set `process_exclude_names = []` — fixed, plus a boot purge of excluded names; L8 reaps a probe once its subject is gone (14 d TTL kept by ruling); the dedup report proved to be one pre-B17 migration line. Live: 71 → 66 nodes, `YOU` 18 → 10; 740 tests (§21.10) |
 | **B18** | Generated labels were frozen text: stale after renames, duplicated after restarts, drawn as lookalikes, and copied into each other | Every generated node stores a `LabelSpec` (what it is about, by id); one renderer; the node id is the fact fingerprint (schema v5); graph-backed repeat gate replaces the in-memory Jaccard buffer. Real graph 89 → 60 nodes live; 699 tests green |
 
 ---
@@ -1065,6 +1069,12 @@ Beneath that, each file also carries a covert one-line marker appended at the en
 
 `scripts/_provenance.py` derives it as `sha256(f"{PROV_SECRET}:{posix_relative_path}").hexdigest()[:8]`. The secret is read only from an environment variable and never written anywhere; the script is idempotent and is re-run after every merge, so files from a merged branch get stamped and nothing else changes. To prove authorship of a disputed copy later, the author reveals the secret and this recipe, re-derives the marker for every file, and shows it matches — a check that a line-by-line rewrite of the code would not survive. `AUTHORS.md` and `.mailmap` normalise commit identity; commits and tags are SSH-signed.
 
+**Operating the stamper — two lessons from 2026-09-11.**
+
+- *A wrong secret is detectable without knowing the right one.* The stamper was run twice with a documentation placeholder (`…`, then `your actual secret phrase`) instead of the real phrase. Both runs were caught **before commit** by re-deriving the markers of three long-stamped files (`core/config.py`, `core/graph_memory.py`, `tests/test_idle.py`) from the phrase used: 0/3 matched, while all 7 new markers matched the placeholder. The stamps were reverted (`git restore`, after confirming the run had added exactly two lines per file and changed nothing else). The third run matched 3/3 old and 7/7 new, and was committed (`6f89048`). The same check — derive from a candidate secret, compare against known-good files — is the verification step to run after every stamping pass.
+- *The stamper broke CI once.* It wrote **one** blank line before the marker; `ruff format` requires two before a module-level comment that follows a top-level `def`, so the five newly stamped test files failed the `quality` job's `ruff format --check`. Fixed in `ecb7deb`: whitespace-only reformat (markers unchanged, verified) and the stamper now writes two. The rule: after any stamping pass, run the full CI set locally before pushing.
+- *Where the secret must not go.* A secret typed into an agent chat (e.g. via `!`) lands in the conversation transcript. Run the stamper in a plain terminal with `read -rs PROV_SECRET`, never through the assistant. (The phrase has been exposed in two assistant transcripts; rotating it means re-stamping every file with a new secret.)
+
 ---
 
 ## 15. Approaches we tried and rejected
@@ -1231,6 +1241,8 @@ for this one sensor took five tries.
 | **T6** | `scripts/soak_state.py`'s `rss_trend()` reported a huge, misleading leak slope right after a daemon restart — `(last − first) / span` over the longest daemon life, so a one-time warm-up step divided by a short window extrapolated absurdly. Observed live 2026-09-04: RSS jumped 43 → 1476 MiB in one 60 s sample, then sat flat for 3+ hours, and the tool reported **`+5600.7 MiB/day`** in the popup and tray widget. | 🟢 **Mitigated 2026-09-08** (B15 harness rebuild). `warm_rss_slope()` fits the slope only over samples of the longest daemon life **after RSS crosses 500 MiB** (the GGUF has mapped in), so the startup jump is outside the window; `assess` grades on that warm slope. The raw `rss_trend()` figure is kept and shown for context — a genuine post-warm-up leak still moves it. |
 | **T7** | Every Hebbian edge `weight` in the ~22 h soak graph is `0.0` — co-occurrence reinforcement is not accumulating on the graph. `reinforce_cooccurrence` is exercised in unit tests (§8, "+0.01 on existing edges only, ~1.4 ms"), so the mechanism works; either the daemon path that would call it on real signals is not wired, or the weights are being reset by an edge re-add elsewhere. Found in the B17 graph review. | 🟢 **Diagnosed + fixed 2026-09-10** (full chapter: §21.6). **Root cause: "wire together" was never built.** `reinforce_cooccurrence` only strengthens *existing* edges; nothing ever *created* an edge between two co-occurring nodes — the correlator wires activity nodes to `domain:` hubs, never to each other, and the episode handed to the reinforcer is sibling `app:` nodes with no edge among them, so every bump was a no-op. Aggravators: `_add_edge_unsafe` re-add reset `weight`→0.0 (latent, masked); reinforcement was gated behind the ~5/day model-only insight path. The tests passed because they pre-wire the cited nodes — exactly what production never did. Fix: upsert-safe `_add_edge_unsafe`; new `GraphMemory.wire_cooccurrence()` (create-or-bump); a co-activation time-window in `correlator.on_app_switch` drives it model-free on every focus switch; `decay_cooccurrence_edges()` in the B6 idle sweep makes weight a recency-weighted affinity; 7 `Config` knobs. Closes on a ≥ 24 h soak showing a stable non-zero weight distribution. |
 | **V-1** | T7's learning was confined to a **6-node clique** — 11 of 84 live edges weighted (0.01–0.37), all among `{brave, cosmic-term, cosmic-files, obsidian, google-gemini, youtube}`; every other edge `0.0`. | 🟢 **Diagnosed + fixed 2026-09-10** (full chapter: §21.8; merged `c6ca7ea`, daemon restarted on it). Five causes: unmapped focused apps never co-activated; every switch re-wired *all* pairs in the window (a clique by construction); decay was a fixed factor per CPU-idle spell, so a pair used once was pruned within ~9 idle spells; `wire_cooccurrence` bumped structural `PART_OF` edges (never decayed); additive, unbounded weights. Fix: star-shaped `wire_coactivation` with time-proximity credit; saturating update; uptime half-life; `PART_OF` skipped + healed; unmapped apps join (`focus_exclude_app_ids` drops dialogs); 30 s per-pair refractory. Closes on a soak showing the mesh reach beyond the old 6 apps with a spread of weights. |
+| **V-2** | `relevance_score` squeezed the live graph into 2.98–9.0 (median 3.38), with generated `ephemeral:` probes (3.15–3.37) outranking real tools (`cosmic-comp` 3.20, `pytest` ~3.4). The score drives retention, idle replay and retrieval ranking (§3.2), so a flat score makes all three arbitrary. | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.9; merged `da78779`, live since 00:18 IST). Five causes: recency ×3 with a 7-day half-life was a flat floor (every node touched this week); `min(1, access_count/100)` saturated only the two busiest apps; plain degree counted bookkeeping and `→ YOU` edges; `bridge` counted only direct domain edges, of which an app has one; `access_count` never decays. Fix: `6·activity + 2·strength + 2·bridge` with a decaying counter (schema v6), association strength, bridges through associations. Remaining: generated notes still rank second in a label search; the 6/2/2 weights and 7-day half-life await the §18 ablation. |
+| **V-3** | Cruft accumulating: `YOU` degree 18; the daemon's own processes as `app:` nodes; probes outliving their subject; a reported "12 duplicates merged every restart". | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.10; merged `f79f42b`, live since 00:51 IST). `link_orphan_nodes` placeholders were never taken back → `release_you_links()` at boot and in the idle sweep; the exclude list was disabled by `process_exclude_names = []` in all three shipped TOMLs → overrides removed + boot purge; a probe about a deleted app lost its edge and lingered → L8 reaps it (14 d TTL kept by ruling); the duplicate report was one B18-migration log line on pre-B17 data → regression test only. Remaining: 10 genuine orphans still on `YOU` (apps never focused); D-13's 48 h prune of untouched leaf nodes is by ruling and unchanged. |
 
 ### 16.2 Methodological limitations — stated, not hidden
 
@@ -1456,9 +1468,10 @@ flowchart TD
 
 | Term | Plain meaning |
 | --- | --- |
-| **Apoptosis** | Programmed cleanup — temporary graph nodes delete themselves after 14 days of no activity |
+| **Activity (frecency)** | A per-node usage counter that fades: halves every 7 days, +1 on each use — so "used a lot, long ago" sinks and "used today" rises (V-2) |
+| **Apoptosis** | Programmed cleanup — temporary graph nodes delete themselves after 14 days of no activity, or as soon as the thing they describe is gone |
 | **BitNet b1.58** | A model whose weights are only −1, 0, or +1 (1.58 bits each), so matrix multiplication becomes addition — which is why it runs on a CPU |
-| **Bridge value** | How many different topic areas a node connects; a file used in both engineering and research scores higher |
+| **Bridge value** | How many different topic areas a node connects — directly, or through apps it is used together with; one area earns nothing, three earn the full bonus |
 | **Corroboration** | Requiring signals from more than one independent layer before the system is allowed to act |
 | **DMN (Default Mode Network)** | The part that thinks while you are away from the keyboard — replaying, tidying, and generating follow-up questions |
 | **EventBus** | The shared message room; the only way any two layers communicate |
@@ -1467,6 +1480,7 @@ flowchart TD
 | **Grounding gate** | A check after generation that throws away any answer not tied to a real node |
 | **Hebbian reinforcement** | Two things seen together get a stronger connection ("fire together, wire together") |
 | **Hub** | One of the 11 permanent routing nodes (`YOU` plus 10 domains) that the system files everything under |
+| **Placeholder link** | The `→ YOU` edge the idle sweep gives a node with no connections, so it is not unreachable; taken back once the node has a real connection (V-3a) |
 | **Positive control** | A synthetic run that proves the pipeline *can* fire, used when a real-world test produces nothing |
 | **Pressure** | Accumulated evidence that something needs attention; halves every 60 seconds when signals stop |
 | **Quarantine** | The backup directory where a file's previous contents are stored before anything writes to it |
@@ -1477,7 +1491,7 @@ flowchart TD
 
 ---
 
-## 21. The post-B9 build chronicle — B13 to B18, step by step
+## 21. The post-B9 build chronicle — B13 to V-3, step by step
 
 **In plain words.** After B9, the system was running every day on the real
 machine, and each week of use exposed a real gap. This section is the story of
@@ -1502,6 +1516,8 @@ flowchart LR
     B16 -->|graph review:<br/>1 app = 2–3 nodes| B17["B17<br/>one app, one node"]
     B17 -->|graph review:<br/>weights all 0.0| T7["T7<br/>Hebbian wire-together"]
     T7 -->|graph review:<br/>learning only in a 6-node clique| V1["V-1<br/>Hebbian rule rework"]
+    V1 -->|score review:<br/>everything 3–7| V2["V-2<br/>relevance score rework"]
+    V2 -->|graph review:<br/>stale YOU spokes, daemon as app| V3["V-3<br/>cruft removal"]
     B17 -->|stale / duplicate /<br/>lookalike labels| B18["B18<br/>one labeling system"]
 ```
 
@@ -1514,6 +1530,8 @@ flowchart LR
 | **B17** `b17-app-identity-canonicalization` | One app = 2–3 `app:` nodes | Two sensors name apps differently; thread names counted as apps; raw ids as labels | `AppIdentity.resolve()`; a one-time canonical pass; readable names + pinned hubs + detail panel | 63 → 57 nodes; 643 tests |
 | **T7** `t7-hebbian-weights-zero` | Every edge weight `0.0` | Nothing ever created an edge between co-used apps; an edge re-add reset its weight; reinforcement only on the rare model path | Upsert-safe edges; `wire_cooccurrence` (create-or-bump); a co-activation window on every focus switch; decay + prune | 673 + 10 tests; closes on a soak |
 | **V-1** `fix-v1-hebbian-clique` | Learning only inside a 6-node clique | Unmapped apps excluded; all-pairs wiring every switch; decay per idle spell; `PART_OF` edges bumped; unbounded weights | Star-shaped `wire_coactivation` + time-proximity credit; saturating update; uptime half-life; `PART_OF` skipped/healed; unmapped apps join; refractory | Sim 6 → 8 apps, range 0.03–0.26 → 0.02–0.98; 719 tests |
+| **V-2** `fix-v2-relevance-score` | Score jammed in 2.98–9.0; probes outrank real tools | Flat recency floor; saturating frequency; degree counting bookkeeping edges; `bridge` = "in `app_map`"; `access_count` never decays | Decaying activity counter (schema v6); association strength; bridges through associations; two-pass cached recalc | Live 0.69–10.0, median 3.38 → 1.34; 10k recalc 83 ms; 724 tests |
+| **V-3** `fix-v3-cruft` | `YOU` has 18 spokes; the daemon is an "app"; stray probes | Placeholders never released; every TOML overrode the exclude list with `[]`; subject-less probes linger; "dedup every restart" was one old log line | `release_you_links()`; config overrides removed + boot purge; L8 reaps subject-less probes; regression test | Live 71 → 66 nodes, `YOU` 18 → 10; 740 tests |
 | **B18** `feat/b18-unified-labels` | Stale, duplicate and lookalike labels | Label text frozen at creation; in-memory novelty buffer; labels copying labels | Store what a node is about (`LabelSpec`); render names on demand; id = fingerprint (schema v5) | 87 → 59 nodes on the real graph; 699 tests |
 
 ---
@@ -3548,20 +3566,405 @@ new  -> 0.181  webapp:github ~ app:cosmic-term
   2026-09-10 23:39 IST (new soak session opened on restart).
 - **`focus_exclude_app_ids` names are unverified** against what the COSMIC
   toplevel protocol actually reports for portal and dialog windows.
-- **V-3a interplay.** An unmapped app focused with nothing warm is briefly
-  degree 0, so `link_orphan_nodes` gives it a permanent `→ YOU` edge — more of
-  the hub-and-spoke tangle V-3a describes, until V-3a removes stale `YOU` edges.
+- **V-3a interplay — resolved by V-3 (§21.10).** An unmapped app focused with
+  nothing warm is briefly degree 0 and gets a `→ YOU` placeholder; since V-3
+  the idle sweep and the boot tidy take the placeholder back once the app has
+  a real edge.
 - **One unreproduced test failure** across nine full runs (not captured by
-  name); watch CI for a timing-sensitive test near its limit.
-- **Relevance score.** More association edges raise `connectivity` for the
-  apps that gain them — expected to help V-2 (the score barely discriminates),
-  not yet measured.
+  name); it has not recurred in the 12 full runs since (V-2, V-3).
+- **Relevance score — resolved by V-2 (§21.9).** Association weight now feeds
+  the score directly through the `strength` term, and bridges are counted
+  through associations.
+
+---
+
+### 21.9 V-2 · The relevance score barely discriminated
+
+| | |
+| --- | --- |
+| **Branch** | `fix-v2-relevance-score` (off `main` after V-1 and its dossier chapter) |
+| **Found** | 2026-09-10, whole-graph review against the secretary vision (`VISION.md`, defect **V-2**, rated *big*) |
+| **Outcome** | Merged to local `main` (`da78779`; commit `4ccbf0e`) and pushed. Full suite **724 passed** in 3 of 3 runs, ruff + format + mypy clean. Daemon restarted on it 2026-09-11 00:18 IST; graph backed up to `data/graph.json.pre-v2-backup` (v5). Schema **v6** from the first save. |
+
+**In plain words.** Every node gets one number, 0 to 10, meaning "how much
+does this matter to you right now". That number decides what is kept, what the
+system thinks about while you are away, and what comes first when you search
+(§3.2). On the real graph almost everything sat between 3 and 7: two apps at
+the top, then a cliff, then a crowd — and the system's own bookkeeping notes
+outranked real tools you use. The score was mostly answering "was this touched
+this week and does it have any edges", which is true of nearly everything. We
+rebuilt it so that how much you actually use something — fading over time — is
+the main part, how strongly it is tied to the other things you use is second,
+and connecting different areas of your work is third.
+
+#### Step 1 · What we saw
+
+The live graph after the V-1 restart (2026-09-10 ~23:45), 70 nodes:
+
+```
+ 9.000  app:brave        ac=265      3.370  ephemeral:62d3…  ac=0   <- bookkeeping probe
+ 8.861  app:cosmic-term  ac=228      3.204  app:cosmic-comp  ac=1   <- a real app, below it
+ 6.840  app:cosmic-files ac=36       2.981  app:cosmic-settings ac=0 deg=0
+ 6.272  app:obsidian     ac=28       2.478  domain:system    ac=0 deg=0   (x5 dead hubs)
+ ... everything else between 3.0 and 5.4
+non-hub min 2.98 · median 3.38 · max 9.00
+real apps outranked by at least one ephemeral probe: 8 of 29
+```
+
+`cosmic-settings` — never used, no edges — scored 2.98. A domain hub with no
+edges scored 2.48, from recency alone.
+
+#### Step 2 · Why it happened
+
+The formula was `3·frequency + 3·recency + 2·connectivity + 2·bridge`
+(`_recalculate_chunk_unsafe`).
+
+- **2.1 · Recency was a flat floor.** `recency = 0.5^(age_days/7)` with weight
+  3. In a three-day-old graph every node was touched within about two days, so
+  recency sat at 0.8–1.0 for everything — a near-constant ~2.5–3 points added
+  to every score, discriminating nothing. And every upsert (focus switch,
+  census sighting, fact reinforcement) resets `last_accessed`, so anything
+  still in use stays at ~1 permanently.
+- **2.2 · Frequency saturated for two apps and was ~0 for everyone else.**
+  `min(1, access_count/100)`: brave (265) and cosmic-term (228) got the full 3
+  points; obsidian (28) got 0.84; an app used 5 times got 0.15. That is the
+  cliff.
+- **2.3 · Connectivity counted the wrong edges.** `log1p(degree)/log1p(20)`
+  over *all* edges: a probe's single provenance edge earned the same 0.46 as a
+  real app's single real edge, and orphan `→ YOU` placeholders counted too.
+  The Hebbian weights V-1 had just made meaningful were ignored.
+- **2.4 · `bridge` measured "is it in `app_map`".** It counted direct
+  `domain:*` neighbours, 0.5 per domain. A mapped app has exactly one `PART_OF`
+  domain edge, so every mapped app earned 1 point and every unmapped app 0;
+  almost nothing reached the two-domain full bonus the term existed for.
+- **2.5 · `access_count` never decays.** "Used 5,000 times six months ago" and
+  "used 5,000 times this week" would look identical; the only forgetting was
+  the recency floor of 2.1.
+
+**Root cause, in one sentence:** three of the four terms were near-constant
+across real nodes (recency ≈1, bridge = mapped-or-not, degree = has-an-edge),
+and the fourth saturated at a fixed constant — so the score could only separate
+the two busiest apps from everything else.
+
+**Why the tests never caught it:** the score tests checked range (0–10) and
+one ordering (two domains beat one) on hand-built nodes; none ran the formula
+over a realistic graph and looked at the *distribution*.
+
+#### Step 3 · How we fixed it — the approach
+
+- **A · One decaying activity term** replaces frequency + recency: a persisted
+  counter `Node.activity` (schema v6). On every touch
+  (`_touch_unsafe`, used by `upsert_node` and fact reinforcement) it is first
+  aged by a 7-day half-life from `last_accessed`, then +1; creation counts as
+  one sighting. Scored as `log1p(activity)/log1p(the graph's largest)` — the
+  log keeps a 265-access app from flattening a 30-access one, and normalising
+  by the live maximum keeps the full scale in use as the graph ages instead of
+  saturating at a constant. `consolidate()` merges two counters by ageing both
+  to the later touch and summing.
+- **B · Strength from learned associations.** Sum of Hebbian weights on
+  `RELATED_TO` edges (V-1) plus 0.1 per other structural edge, log-normalised
+  against the graph's largest. Excluded: edges to hubs (`YOU` is a placeholder;
+  domains are the bridge term) and a generated node's provenance edges in
+  either direction — the system's own notes neither earn nor lend relevance.
+- **C · Bridges through associations.** Distinct domains reached directly or
+  through an association of weight ≥ 0.1 (about one full co-use): one domain 0,
+  two 0.5, three or more 1. Obsidian, used alongside the terminal
+  (engineering), files (tools) and brave (habits), now bridges four areas.
+- **D · Weights 6 / 2 / 2** — the original 60/40 usage-to-structure balance.
+- **E · Two-pass recalc.** Pass one (chunked, read-only) finds the graph's
+  largest activity and strength and caches each node's `(strength, bridge)`;
+  pass two is arithmetic only. Both passes take the lock per 250-node chunk and
+  yield between, as before (rules.md §3).
+- **F · Migration.** A v5 file loads with `activity = access_count + 1` as of
+  `last_accessed` — for a graph days old, the lifetime tally is the best
+  estimate available — and is written back as v6.
+- **G · Graph view.** `LABEL_THRESHOLD` 3.0 → 1.0: on the old scale 3.0 meant
+  "label nearly everything"; on the new one it would label five nodes.
+
+#### Step 4 · What was built
+
+| Area | Before | After |
+| --- | --- | --- |
+| Usage | `min(1, access_count/100)` ×3 + `0.5^(age/7)` ×3 | `log1p(activity)/log1p(max)` ×6, decaying counter |
+| Structure | `log1p(degree)/log1p(20)` ×2, every edge | learned weights + 0.1/structural edge, hub and provenance edges excluded, ×2 |
+| Bridge | direct domain edges, 0.5 each | direct + via associations ≥ 0.1; `(domains − 1)/2` |
+| Scale | fixed constants (100 accesses, degree 20) | the live graph's own maximum |
+| Persistence | — | `Node.activity`, schema v6 |
+| Recalc | one pass, networkx edge views | two passes, one raw-adjacency walk per node cached between them |
+
+```
+EDIT  src/neuropaca/core/models.py         Node.activity
+EDIT  src/neuropaca/core/graph_memory.py   schema v6; _activity_at; _touch_unsafe; two-pass
+                                           recalculate_importance; _edge_profile_unsafe;
+                                           bridge/strength; consolidate merge; (de)serialise
+EDIT  scripts/neuropaca_graph.py           LABEL_THRESHOLD 3.0 -> 1.0
+EDIT  tests/test_graph_memory.py           bridge rework + 5 new (association bridge, activity
+                                           decay, range + probe ordering, v5 load, merge)
+EDIT  tests/stress/test_bridge_value_scale.py   three domains for the full bonus
+EDIT  tests/test_b13_resource_aware.py, test_labels.py   schema v6
+```
+
+#### Step 5 · How we proved it
+
+**Tests.** Full suite `pytest -m ""` **724 passed** in 3 of 3 runs; ruff,
+format, mypy clean.
+
+**Simulation, then the real code, on the live graph.** A read-only script
+scored the live graph both ways before any code was written, then twice more
+as the design was refined:
+
+| Version | Min | Median | Max | Real apps outranked by a probe |
+| --- | --- | --- | --- | --- |
+| Old formula | 2.98 | 3.38 | 9.00 | 8 / 29 |
+| New, first cut (provenance counted, any-weight bridge) | 0.69 | 1.34 | 10.00 | 6 / 29 |
+| New, refined (provenance excluded, bridge ≥ 0.1) | 0.69 | 1.15 | 10.00 | 5 / 29 |
+| **Real code, final** (a later copy of the live graph) | **0.69** | **1.34** | **10.00** | 5 / 29 |
+
+The five apps still tied with probes (≈0.7) have **zero** recorded use
+(`cosmic-settings`, `sublime-text`, `agy`, `verify-*.py`) — neither side has
+evidence, so a tie is the honest answer. Real use now separates clearly:
+`pytest` 1.92 and `cosmic-comp` 1.11 against probes ≈0.7. Top order: brave
+10.0, cosmic-term 9.15, obsidian 6.40, cosmic-files 5.60. `webapp:youtube`
+(accessed once) lost its inflated 3.57 — it had been riding the three 0.043
+clique edges V-1 found.
+
+**Performance — a regression found and fixed.** 10,011-node fixture:
+
+| Build | Recalc wall | Max loop lag |
+| --- | --- | --- |
+| `main` | 59 ms | 4.1 ms |
+| V-2 first cut | 388 ms | 17.9 ms |
+| V-2 final | **83–85 ms** | **4.4–4.7 ms** |
+
+A profile of the first cut put ~70 % of the time in `_incident_edges_unsafe`:
+60,000 networkx edge-view constructions and 135,000 `RelationType(key)` enum
+conversions, three walks per node (strength twice, bridge once). The final
+version walks `_succ`/`_pred` once per node, compares stored enum keys
+directly, and caches the walk between passes — 1.4× `main` while doing strictly
+more work.
+
+**Retention is unchanged — measured.** `prune_stale_nodes` deletes an ordinary
+node only when its score is ~0 *or* it is untouched past the 48 h TTL (D-13);
+the new score reaches ~0 only after ~200 days untouched. On the same live-graph
+copy, `main` and V-2 each ran a recalc plus the 48 h stale prune and deleted
+**the identical set** (none).
+
+**Other consumers.** DMN idle seeds → brave, cosmic-term, obsidian,
+cosmic-files, neuropacad (the last removed by V-3). v5 → v6 round-trip: 71/71
+nodes carry `activity`, reload identical. Graph-view export renders; 34 of 60
+non-hub nodes labelled at the new 1.0 threshold (5 would be at the old 3.0).
+`neuropaca doctor` only refuses a file *newer* than the code, so v6 passes.
+
+#### Step 6 · What we rejected
+
+| # | Alternative | Why rejected |
+| --- | --- | --- |
+| 6.1 | Retune the old constants (e.g. frequency / 500, recency half-life 1 d) | recency stays a floor for anything in use, and every fixed constant saturates again as the graph ages |
+| 6.2 | Percentile-rank normalisation (score = 10 × rank) | guaranteed spread, but no absolute zero: a graph of irrelevant nodes still has a 10, and the prune rule (`score ≈ 0`) loses its meaning |
+| 6.3 | Approximate frecency from `access_count × recency` (no schema change) | cannot forget: a heavily-used-long-ago node touched once today looks maximal; a persisted counter is the only way to decay usage properly |
+| 6.4 | Normalise by the 95th percentile instead of the maximum | on a small graph the top four nodes all clamp to 1 and the top of the scale stops discriminating |
+| 6.5 | Discount generated nodes by a constant factor | an arbitrary knob; excluding provenance edges from `strength` is principled and enough |
+| 6.6 | Give hubs an aggregate score (e.g. the max of their members) | useful for graph-view sizing only; hubs are excluded from ranking and pruning — out of scope |
+| 6.7 | Keep the networkx edge views (the first cut) | 388 ms per 10k recalc, 6.5× `main`; the raw-adjacency walk gives identical scores at 83 ms |
+
+#### Step 7 · What is left
+
+- **Label search** ranks the right app first but lets generated notes (idle
+  thoughts, insights whose label shares the word) take the next places —
+  they carry real re-derivation activity. A search-side filter or type weight
+  is the likely fix; V-4 territory.
+- **Hubs** now score ~0.65 (their creation sighting, decaying), so domain
+  circles in the graph view are small — cosmetic.
+- **The weights (6/2/2), the 7-day half-life and the 0.1 bridge threshold are
+  design choices**, not fitted; §18's ablation should test them against a
+  labelled "what mattered this week" set.
+- **Schema v6 is a one-way door** for older builds; the v5 backup is
+  `data/graph.json.pre-v2-backup`.
+
+---
+
+### 21.10 V-3 · Cruft was accumulating — four sub-issues, one of them a config line
+
+| | |
+| --- | --- |
+| **Branch** | `fix-v3-cruft` (off `main` after V-2) |
+| **Found** | 2026-09-10, whole-graph review against the secretary vision (`VISION.md`, defect **V-3**, rated *big*, four sub-issues a–d) |
+| **Outcome** | Merged to local `main` (`f79f42b`; commit `50da9fe`) and pushed. Full suite **740 passed** in 3 of 3 runs, ruff + format + mypy clean. Daemon restarted on it 2026-09-11 00:51 IST — boot logged 5 nodes dropped, 3 placeholders released; graph 71 → 66 nodes. Backup `data/graph.json.pre-v3-backup`. |
+
+**In plain words.** The graph was collecting junk. The central `YOU` node was
+tied to 18 things, several of them for no reason any more. The daemon's own
+background processes — itself, Python, the window compositor — were being
+recorded as apps you use, even though a list existed specifically to keep them
+out. Notes the agent layer wrote about an app could outlive the app. And a
+report said duplicate app entries were being merged on every restart. Three of
+these were real and are fixed; the fourth turned out to be a single old log
+line. The most surprising find: the "keep these out" list was being switched
+off by one line in every config file.
+
+#### Step 1 · What we saw
+
+Live graph, 2026-09-11 ~00:20 (71 nodes):
+
+```
+-> YOU edges: 18
+  app:brave, app:cosmic-files, app:obsidian      <- also have 7-20 real edges each
+  15 others                                       <- YOU is their only edge
+excluded-by-config names living as apps:
+  app:neuropacad (acc 14, last touched 2026-09-10 16:29) · app:python3 (acc 10)
+  app:cosmic-comp · app:chrome-devtools-mcp · app:zenity (focus-excluded since V-1)
+ephemeral: probes: 18 (6 L8 investigations x 3 facets), oldest 2026-09-08 20:01
+"merged 12 duplicate app node(s)": exactly one log line, 2026-09-10 14:14
+```
+
+#### Step 2 · Why it happened
+
+- **V-3a · Placeholders were never taken back.** `link_orphan_nodes()` (B6,
+  D-13) gives any degree-0 node a `RELATED_TO YOU` edge so decay can manage it.
+  Many apps are briefly degree 0 — created by a focus event before their domain
+  edge or first co-use arrives. Nothing ever removed the placeholder once real
+  edges existed, so `YOU` accumulated a spoke from every node that was ever
+  momentarily alone.
+- **V-3c · The exclude list was switched off by configuration.** The census
+  filter itself worked — `ProcessCollector` drops every name in
+  `process_exclude_names`. But all three shipped configs (`neuropaca.toml`,
+  `neuropaca.b13.toml` — the one the daemon runs — and `neuropaca.soak.toml`)
+  still carried `process_exclude_names = []` from B13 round 1 (D-19(c): "no
+  census exclusions in round 1, to see the raw census"). B17 then filled in the
+  code default (D-20) but never removed the overrides, so the empty list won.
+  VISION's hypothesis — "the focus/pattern path mints `app:` nodes without
+  consulting it" — was checked and ruled out: the only other process data
+  (`top_processes` from the system collector) is read by no pattern.
+- **V-3b · VISION's premise was wrong; a narrower leak was real.** Probes are
+  not kept forever: L8 apoptosis reaps them 14 d after their last refresh
+  (D-15/D-16), and V-2 had already dropped their score from ~3.3 to ~0.7, below
+  every used app; the DMN never seeds on them. The real leak: when the app a
+  probe describes is deleted (the 48 h stale prune, or V-3c's purge), the probe
+  loses its only edge, `link_orphan_nodes` attaches it to `YOU`, and it lingers
+  up to 14 more days as a note about nothing.
+- **V-3d · Already fixed — a misread log.** The "merged 12" line appears once,
+  at the B18 migration boot (2026-09-10 14:14), on data written before B17's
+  write-time canonicalisation. Today every write path canonicalises
+  (`_canon_app_id` on focus, `_canon_node_id` in `_update_graph`); resolving
+  every live `app:` id through the real identity map found **0 collisions, 0
+  non-canonical ids**.
+
+**Root cause, in one sentence:** the graph had tidy-up rules for adding
+structure (orphan linking, exclusion lists, TTLs) but no rule for taking it
+back once it stopped being true — and the one filter that should have kept
+junk out was disabled by a stale config line.
+
+**Why the tests never caught it:** the census filter was unit-tested with the
+default list, which is correct; no test loaded a *shipped* config and checked
+what the effective list was.
+
+#### Step 3 · How we fixed it — the approach
+
+- **A · `GraphMemory.release_you_links()`** (V-3a). Removes exactly the
+  placeholder — `node → YOU`, `RELATED_TO`, weight 0 — and only while the node
+  keeps an edge to something other than `YOU`, so it never re-orphans a node.
+  A weighted `YOU` edge (something deliberate) is left alone. Candidates in one
+  pass, one lock cycle per removal. Runs in the DMN idle sweep before orphans
+  are linked, and once in the orchestrator's boot tidy — idle cycles can be
+  rare, so boot is where a live graph actually gets cleaned.
+- **B · Config fixed at the root** (V-3c). The three `process_exclude_names =
+  []` lines were removed, with a comment explaining why, so the D-20 default
+  applies. A test parses every shipped TOML and fails if the key reappears
+  (parsed directly — loading the config validates model paths CI does not
+  have).
+- **C · A boot purge of nodes minted while the filter was off** (V-3c). The B17
+  boot pass already drops "non-app" nodes through an `is_non_app` hook; it now
+  receives `orchestrator.non_activity_app(config, identity)` — B17's
+  thread-label check **plus** both exclude lists (`process_exclude_names`,
+  `focus_exclude_app_ids`), matched on the raw name and its canonical id.
+- **D · L8 reaps a probe whose subject is gone** (V-3b, user ruling — Appendix
+  A). `apoptosis()` also reaps a probe once none of the nodes in its
+  `spec.refs` exists. The 14 d TTL is unchanged for probes whose subject is
+  alive, and reaping stays L8's own job (D-16(f)).
+- **E · V-3d** — a regression test only: a focus event
+  (`com.system76.CosmicFiles`) and a census spec (`app:cosmic-files`) through
+  the correlator's real write paths produce one node.
+- **F · `VISION.md`** — the V-3b paragraph corrected (TTL is 14 d, not
+  forever; the real leak was subject-less probes).
+
+#### Step 4 · What was built
+
+| Area | Before | After |
+| --- | --- | --- |
+| `→ YOU` placeholder | added when orphaned, never removed | released once the node has a real edge (boot + idle sweep) |
+| Exclude list | overridden to `[]` in every shipped config | the D-20 default applies; a test guards the configs |
+| Nodes for excluded names | lived on | dropped by the boot tidy |
+| Subject-less probe | orphaned → linked to `YOU` → lived out 14 d | reaped by L8 as soon as its subject is gone |
+| App-identity dedup | (already write-time) | regression test |
+
+```
+EDIT  src/neuropaca/core/graph_memory.py        release_you_links; _is_stale_you_link_unsafe
+EDIT  src/neuropaca/idle/dmn.py                 release before linking; summary "released N"
+EDIT  src/neuropaca/orchestration/orchestrator.py  non_activity_app(); boot tidy releases
+EDIT  src/neuropaca/agents/supervisor.py        apoptosis: subject-gone probes
+EDIT  neuropaca.toml, neuropaca.b13.toml, neuropaca.soak.toml   exclude override removed
+NEW   tests/test_v3_cruft.py                    15 tests (a, c, d + config guard)
+EDIT  tests/test_agents.py                      subject-gone probe test; docstring
+```
+
+#### Step 5 · How we proved it
+
+**Tests.** Full suite `pytest -m ""` **740 passed** in 3 of 3 runs (16 new);
+ruff, format, mypy clean.
+
+**A real boot, `main` against V-3, on the same live-graph copy** — the actual
+`NeuroPACAOrchestrator.initialize()` with the daemon's config pointed at the
+copy, then the DMN idle sweep, then L8 apoptosis:
+
+| | `main` | V-3 |
+| --- | --- | --- |
+| Nodes | 71 → 71 | 71 → **66** |
+| Edges touching `YOU` | 18 | **10** |
+| Nodes deleted | none | exactly `neuropacad`, `python3`, `cosmic-comp`, `chrome-devtools-mcp`, `zenity` |
+| Nodes added | none | none |
+| Orphans left | 0 | 0 |
+
+The live restart (00:51) logged the same: `dropped 5 non-app node(s)`,
+`released 3 stale -> YOU placeholder link(s)`, graph 66 nodes. The 10 nodes
+still on `YOU` are genuine orphans — apps seen by the census but never focused
+(`claude`, `pytest`, `verify-*.py`, …); each loses its placeholder the moment
+it gains a real edge. The subject-gone probe rule reaped nothing on the live
+graph (all 18 probes' apps exist) and is covered by its own test.
+
+**A note on reading the graph view.** After the restart the `YOU` count was
+reported as still 18. Opening the rendered `graph_view.html` and reading its
+embedded data showed exactly 10 `YOU` edges; the "18" on screen was the
+legend's node-type counts (`app 18`, `concept 18`), not `YOU`'s degree.
+
+#### Step 6 · What we rejected
+
+| # | Alternative | Why rejected |
+| --- | --- | --- |
+| 6.1 | Filter excluded names again at write time in the correlator | duplicates the list in a second place and leaves the real bug (the config override) in place |
+| 6.2 | Remove every `→ YOU` edge | would re-orphan the 10 genuine orphans; `link_orphan_nodes` would re-add them next sweep |
+| 6.3 | Release placeholders inside `link_orphan_nodes` | conflates two jobs under one D-13 name; a separate step is clearer and testable |
+| 6.4 | Shorten the probe TTL to 48 h (option 2 offered) | reverses D-15/D-16 and loses the history of recurring pressure on one app; the user ruled to keep 14 d |
+| 6.5 | Let `prune_stale_nodes` also prune probes | D-16(f): two layers fighting over one knob; apoptosis is L8's own job |
+| 6.6 | Make `link_orphan_nodes` skip generated nodes | changes D-13's rule for every node type; reaping subject-less probes at the source is narrower |
+
+#### Step 7 · What is left
+
+- **The 48 h prune of untouched leaf nodes** (D-13) deletes any app unused for
+  two days regardless of score — an app used weekly will be forgotten between
+  uses. It is a ruling, so it was not changed; worth revisiting now that V-2
+  gives the score a real zero.
+- **A short orphan window for probes**: between an app's deletion (idle sweep)
+  and the next apoptosis (boot, or the next L8 investigation) a probe can carry
+  a `YOU` placeholder; it dies with the probe.
+- **`focus_exclude_app_ids`** names (portals, dialogs) are still unverified
+  against what COSMIC actually reports.
+- **`neuropaca.soak.toml`'s round-1 raw-census intent** (D-19(c)) is
+  superseded: the soak now runs with the D-20 exclusions like everything else.
 
 ---
 
 ## Appendix A — decision log index
 
-Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.
+Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.
 
 | # | Decision, in one line |
 | --- | --- |
@@ -3589,6 +3992,7 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 phase rulings, ea
 | **B14 D2/D3** | **Web-app attribution** (operator-ratified 2026-09-08) — the focused tab's domain overrides `brave = habits`; browser tab switches feed `DistractionPattern`; `NodeType.WEBAPP` + schema v4. Rejected: an id-prefix on `NodeType.APP` (no schema bump), reading browser history/session files, a browser extension, storing the raw title and filtering at read |
 | **B15** | **The Wayland sensor fix** — a strong-ref dict for cosmic toplevel proxies (the flaky-deafness fix), one shared `WaylandConnection` collapsing two `Display` connections (erases the teardown segfault), and a `select`-based poll-pump that always `dispatch`es (the proven B2.5 shape, not `add_reader`). No systemd unit change |
 | **B16** | **The Wayland sensor fix, round two** — strong-ref *both* toplevel proxies (B15 held only the child), keyed by a monotonic int not `id()` (a collected proxy's `id()` is reused and evicts live handles); make `_drop` reachable; bind `finished`; add a `window~` health state that reads "events actually arriving", not just "pump alive". Escalation to a dedicated Wayland thread held in reserve (not needed — proxy lifetime fully explains it). No systemd unit change |
+| **V-3b** | **Probe lifetime** (user ruling 2026-09-11) — D-15/D-16's 14 d apoptosis TTL **stands**; L8 apoptosis additionally reaps a probe once every node in its `spec.refs` is gone (a note about nothing). Rejected: shortening the TTL to 48 h (would reverse D-15/D-16 and lose recurring-pressure history); routing probes through `prune_stale_nodes` (D-16(f): two layers on one knob) |
 
 ---
 
@@ -3642,9 +4046,16 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 phase rulings, ea
 | Toplevel-proxy lifetime probe | `--leak`: every proxy finalised < 1 s, `fd-readable ×0` after · `--hold`: continuous focus stream, 0 stray finalises | B16 |
 | Daemon A/B, B16 build, ~3 min real use | **19 focus switches tracked in real time, 0 watchdog reconnects, `window✓`** (old build: count frozen, a reconnect every ~180 s) | B16 |
 | B13 test count / B14 / B15 / B16 / B17 / B18 | 484 / ~524 / 561 / 587 / 643 / **699** green | B13–B18 |
+| Full suite (`-m ""`) after V-1 / V-2 / V-3 | 719 / 724 / **740** passed, 3/3 runs each | V-1–V-3 |
+| Hebbian sim, 3 days, old vs new rule | 15 edges over 6 apps (0.027–0.261) → 26 edges over 8 apps (0.022–0.979) | V-1 |
+| 20k-switch storm max loop lag, `main` / V-1 first cut / V-1 final | 14–23 / 30–57 / 16–24 ms | V-1 |
+| `relevance_score`, live graph, before → after | 2.98–9.00, median 3.38 → 0.69–10.00, median 1.34 | V-2 |
+| Real apps outranked by a generated probe, before → after | 8 / 29 → 5 / 29 (the 5 have zero recorded use — ties) | V-2 |
+| 10k-node `recalculate_importance`, `main` / V-2 first cut / V-2 final | 59 / 388 / 83 ms (max loop lag 4.1 / 17.9 / 4.7 ms) | V-2 |
+| V-3 boot cleanup, live graph | 71 → 66 nodes, `YOU` degree 18 → 10, 5 excluded-name nodes dropped, 3 placeholders released | V-3 |
 | B18 label migration, real graph | copy: 87 → 59 nodes, 51 → 23 generated · live: 89 → 60 nodes, 53 → 24 generated; 0 duplicate facts, 0 raw ids in labels, 0 caption collisions | B18 |
 | B17 graph clean, real soak graph | 63 → 57 nodes (24 → 19 `app:`/`webapp:`); Brave's 2 nodes → 1 keeping `ram_mb ≈ 3811` **and** the focus count **and** 4 webapp children; 0 dangling edges; idempotent | B17 |
-| Graph schema version | **v5** (`Node.spec`, B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 |
+| Graph schema version | **v6** (`Node.activity`, V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 
