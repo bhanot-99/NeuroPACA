@@ -33,7 +33,8 @@ activity_enabled = true
 top_process_count = 5
 process_collector_enabled = true
 process_min_rss_mb = 200.0
-process_exclude_names = []
+# `process_exclude_names` unset -> the Config default (D-20) applies. V-3c: an
+# explicit `[]` here overrode it and let the daemon's own processes in as apps.
 poll_intervals = { system = 60.0, filesystem = 60.0, process = 60.0 }
 
 # B14 · web-app attribution. The browser stops being one `app:` node — a focused
