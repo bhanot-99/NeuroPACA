@@ -162,7 +162,8 @@ ${body}"
 sample_once() {
   local metrics
   metrics="$("$PY" "${REPO}/scripts/soak_probe.py" \
-               --actions-log "${REPO}/data/actions.jsonl" 2>/dev/null)" || return 1
+               --actions-log "${REPO}/data/actions.jsonl" \
+               --graph "${REPO}/data/graph.json" 2>/dev/null)" || return 1
   [ -n "$metrics" ] || return 1
   "$PY" "$STATE_TOOL" sample --state "$STATE" --samples "$SAMPLES" --metrics "$metrics"
 }
