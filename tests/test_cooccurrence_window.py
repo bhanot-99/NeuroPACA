@@ -305,3 +305,5 @@ async def test_tab_never_wires_to_its_own_browser(tmp_path: Path, clock: _Clock)
     finally:
         await corr.stop()
         await bus.stop()
+
+# gen-ref: 05780527

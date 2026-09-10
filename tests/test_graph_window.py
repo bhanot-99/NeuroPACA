@@ -134,3 +134,5 @@ def test_pin_hubs_overrides_drift(tmp_path: Path) -> None:
     layout.pos["domain:tools"] = [999.0, -42.0]  # simulate a stale drag
     layout.pin_hubs(data)
     assert tuple(layout.pos["domain:tools"]) == gw.Layout.hub_position("domain:tools")
+
+# gen-ref: 1b6620f2

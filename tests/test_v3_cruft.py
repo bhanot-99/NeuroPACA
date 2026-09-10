@@ -164,3 +164,5 @@ async def test_census_and_focus_names_for_one_app_are_one_node(tmp_path) -> None
     finally:
         await corr.stop()
         await bus.stop()
+
+# gen-ref: 0c1e70e4
