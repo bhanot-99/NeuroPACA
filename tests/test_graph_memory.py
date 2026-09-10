@@ -151,23 +151,127 @@ async def test_recalculate_importance_keeps_scores_in_range(tmp_path) -> None:
 
 
 async def test_bridge_value_rewards_cross_domain_nodes(tmp_path) -> None:
-    """B2.5b (D-10): with node degree held equal, the node wired to two domain
-    hubs outscores the one wired to a single domain — `bridge_value` is live."""
+    """B2.5b (D-10), reworked V-2: one domain is not a bridge (every mapped app
+    has one), two domains earn half, three the full bonus. Activity and
+    strength are held equal, so the scores order by bridge alone."""
     gm = await _loaded_graph(tmp_path)
-    for node_id in ("app:one", "app:two"):
+    reach = {
+        "app:one": ("engineering",),
+        "app:two": ("engineering", "research"),
+        "app:three": ("engineering", "research", "habits"),
+    }
+    for node_id, domains in reach.items():
         await gm.add_node(node_id, NodeType.APP, {"access_count": 10})
-    # both nodes have degree 2; only app:two reaches two domains
-    await gm.add_edge("app:one", "domain:engineering", RelationType.PART_OF)
-    await gm.add_edge("app:one", "YOU", RelationType.RELATED_TO)
-    await gm.add_edge("app:two", "domain:engineering", RelationType.PART_OF)
-    await gm.add_edge("app:two", "domain:research", RelationType.PART_OF)
+        for slug in domains:
+            await gm.add_edge(node_id, f"domain:{slug}", RelationType.PART_OF)
 
     await gm.recalculate_importance()
 
-    assert gm.get_node("app:two").relevance_score > gm.get_node("app:one").relevance_score
-    assert gm._bridge_value_unsafe("app:two") == 1.0
-    assert gm._bridge_value_unsafe("app:one") == 0.5
+    assert gm._bridge_value_unsafe("app:one") == 0.0
+    assert gm._bridge_value_unsafe("app:two") == 0.5
+    assert gm._bridge_value_unsafe("app:three") == 1.0
+    score = {n: gm.get_node(n).relevance_score for n in reach}
+    assert score["app:three"] > score["app:two"] > score["app:one"]
     assert gm._bridge_value_unsafe("domain:engineering") == 0.0  # hubs never bridge
+
+
+async def test_bridge_counts_domains_reached_through_associations(tmp_path) -> None:
+    """V-2 · an app used alongside apps from other domains bridges them, even
+    though its own `PART_OF` reaches one domain; a faint association does not
+    count."""
+    gm = await _loaded_graph(tmp_path)
+    for node_id, slug in (
+        ("app:notes", "research"),
+        ("app:term", "engineering"),
+        ("app:music", "habits"),
+        ("app:mail", "comms"),
+    ):
+        await gm.add_node(node_id, NodeType.APP, None)
+        await gm.add_edge(node_id, f"domain:{slug}", RelationType.PART_OF)
+    await gm.add_edge("app:notes", "app:term", RelationType.RELATED_TO, weight=0.5)
+    await gm.add_edge("app:notes", "app:music", RelationType.RELATED_TO, weight=0.05)  # faint
+    assert gm._bridge_value_unsafe("app:notes") == 0.5  # research + engineering
+
+    await gm.add_edge("app:mail", "app:notes", RelationType.RELATED_TO, weight=0.3)
+    assert gm._bridge_value_unsafe("app:notes") == 1.0  # + comms
+
+
+async def test_activity_counts_creation_decays_and_adds_one_per_touch(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:a", NodeType.APP, {"label": "a"})
+    assert gm.get_node("app:a").activity == pytest.approx(1.0)  # creation = one sighting
+
+    await gm.update_node("app:a", {"last_accessed": datetime.now(UTC) - timedelta(days=7)})
+    await gm.upsert_node("app:a", NodeType.APP, {"activity": 99.0})  # protected
+    node = gm.get_node("app:a")
+    assert node.activity == pytest.approx(1.5, rel=1e-3)  # 1 halved over one half-life, + 1
+    assert node.access_count == 1  # the lifetime tally is unchanged in meaning
+
+
+async def test_score_uses_the_range_and_a_probe_never_outranks_a_used_app(tmp_path) -> None:
+    """V-2 · the busiest node reaches the top of the scale, an untouched node
+    sits near the bottom (no flat recency floor), and a generated probe's
+    provenance edge lends it no strength."""
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:brave", NodeType.APP, {"access_count": 250})
+    await gm.add_node("app:pytest", NodeType.APP, {"access_count": 4})
+    await gm.add_node("app:unused", NodeType.APP, None)
+    await gm.add_edge("app:unused", "YOU", RelationType.RELATED_TO)  # orphan placeholder
+    await gm.add_node("ephemeral:p", NodeType.CONCEPT, None)
+    await gm.add_edge("ephemeral:p", "app:pytest", RelationType.RELATED_TO)
+
+    await gm.recalculate_importance()
+    score = {n: gm.get_node(n).relevance_score for n in gm.node_ids}
+
+    assert score["app:brave"] >= 6.0  # full activity term
+    assert score["app:pytest"] > score["ephemeral:p"]
+    assert score["app:unused"] < 1.0
+    assert gm._strength_unsafe("ephemeral:p") == 0.0  # provenance edge, not relevance
+    assert gm._strength_unsafe("app:pytest") == 0.0  # ...in either direction
+    assert gm._strength_unsafe("app:unused") == 0.0  # a YOU edge is not a tie
+
+
+async def test_a_v5_graph_loads_with_activity_estimated_from_access_count(tmp_path) -> None:
+    import json
+
+    path = tmp_path / "graph.json"
+    now = datetime.now(UTC).isoformat()
+    record = {
+        "id": "app:x",
+        "node_type": "app",
+        "label": "x",
+        "created_at": now,
+        "last_accessed": now,
+        "access_count": 9,
+        "relevance_score": 3.0,
+        "priority": 0,
+    }
+    path.write_text(json.dumps({"schema_version": 5, "nodes": [record], "edges": []}))
+    gm = GraphMemory.get_instance(persistence_path=str(path))
+    await gm.load()
+    assert gm.get_node("app:x").activity == pytest.approx(10.0)
+
+    await gm.save()
+    saved = json.loads(path.read_text())
+    assert saved["schema_version"] == 6
+    (x,) = (n for n in saved["nodes"] if n["id"] == "app:x")
+    assert x["activity"] == pytest.approx(10.0)
+
+
+async def test_consolidate_sums_activity_as_of_the_later_touch(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    later = datetime.now(UTC)
+    earlier = later - timedelta(days=7)
+    await gm.add_node(
+        "app:zoom", NodeType.APP, {"label": "Zoom", "activity": 4.0, "last_accessed": later}
+    )
+    await gm.add_node(
+        "app:Zoom2", NodeType.APP, {"label": "zoom", "activity": 4.0, "last_accessed": earlier}
+    )
+    assert await gm.consolidate() == 1
+    (survivor,) = (gm.get_node(n) for n in gm.node_ids if n.startswith("app:"))
+    assert survivor.activity == pytest.approx(6.0, rel=1e-3)  # 4 + 4 halved
+    assert survivor.last_accessed == later
 
 
 async def test_upsert_creates_a_missing_node(tmp_path) -> None:

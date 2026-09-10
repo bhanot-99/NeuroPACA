@@ -61,7 +61,9 @@ DOMAIN_PREFIX = "domain:"
 # Labels are decluttered by collision in the page, but a floor keeps the
 # candidate list short on a large graph -- 0 would offer every node and throw
 # nearly all of them away.
-LABEL_THRESHOLD = 3.0
+# V-2 rescaled the score (a no-activity node now sits near 0, not ~3): 1.0 is
+# about the live graph's median.
+LABEL_THRESHOLD = 1.0
 
 
 def _parse_dt(value: str) -> datetime:

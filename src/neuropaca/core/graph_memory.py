@@ -74,8 +74,26 @@ from neuropaca.core.models import Edge, Node
 # the four legacy label templates are parsed back into specs, ids re-derived
 # from fingerprints, duplicates merged. A backup `<file>.pre-b18-backup` is
 # written first.
-_SCHEMA_VERSION = 5
+# v6 (V-2): node records gain `activity` — a decaying access counter that
+# replaces the separate frequency and recency terms of `relevance_score`. A v5
+# file loads unchanged: a missing `activity` defaults to `access_count + 1` as of
+# `last_accessed` (the lifetime tally is the best estimate a young graph has).
+_SCHEMA_VERSION = 6
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
+
+# V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.
+# - activity: log1p(decayed access counter) / log1p(the graph's largest);
+# - strength: log1p(association strength) / log1p(the graph's largest), where
+#   strength is the sum of learned Hebbian weights plus a small constant per
+#   other structural edge. Edges to hubs, and a generated node's edges to what
+#   it is about (provenance, not relevance), count nothing;
+# - bridge: distinct `domain:*` hubs reached directly or through an association
+#   of at least `_BRIDGE_MIN_WEIGHT`: one domain 0, two 0.5, three or more 1.
+_ACTIVITY_HALF_LIFE_DAYS = 7.0
+_W_ACTIVITY, _W_STRENGTH, _W_BRIDGE = 6.0, 2.0, 2.0
+_STRUCTURAL_EDGE_STRENGTH = 0.1
+_BRIDGE_MIN_WEIGHT = 0.1  # ~ one full-credit co-use at the default hebbian_delta
+_DERIVED_PREFIXES: tuple[str, ...] = (*_FACT_PREFIXES, "action:")
 # `labels.py` is stdlib-only (the graph window loads it by path), so the
 # kind -> NodeType half of the table lives here.
 _KIND_NODE_TYPE: dict[LabelKind, NodeType] = {
@@ -135,6 +153,14 @@ def _as_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value))
+
+
+def _activity_at(data: dict[str, Any], when: datetime) -> float:
+    """V-2 · a node's decaying access counter as of `when`. The stored value is
+    as of `last_accessed`; it halves every `_ACTIVITY_HALF_LIFE_DAYS` after."""
+    last = _as_dt(data.get("last_accessed", when))
+    age_days = max(0.0, (when - last).total_seconds() / 86400.0)
+    return float(data.get("activity", 0.0)) * math.pow(0.5, age_days / _ACTIVITY_HALF_LIFE_DAYS)
 
 
 def _as_dt_opt(value: Any) -> datetime | None:
@@ -402,13 +428,29 @@ class GraphMemory:
         does NOT hold the lock around the batch loop: it takes the lock for one
         bounded chunk at a time and yields between chunks so queued events (and,
         from B4, in-process inference) get the event loop. A node added or
-        removed between chunks is simply picked up on the next pass."""
+        removed between chunks is simply picked up on the next pass.
+
+        V-2: two passes. The first, read-only, finds the graph's largest
+        activity and association strength — the scale the second pass scores
+        against, so the 0-10 range stays in use as the graph ages instead of a
+        fixed constant saturating the busiest nodes and flattening the rest."""
         now = _utcnow()
         node_ids = list(self._graph.nodes)  # sync snapshot of ids, no await
-        for start in range(0, len(node_ids), self._RECALC_CHUNK):
-            chunk = node_ids[start : start + self._RECALC_CHUNK]
+        chunks = [
+            node_ids[start : start + self._RECALC_CHUNK]
+            for start in range(0, len(node_ids), self._RECALC_CHUNK)
+        ]
+        top_activity = top_strength = 0.0
+        profiles: dict[str, tuple[float, float]] = {}  # pass one's edge walks
+        for chunk in chunks:
             async with self._lock:
-                self._recalculate_chunk_unsafe(chunk, now)
+                act, strength = self._score_scale_unsafe(chunk, now, profiles)
+            top_activity, top_strength = max(top_activity, act), max(top_strength, strength)
+            await asyncio.sleep(0)
+        scale = (math.log1p(top_activity), math.log1p(top_strength))
+        for chunk in chunks:
+            async with self._lock:
+                self._recalculate_chunk_unsafe(chunk, now, scale, profiles)
             await asyncio.sleep(0)  # explicit yield to the event loop
 
     # B6 · Idle Cognition (L6, D-13). The DMN's "reminiscence" — housekeeping the
@@ -876,6 +918,7 @@ class GraphMemory:
             "first_seen_at": first_seen.isoformat() if first_seen is not None else None,
             "last_seen_at": last_seen.isoformat() if last_seen is not None else None,
             "spec": spec.to_record() if isinstance(spec, LabelSpec) else None,
+            "activity": round(float(data.get("activity", 0.0)), 6),
         }
 
     @staticmethod
@@ -938,6 +981,9 @@ class GraphMemory:
             cpu_percent=float(attributes.get("cpu_percent", 0.0)),
             first_seen_at=_as_dt_opt(attributes.get("first_seen_at")),
             last_seen_at=_as_dt_opt(attributes.get("last_seen_at")),
+            # creation is one sighting (V-2); a caller seeding `access_count`
+            # gets the same estimate a v5 file load does
+            activity=float(attributes.get("activity", int(attributes.get("access_count", 0)) + 1)),
             spec=_as_spec(attributes.get("spec")),
         )
         self._graph.add_node(node_id, **self._node_to_attrs(node))
@@ -959,8 +1005,7 @@ class GraphMemory:
         if node_id in self._graph:
             data = self._graph.nodes[node_id]
             data["spec"] = spec  # the latest value (pressure, confidence) wins
-            data["access_count"] = int(data.get("access_count", 0)) + 1
-            data["last_accessed"] = _utcnow()
+            self._touch_unsafe(data)
             data["label"] = render(spec, self._ref_name)
             self._dirty = True
             return self._node_from_attrs(node_id, data), False
@@ -1127,6 +1172,7 @@ class GraphMemory:
             "node_type",
             "last_accessed",
             "first_seen_at",
+            "activity",
         }
     )
     _UPSERT_DT_OPT_KEYS: ClassVar[frozenset[str]] = frozenset(
@@ -1146,10 +1192,18 @@ class GraphMemory:
         # key is protected against later overwrites.
         if data.get("first_seen_at") is None and attributes.get("first_seen_at") is not None:
             data["first_seen_at"] = _as_dt_opt(attributes["first_seen_at"])
-        data["access_count"] = int(data.get("access_count", 0)) + 1
-        data["last_accessed"] = _utcnow()
+        self._touch_unsafe(data)
         self._dirty = True
         return self._node_from_attrs(node_id, data)
+
+    @staticmethod
+    def _touch_unsafe(data: dict[str, Any]) -> None:
+        """One access: the decaying `activity` counter is aged to now and gains
+        1 (V-2), the lifetime `access_count` gains 1, `last_accessed` moves."""
+        now = _utcnow()
+        data["activity"] = _activity_at(data, now) + 1.0
+        data["access_count"] = int(data.get("access_count", 0)) + 1
+        data["last_accessed"] = now
 
     def _reinforce_edge_unsafe(
         self, node_a: str, node_b: str, delta: float, *, relation: RelationType | None = None
@@ -1243,7 +1297,12 @@ class GraphMemory:
         v = self._graph.nodes[victim_id]
 
         s["created_at"] = min(_as_dt(s["created_at"]), _as_dt(v["created_at"]))
-        s["last_accessed"] = max(_as_dt(s["last_accessed"]), _as_dt(v["last_accessed"]))
+        # V-2 · both counters aged to the later of the two touches, then summed,
+        # so the merged node carries the combined decayed activity as of its
+        # (new) `last_accessed`
+        latest = max(_as_dt(s["last_accessed"]), _as_dt(v["last_accessed"]))
+        s["activity"] = _activity_at(s, latest) + _activity_at(v, latest)
+        s["last_accessed"] = latest
         s["access_count"] = int(s.get("access_count", 0)) + int(v.get("access_count", 0))
         s["relevance_score"] = round(
             (float(s.get("relevance_score", 0.0)) + float(v.get("relevance_score", 0.0))) / 2.0, 3
@@ -1327,36 +1386,108 @@ class GraphMemory:
             self._dirty = True
         return len(victims)
 
-    def _recalculate_chunk_unsafe(self, node_ids: list[str], now: datetime) -> None:
+    def _score_scale_unsafe(
+        self, node_ids: list[str], now: datetime, profiles: dict[str, tuple[float, float]]
+    ) -> tuple[float, float]:
+        """V-2 · pass one of `recalculate_importance`: the largest (activity,
+        association strength) among `node_ids`' non-hub nodes. Each node's
+        `(strength, bridge)` is stored in `profiles` so pass two does no edge
+        walk at all."""
+        top_activity = top_strength = 0.0
+        for node_id in node_ids:
+            if node_id not in self._graph or node_id in HUB_NODE_IDS:
+                continue
+            profile = profiles[node_id] = self._edge_profile_unsafe(node_id)
+            top_activity = max(top_activity, _activity_at(self._graph.nodes[node_id], now))
+            top_strength = max(top_strength, profile[0])
+        return top_activity, top_strength
+
+    def _recalculate_chunk_unsafe(
+        self,
+        node_ids: list[str],
+        now: datetime,
+        scale: tuple[float, float],
+        profiles: dict[str, tuple[float, float]] | None = None,
+    ) -> None:
+        """Score one chunk: `6·activity + 2·strength + 2·bridge` (V-2; the terms
+        and why are on the module constants). `scale` is the graph's
+        `(log1p(top activity), log1p(top strength))` from pass one; a node that
+        grew since then is clamped to 1, not over-scored. `profiles` are pass
+        one's edge walks — a node added between the passes is walked here."""
+        activity_scale, strength_scale = scale
+        known = profiles or {}
         changed = False
         for node_id in node_ids:
             if node_id not in self._graph:
                 continue  # removed since the id snapshot — skip, catch it next pass
             data = self._graph.nodes[node_id]
-            frequency = min(1.0, int(data.get("access_count", 0)) / 100.0)
-            age_days = max(
-                0.0, (now - _as_dt(data.get("last_accessed", now))).total_seconds() / 86400.0
+            strength, bridge = known.get(node_id) or self._edge_profile_unsafe(node_id)
+            activity = (
+                math.log1p(_activity_at(data, now)) / activity_scale if activity_scale else 0.0
             )
-            recency = 0.5 ** (age_days / 7.0)
-            degree = int(self._graph.degree(node_id))
-            connectivity = min(1.0, math.log1p(degree) / math.log1p(20))
-            bridge_value = self._bridge_value_unsafe(node_id)
-            raw = frequency * 3.0 + recency * 3.0 + connectivity * 2.0 + bridge_value * 2.0
+            tie = math.log1p(strength) / strength_scale if strength_scale else 0.0
+            raw = (
+                _W_ACTIVITY * min(1.0, activity) + _W_STRENGTH * min(1.0, tie) + _W_BRIDGE * bridge
+            )
             data["relevance_score"] = round(min(10.0, max(0.0, raw)), 3)
             changed = True
         if changed:
             self._dirty = True
 
-    def _bridge_value_unsafe(self, node_id: str) -> float:
-        """0-1 cross-domain reach: a node wired to >= 2 `domain:*` hubs bridges
-        the graph and earns the full bonus; one domain is half; none is zero
-        (D-10 — the domain layer that made this non-trivial arrived in B2.5b).
-        Hub nodes themselves are excluded — `YOU`/`domain:*` are structure."""
+    def _edge_profile_unsafe(self, node_id: str) -> tuple[float, float]:
+        """V-2 · `(strength, bridge)` from ONE walk of the node's raw adjacency.
+
+        - **strength** — how strongly the node is tied in: the sum of learned
+          Hebbian weights on its `RELATED_TO` edges, plus
+          `_STRUCTURAL_EDGE_STRENGTH` per other edge. Edges to a hub count
+          nothing (`YOU` is the orphan placeholder; domains are the bridge
+          term), nor does a generated node's provenance edge, in either
+          direction — the system's own notes neither earn nor lend relevance by
+          existing. Plain degree (the old term) scored a probe's one
+          bookkeeping edge like a real app's one real edge.
+        - **bridge** (D-10, reworked) — distinct `domain:*` hubs reached directly
+          or through an association of weight >= `_BRIDGE_MIN_WEIGHT`: one
+          domain 0, two 0.5, three or more 1. Before V-2 only direct domain
+          edges counted, and an app has one, so the term measured "is it in
+          app_map" rather than "does it link different parts of your work".
+
+        Reads `_succ` / `_pred` directly: the networkx edge views cost a view
+        object per call and an enum conversion per edge, which was ~70 % of a
+        10k-node recalc. Keys are stored as `RelationType` members already."""
         if node_id in HUB_NODE_IDS:
-            return 0.0
-        neighbours = set(self._graph.successors(node_id)) | set(self._graph.predecessors(node_id))
-        domains = neighbours & DOMAIN_HUB_IDS
-        return min(1.0, len(domains) / 2.0)
+            return 0.0, 0.0
+        derived = node_id.startswith(_DERIVED_PREFIXES)
+        strength = 0.0
+        domains: set[str] = set()
+        associates: list[str] = []
+        for adjacency in (self._graph._succ[node_id], self._graph._pred[node_id]):
+            for other, keyed in adjacency.items():
+                if other in HUB_NODE_IDS:
+                    if other in DOMAIN_HUB_IDS:
+                        domains.add(other)
+                    continue
+                provenance = derived or other.startswith(_DERIVED_PREFIXES)
+                for key, data in keyed.items():
+                    weight = float(data.get("weight", 0.0))
+                    if key == RelationType.RELATED_TO and weight > 0.0:
+                        strength += weight
+                        if weight >= _BRIDGE_MIN_WEIGHT:
+                            associates.append(other)
+                    elif not provenance:
+                        strength += _STRUCTURAL_EDGE_STRENGTH
+        for other in associates:
+            domains |= self._domains_of_unsafe(other)
+        return strength, min(1.0, max(0.0, (len(domains) - 1) / 2.0))
+
+    def _strength_unsafe(self, node_id: str) -> float:
+        return self._edge_profile_unsafe(node_id)[0]
+
+    def _bridge_value_unsafe(self, node_id: str) -> float:
+        return self._edge_profile_unsafe(node_id)[1]
+
+    def _domains_of_unsafe(self, node_id: str) -> set[str]:
+        graph = self._graph
+        return set(graph._succ[node_id].keys() | graph._pred[node_id].keys()) & DOMAIN_HUB_IDS
 
     def _seed_hubs_unsafe(self) -> None:
         self._add_node_unsafe("YOU", NodeType.CONCEPT, {"label": "YOU"})
@@ -1418,6 +1549,8 @@ class GraphMemory:
                 first_seen_at=_as_dt_opt(raw.get("first_seen_at")),
                 last_seen_at=_as_dt_opt(raw.get("last_seen_at")),
                 spec=LabelSpec.from_record(raw.get("spec")),  # absent before v5
+                # absent before v6: the lifetime tally plus the creation sighting
+                activity=float(raw.get("activity", int(raw["access_count"]) + 1)),
             )
             graph.add_node(node.id, **self._node_to_attrs(node))
         for raw in payload.get("edges", []):
@@ -1447,6 +1580,7 @@ class GraphMemory:
             "first_seen_at": node.first_seen_at,
             "last_seen_at": node.last_seen_at,
             "spec": node.spec,
+            "activity": node.activity,
         }
 
     @staticmethod
@@ -1466,6 +1600,7 @@ class GraphMemory:
             first_seen_at=_as_dt_opt(data.get("first_seen_at")),
             last_seen_at=_as_dt_opt(data.get("last_seen_at")),
             spec=_as_spec(data.get("spec")),
+            activity=float(data.get("activity", 0.0)),
         )
 
     @staticmethod

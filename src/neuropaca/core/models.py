@@ -77,6 +77,11 @@ class Node:
     # a cache of `labels.render(spec)`; the spec is the source of truth. None on
     # leaf nodes (apps, files, hubs), whose label is their name.
     spec: LabelSpec | None = None
+    # V-2 · decaying access counter ("frecency", schema v6). On every touch it
+    # is decayed from `last_accessed` by a 7-day half-life, then +1; creation
+    # counts as one sighting. Unlike `access_count` (a lifetime tally) it
+    # forgets, so "used a lot, months ago" fades. Feeds `relevance_score`.
+    activity: float = 1.0
 
 
 @dataclass(slots=True)
