@@ -122,10 +122,14 @@ class Config:
     #   - focus_exclude_app_ids — focused windows that are not an activity
     #     (dialogs, portals). Everything else focused joins the mesh, mapped in
     #     `app_map` or not.
+    #   - coactivation_refractory_seconds — a pair strengthened this recently is
+    #     not stepped again, so an alt-tab flurry (or a compositor glitch firing
+    #     focus events) counts as one co-use and costs no graph lock. 0 disables.
     hebbian_delta: float = 0.1
     hebbian_insight_multiplier: float = 3.0
     coactivation_window_seconds: float = 300.0
     coactivation_max_nodes: int = 16
+    coactivation_refractory_seconds: float = 30.0
     hebbian_half_life_hours: float = 72.0
     hebbian_floor: float = 0.02
     focus_exclude_app_ids: list[str] = field(
@@ -364,6 +368,11 @@ class Config:
         if self.hebbian_insight_multiplier < 1.0:
             errs.append(
                 f"hebbian_insight_multiplier must be >= 1.0, got {self.hebbian_insight_multiplier}"
+            )
+        if self.coactivation_refractory_seconds < 0:
+            errs.append(
+                "coactivation_refractory_seconds must be >= 0, "
+                f"got {self.coactivation_refractory_seconds}"
             )
         if self.hebbian_half_life_hours <= 0:
             errs.append(f"hebbian_half_life_hours must be > 0, got {self.hebbian_half_life_hours}")

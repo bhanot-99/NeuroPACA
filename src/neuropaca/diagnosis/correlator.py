@@ -45,6 +45,7 @@ _ACTIVITY_COLLECTOR = "activity"
 # next switch" — past it the user most likely walked away, and the app left
 # focused overnight must not wire to the first app of the morning.
 _MAX_FOCUS_DWELL_SECONDS = 2 * 3600.0
+_CANON_CACHE_MAX = 1024
 
 
 def _now() -> float:
@@ -103,12 +104,18 @@ class SignalCorrelator(BaseModule):
         self._hebbian_delta = float(config.hebbian_delta)
         self._hebbian_wired = 0
         self._focus_exclude = frozenset(a.lower() for a in config.focus_exclude_app_ids)
+        # V-1 · when each pair was last stepped; entries older than the
+        # refractory period are swept, so the map holds only recent pairs.
+        self._refractory = float(config.coactivation_refractory_seconds)
+        self._pair_wired_at: dict[frozenset[str], float] = {}
+        self._canon_cache: dict[str, tuple[str, str]] = {}
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
         self._app_map = AppMap.from_file(self._app_map_path)
         if self._identity.alias_count == 0:
             self._identity = AppIdentity.from_file(self._identity_path)
+            self._canon_cache.clear()  # resolved against the old identity
         self.event_bus.subscribe(EventType.METRIC_COLLECTED, self.on_metric_event)
         self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
 
@@ -174,8 +181,11 @@ class SignalCorrelator(BaseModule):
                 # V-1 · an app the user really focuses is activity even when
                 # `app_map` has no domain for it — before, it never got a node
                 # here and so never took part in co-activation at all.
+                # lock-free existence check first: a focus storm between two
+                # unmapped apps must not take the graph lock on every event
                 node_id, label = self._canon_app_id(app_id)
-                await self._graph.upsert_node(node_id, NodeType.APP, {"label": label})
+                if not self._graph.has_node(node_id):
+                    await self._graph.upsert_node(node_id, NodeType.APP, {"label": label})
             if webapp is not None:
                 await self._classify_webapp_into_graph(webapp, app_id, webapp_domain)
 
@@ -235,9 +245,17 @@ class SignalCorrelator(BaseModule):
 
     def _canon_app_id(self, raw: str) -> tuple[str, str]:
         """`(node_id, label)` for an app, canonicalised so one real app is one
-        node no matter which sensor's name reached here (B17)."""
-        key = self._identity.resolve(raw) or raw
-        return f"app:{key}", self._identity.pretty(key) or key
+        node no matter which sensor's name reached here (B17). Memoised per raw
+        id — resolving is regex work, and a focus storm repeats a handful of ids
+        thousands of times; the cache is bounded by distinct ids, reset if huge."""
+        hit = self._canon_cache.get(raw)
+        if hit is None:
+            key = self._identity.resolve(raw) or raw
+            hit = (f"app:{key}", self._identity.pretty(key) or key)
+            if len(self._canon_cache) >= _CANON_CACHE_MAX:
+                self._canon_cache.clear()
+            self._canon_cache[raw] = hit
+        return hit
 
     async def _classify_into_graph(self, app_id: str, domain_id: str) -> None:
         """Ensure `app:<canonical>` exists and is wired to its domain hub. Bounded
@@ -267,7 +285,7 @@ class SignalCorrelator(BaseModule):
             self._known_webapps.add(webapp)
 
     def _focus_excluded(self, app_id: str) -> bool:
-        key = self._identity.resolve(app_id) or app_id
+        key = self._canon_app_id(app_id)[0].removeprefix("app:")
         return app_id.lower() in self._focus_exclude or key.lower() in self._focus_exclude
 
     async def _reinforce_coactivation(self, focus_id: str) -> None:
@@ -287,13 +305,22 @@ class SignalCorrelator(BaseModule):
         warm = [
             (nid, 1.0 - (now - ts) / self._coactivation_window)
             for nid, ts in self._coactive
-            if nid != focus_id and now - ts < self._coactivation_window
+            if nid != focus_id
+            and now - ts < self._coactivation_window
+            and now - self._pair_wired_at.get(frozenset((focus_id, nid)), -math.inf)
+            >= self._refractory
         ]
         if warm:
             created, bumped = await self._graph.wire_coactivation(
                 focus_id, warm, rate=self._hebbian_delta
             )
             self._hebbian_wired += created + bumped
+            for nid, _ in warm:
+                self._pair_wired_at[frozenset((focus_id, nid))] = now
+            if len(self._pair_wired_at) > 4 * (self._coactive.maxlen or 16):
+                self._pair_wired_at = {
+                    k: t for k, t in self._pair_wired_at.items() if now - t < self._refractory
+                }
         # drop any stale copy of this id, then push it as the newest entry. A
         # deque with `maxlen` evicts from the left on a right append, so the
         # newest focus (rightmost) always survives and the oldest is forgotten.

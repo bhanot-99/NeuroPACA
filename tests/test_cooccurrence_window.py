@@ -130,11 +130,30 @@ async def test_revisit_within_window_strengthens_the_edge(tmp_path: Path, clock:
 async def test_weight_saturates_below_one(tmp_path: Path, clock: _Clock) -> None:
     corr, bus, graph = await _correlator(tmp_path)
     try:
-        for i in range(200):  # alt-tabbing all day
-            clock.advance(5)
-            await corr.on_app_switch(_switch(_ZED if i % 2 else _OBSIDIAN, t=5.0 * i))
+        for i in range(200):  # switching back and forth all day
+            clock.advance(40)
+            await corr.on_app_switch(_switch(_ZED if i % 2 else _OBSIDIAN, t=40.0 * i))
         weight = _cooccurrence_weight(graph, _id(corr, _ZED), _id(corr, _OBSIDIAN))
         assert weight is not None and 0.99 < weight < 1.0
+    finally:
+        await corr.stop()
+        await bus.stop()
+
+
+async def test_alt_tab_flurry_counts_once_per_refractory(tmp_path: Path, clock: _Clock) -> None:
+    """V-1 · ten rapid Zed<->Obsidian flips inside the refractory period are one
+    co-use: a single step, and no graph write for the other nine."""
+    corr, bus, graph = await _correlator(tmp_path, coactivation_refractory_seconds=30.0)
+    try:
+        for i in range(10):
+            clock.advance(1)
+            await corr.on_app_switch(_switch(_ZED if i % 2 else _OBSIDIAN, t=float(i)))
+        pair = (_id(corr, _ZED), _id(corr, _OBSIDIAN))
+        assert _cooccurrence_weight(graph, *pair) == pytest.approx(_RATE)
+
+        clock.advance(30)  # refractory over -> the next flip steps again
+        await corr.on_app_switch(_switch(_OBSIDIAN, t=40))
+        assert _cooccurrence_weight(graph, *pair) == pytest.approx(_RATE + _RATE * (1 - _RATE))
     finally:
         await corr.stop()
         await bus.stop()

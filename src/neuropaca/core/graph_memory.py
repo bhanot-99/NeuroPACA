@@ -596,6 +596,10 @@ class GraphMemory:
             return self._prune_stale_unsafe(ttl)
 
     # ------------------------------------------------------------------ queries
+    def has_node(self, node_id: str) -> bool:
+        """Membership only — no `Node` is built (a hot-path check, V-1)."""
+        return node_id in self._graph
+
     def get_node(self, node_id: str) -> Node | None:
         if node_id not in self._graph:
             return None
