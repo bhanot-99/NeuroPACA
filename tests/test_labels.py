@@ -3,7 +3,7 @@
 
 """B18 · one labeling system — labels are rendered, never stored.
 
-Each test pins one guarantee from LABELS_PLAN.md:
+Each test pins one guarantee from RESEARCH_DOSSIER.md §21.7:
 
 - identity is the facts (fingerprint ignores `value`, thought refs unordered);
 - a rendered name never contains a raw node id;

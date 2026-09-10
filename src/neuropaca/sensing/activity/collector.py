@@ -231,7 +231,7 @@ class ActivityCollector(BaseModule):
         )
         # B15 soak instrumentation — the shared Wayland connection's watchdog
         # activity, so a 7-day run can tell "quiet" from "self-healing every
-        # few minutes" (B15_PLAN.md §7). Real path only; the injected-doubles
+        # few minutes" (RESEARCH_DOSSIER.md §21.3, B15 §7). Real path only; the injected-doubles
         # path has no shared connection.
         wl = ""
         if self._wl_conn is not None:

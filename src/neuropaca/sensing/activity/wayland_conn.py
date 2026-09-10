@@ -97,7 +97,7 @@ class WaylandConnection:
         self._last_event_at = 0.0
         # B15 soak instrumentation — surfaced through `ActivityCollector.health()`
         # so a week-long run can answer "did the watchdog stay quiet?"
-        # (B15_PLAN.md §7). `reconnects` counts every successful re-`_connect()`
+        # (RESEARCH_DOSSIER.md §21.3, B15 §7). `reconnects` counts every successful re-`_connect()`
         # after a teardown (pump error OR the stale-event watchdog); `pump_errors`
         # counts pump ticks that raised.
         self.reconnects = 0

@@ -217,7 +217,7 @@ systemd user unit, crash recovery, graph schema versioning, full `health_check()
 | 1 | `neuropaca doctor` produces a full report with **the daemon not running** — no socket connect, no daemon required. | `test_doctor_runs_with_no_daemon_and_no_data_directory`, `test_doctor_never_opens_the_socket_when_the_daemon_is_absent`, `test_the_cli_routes_offline_verbs_without_a_socket` |
 | 2 | `neuropaca panic` leaves nothing: daemon SIGKILLed first (so nothing re-persists), then every item under `data/` gone. Refuses without the typed word, and refuses when the config will not load rather than guessing a directory. | `test_panic_wipes_the_data_directory`, `test_panic_without_the_typed_word_touches_nothing`, `test_panic_refuses_when_the_config_will_not_load` |
 | 3 | CI **affirmatively** fails an outbound connection: the egress job runs inside a network namespace with only loopback, and the test asserts that HTTP and raw TCP both raise. Static checks additionally forbid any outbound client import and any non-`AF_UNIX` socket in the shipped package. | `tests/integration/test_egress_blocked.py` (5 tests), `.github/workflows/ci.yml` `egress-test` |
-| 4 | The **7-day soak** completes, having first passed the 1-hour live gate, run under `systemd-inhibit --what=sleep:idle`. Subsumes the carried B1 T2 / B2 T3 / B4 windows, **and** proves the Wayland focus sensor stays alive for a week (`soak_state.py assess`). | `scripts/soak_gate.sh` (gate) then `neuropaca-soak.service` → `scripts/soak_7day.sh` — ⚠ **VOID twice**: the 2026-09-03 run (`B15_PLAN.md §2a`, GC'd cosmic proxies) and the 2026-09-08 B15-rebuilt run (`B16_PLAN.md §2` — the unreferenced *parent* toplevel proxy still self-destructed within 180 s; the liveness watchdog was doing 100% of the work). Fixed in B16; restart pending. |
+| 4 | The **7-day soak** completes, having first passed the 1-hour live gate, run under `systemd-inhibit --what=sleep:idle`. Subsumes the carried B1 T2 / B2 T3 / B4 windows, **and** proves the Wayland focus sensor stays alive for a week (`soak_state.py assess`). | `scripts/soak_gate.sh` (gate) then `neuropaca-soak.service` → `scripts/soak_7day.sh` — ⚠ **VOID twice**: the 2026-09-03 run (`RESEARCH_DOSSIER.md §21.3, B15 §2a`, GC'd cosmic proxies) and the 2026-09-08 B15-rebuilt run (`RESEARCH_DOSSIER.md §21.4, B16 §2` — the unreferenced *parent* toplevel proxy still self-destructed within 180 s; the liveness watchdog was doing 100% of the work). Fixed in B16; restart pending. |
 | 5 | An unreadable graph is quarantined and the daemon **boots anyway** on a fresh 11-hub graph, reporting itself degraded rather than ok. | `test_an_unreadable_graph_is_quarantined_and_the_daemon_still_boots` (×3 corruption shapes), `test_a_degraded_boot_is_visible_in_health`, `test_the_reseeded_graph_is_persisted_not_just_in_memory` |
 | 6 | `schema_version` is **read** on load: a newer-than-supported file is refused with a message rather than silently dropping fields; a v1 file still loads; a malformed record arrives as `GraphMemoryError`, not `KeyError`. | `test_a_graph_from_a_newer_build_is_refused_not_silently_loaded`, `test_a_v1_graph_still_loads`, `test_a_malformed_node_record_raises_graph_memory_error_not_key_error` |
 | 7 | The unit binds the L9 socket under `ProtectSystem=strict`, and logrotate targets files the daemon actually writes. | `test_the_systemd_unit_grants_write_access_to_the_runtime_directory`, `test_logrotate_targets_the_configured_log_paths`, `systemd-analyze --user verify` |
@@ -236,13 +236,13 @@ Criteria 1–3 and 5–7 are met by the test suite. **Criterion 4 is the only on
 
 **The boot popup.** Every start raises a zenity dialog with progress, the RSS leak slope, sensing/drive counters and any degraded module, with an OK button and no timeout. This is not decoration: B7 burned three soaks before anyone noticed L5 had fired zero times, because a soak silently producing nothing looks identical to a soak of a working-but-idle system. A dialog at every login makes a week of accumulating nothing impossible to miss past day two.
 
-**The 2026-09-03 gate/soak — voided by B15.** It "passed" on an idle edge with ~7 minutes to spare (`activity_edges` 0→2 from `ext-idle-notify-v1`) and saw ~4 app switches in the hour. B15 (`B15_PLAN.md §2a`) found why: the `zcosmic_toplevel_handle_v1` proxy carrying "which window is focused" was held only in a local variable and GC'd non-deterministically — **~1 in 3 daemon starts came up permanently deaf**, and that start was one of them. This is the actual mechanism behind B7's zero-L5 soaks too. Fixed (strong-ref dict + one shared connection); the harness below is rebuilt around it.
+**The 2026-09-03 gate/soak — voided by B15.** It "passed" on an idle edge with ~7 minutes to spare (`activity_edges` 0→2 from `ext-idle-notify-v1`) and saw ~4 app switches in the hour. B15 (`RESEARCH_DOSSIER.md §21.3, B15 §2a`) found why: the `zcosmic_toplevel_handle_v1` proxy carrying "which window is focused" was held only in a local variable and GC'd non-deterministically — **~1 in 3 daemon starts came up permanently deaf**, and that start was one of them. This is the actual mechanism behind B7's zero-L5 soaks too. Fixed (strong-ref dict + one shared connection); the harness below is rebuilt around it.
 
-**The gate, rebuilt (`scripts/soak_gate.sh`).** Checks 1–4 unchanged (unit active, `graphical-session.target` binding, `WAYLAND_DISPLAY` in `/proc/<pid>/environ`, `neuropaca health` over the socket). Check 5 is now the post-B15 bar — `B15_PLAN.md §6` crit 1 is "dozens of focus/tab switches per hour, not ~4": a pass needs **≥ 20 switches/hour** (or, for a genuine single-window hour, graph growth **and** an L3 signal), **plus** the shared Wayland connection not thrashing (≤ 1 reconnect, **0** pump-errors in the window) and `window✓` live. The old "any one of three liveness signals moved once" is gone — it is what let the deaf 2026-09-03 run through.
+**The gate, rebuilt (`scripts/soak_gate.sh`).** Checks 1–4 unchanged (unit active, `graphical-session.target` binding, `WAYLAND_DISPLAY` in `/proc/<pid>/environ`, `neuropaca health` over the socket). Check 5 is now the post-B15 bar — `RESEARCH_DOSSIER.md §21.3, B15 §6` crit 1 is "dozens of focus/tab switches per hour, not ~4": a pass needs **≥ 20 switches/hour** (or, for a genuine single-window hour, graph growth **and** an L3 signal), **plus** the shared Wayland connection not thrashing (≤ 1 reconnect, **0** pump-errors in the window) and `window✓` live. The old "any one of three liveness signals moved once" is gone — it is what let the deaf 2026-09-03 run through.
 
 The health counters are **cumulative**, so the summary is reset-aware: a daemon restart is detected by `uptime_seconds` going backwards, totals are summed per daemon life, and the leak slope is measured within the longest single life — spanning a restart would subtract a fresh 40 MiB process from a week-old one and report a healthy negative slope for a daemon that had been leaking right up until it died. `tests/test_soak_state.py` + `tests/test_soak_probe.py` pin all of it.
 
-**The verdict (`soak_state.py assess`).** At completion, and via `soak_7day.sh --assess`, the run is graded: 7 days accrued; zero module errors / dropped events; RSS slope within tolerance over the longest life (after the warm-up ramp, `problems.md` T2/T6); and the B15 checks — `window_ok` true in > 95 % of samples, no daemon life that came up deaf, **0** Wayland pump-errors, **0** SIGSEGV markers (the two-connection exit-139 crash B15 §2b removed), and reconnects under ~1/accrued-day (more is the `B15_PLAN.md §7` "watchdog insufficient" signal → escalate to a dedicated Wayland thread).
+**The verdict (`soak_state.py assess`).** At completion, and via `soak_7day.sh --assess`, the run is graded: 7 days accrued; zero module errors / dropped events; RSS slope within tolerance over the longest life (after the warm-up ramp, `problems.md` T2/T6); and the B15 checks — `window_ok` true in > 95 % of samples, no daemon life that came up deaf, **0** Wayland pump-errors, **0** SIGSEGV markers (the two-connection exit-139 crash B15 §2b removed), and reconnects under ~1/accrued-day (more is the `RESEARCH_DOSSIER.md §21.3, B15 §7` "watchdog insufficient" signal → escalate to a dedicated Wayland thread).
 
 **Soak methodology (BL-5).** B7 ran three soaks and L5 fired zero times; the recorded cause ("the collector cannot see Wayland under `systemd --user`") was wrong on two counts — `WAYLAND_DISPLAY` *is* in the manager environment (the daemon just started before the compositor imported it, fixed by the `graphical-session.target` binding), **and** even once it reached the daemon the sensor was still deaf (B15 §2a, the GC'd proxy). Because a soak that produces nothing looks identical to a soak of a working-but-idle system, the 7-day run is gated as above and runs under `systemd-inhibit --what=sleep:idle`, because a suspending laptop accrues no runtime — which is exactly what ended the B2 soak at 11 h of 24.
 
@@ -298,7 +298,7 @@ Covered by `tests/test_describe.py` and the reworked `tests/test_interface.py`.
 
 ### B13 · Resource-aware sensing + non-inert Idle/Distraction (D-19)
 
-Full plan: [`B13_PLAN.md`](B13_PLAN.md). Written 2026-09-08 after the B9 soak
+Full plan: `RESEARCH_DOSSIER.md` §21.1. Written 2026-09-08 after the B9 soak
 produced zero insights in three days — root cause: `IdlePattern` /
 `DistractionPattern` fired with `related_node_ids = ()`, so L4 dropped them at the
 `no_nodes` gate and L5 no-op'd them, and the two node-bearing patterns need
@@ -348,7 +348,7 @@ wide + one row per censused app) when `raw_metrics_csv_path` is set. Enabled in
 for B13), ruff + mypy clean. Node id caveat: census nodes are `app:<process
 name>`; where the process name and the Wayland app_id agree (most dev tools) they
 merge with focus nodes, where they differ (browsers) a round-2 name map is the
-documented fix (B13_PLAN.md §7).
+documented fix (RESEARCH_DOSSIER.md §21.1, B13 §7).
 
 **Exit criterion open:** the 48 h+ soak (B13-C) under `neuropaca.b13.toml` — not
 run. The B9 soak harness plus the new `Census` line in `scripts/soak_state.py`
@@ -356,7 +356,7 @@ covers it; running it needs the target box.
 
 ### B14 · Web-app attribution — the browser stops being one node
 
-Full plan: [`B14_PLAN.md`](B14_PLAN.md). The B13 census made `app:brave-browser`
+Full plan: `RESEARCH_DOSSIER.md` §21.2. The B13 census made `app:brave-browser`
 one opaque node wired to `domain:habits`; the operator lives inside Gmail /
 GitHub / Gemini / YouTube, which are not one activity. B14 gives the browser
 sub-identity under a strict title allowlist.
@@ -395,7 +395,7 @@ guess — the real allowlist is a dogfood output.
 
 ### B15 · The Wayland activity sensor goes deaf — GC'd proxies + one shared connection
 
-Full plan: [`B15_PLAN.md`](B15_PLAN.md), test run: `B15_TEST_REPORT.md`. Found
+Full plan and test run: `RESEARCH_DOSSIER.md` §21.3. Found
 during the B14 live smoke test: the daemon barely registered focus events (~1
 per session) while a standalone `ActivityCollector` on the same code caught
 dozens — the sensor was *deaf*, not dead, and `health()` still said `window✓`.
@@ -430,7 +430,7 @@ restarts, no deafness, no segfault.
 
 ### B16 · The focus sensor deafens itself — proxy lifetime, round two
 
-Full plan: [`B16_PLAN.md`](B16_PLAN.md), test run: `B16_TEST_REPORT.md`. Found
+Full plan: `RESEARCH_DOSSIER.md` §21.4 (plan and test run). Found
 ~21 h into the B15-rebuilt 7-day soak: the B15 liveness watchdog — meant to be a
 rare safety net — was doing **all** the work. Soak session 2 (active use): **54
 of ~65 inter-reconnect gaps at exactly 180–181 s**, zero events dispatched
@@ -470,7 +470,7 @@ across 3+ min of stable focus).
 
 ### B17 · One app, one node — canonical identity, readable names, structured graph view
 
-Full plan: [`B17_PLAN.md`](B17_PLAN.md), test run: `B17_TEST_REPORT.md`. Graph
+Full plan: `RESEARCH_DOSSIER.md` §21.5 (plan and test run). Graph
 review found one real app as **two or three `app:` nodes**: the focus sensor keys
 by Wayland `app_id` (`app:com.system76.CosmicFiles`), the B13 census by Unix
 process name (`app:cosmic-files`), and `upsert_node` de-dups by exact id only. The
@@ -511,7 +511,7 @@ graph is `0.0` — reinforcement is not accumulating. → **fixed in T7.**
 
 ## T7 · Hebbian weights never leave zero — "wire together" was never built
 
-**Branch `t7-hebbian-weights-zero`. Full analysis: `T7_PLAN.md`. Report: `T7_TEST_REPORT.md`.**
+**Branch `t7-hebbian-weights-zero`. Full analysis and test report: `RESEARCH_DOSSIER.md` §21.6.**
 
 Root cause: `GraphMemory.reinforce_cooccurrence` only *strengthens existing* edges
 ("if the edge exists"). Nothing in the system ever *created* an edge between two
@@ -559,7 +559,7 @@ non-zero weight distribution that decay keeps bounded.
 ## B18 · One labeling system — labels are rendered, never stored
 
 **Branch `feat/b18-unified-labels`. Design + research + rejected alternatives:
-`LABELS_PLAN.md`.**
+`RESEARCH_DOSSIER.md §21.7`.**
 
 Three graph-window symptoms had one root cause: every generated node (L4
 insight, L6 thought, L8 probe) had a sentence baked into `label` at creation.

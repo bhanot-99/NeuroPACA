@@ -38,9 +38,9 @@ THE B15 CRITERIA (`assess`), on top of the general leak/error checks:
 
     - the focus sensor (`window_ok`) is live in the last sample of every daemon
       life that ran more than ~10 min, and true in > 95 % of samples overall — a
-      week mostly deaf is the B7/B9 failure (B15_PLAN.md §2a), just measured now.
+      week mostly deaf is the B7/B9 failure (RESEARCH_DOSSIER.md §21.3, B15 §2a), just measured now.
     - Wayland `reconnects` stay under ~1 per accrued day. More than that is the
-      "watchdog insufficient" signal (B15_PLAN.md §7) — escalate to the dedicated
+      "watchdog insufficient" signal (RESEARCH_DOSSIER.md §21.3, B15 §7) — escalate to the dedicated
       Wayland thread.
     - zero `pump_errors` and zero `segfault` markers across the whole run (the
       two-connection SIGSEGV, exit 139, that B15 §2b removed).

@@ -5,9 +5,9 @@
 | | |
 | --- | --- |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
-| **Version** | v7 |
+| **Version** | v8 |
 | **Dossier date** | 2026-09-10 |
-| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B17 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view); 6 of 7 B9 exit criteria met. B16 (Wayland) merged and CI-green. B17 folds the graph's duplicate `app:` nodes — one real app was 2–3 nodes because the focus sensor keys by Wayland `app_id` and the B13 census by process name — merged on `b17-app-identity-canonicalization`, the real soak graph cleaned 63 → 57 nodes. The 7-day soak keeps running from ~22 h (focus data void per B15/B16, RSS trend continuous). |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. |
 | **Code size** | 13,254 lines of source · 12,609 lines of tests · 603 collected tests (580 default) · 102 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
@@ -39,6 +39,7 @@
 18. [Research claims and publication plan](#18-research-claims-and-publication-plan)
 19. [Reproducing everything](#19-reproducing-everything)
 20. [Glossary](#20-glossary)
+21. [The post-B9 build chronicle — B13 to B18, step by step](#21-the-post-b9-build-chronicle--b13-to-b18-step-by-step)
 
 ---
 
@@ -577,11 +578,13 @@ flowchart LR
     B14 --> B15["B15 ✅<br/>Wayland sensor fix"]
     B15 --> B16["B16 ✅<br/>Wayland sensor fix<br/>(round two)"]
     B16 --> B17["B17 ✅<br/>canonical app identity<br/>+ structured graph view"]
-    B17 -.->|re-run| B9
+    B17 --> T7["T7 ✅<br/>Hebbian wire-together"]
+    B17 --> B18["B18 ✅<br/>one labeling system"]
+    B18 -.->|re-run| B9
     B9 -.-> D1["D1 ⏸<br/>model pruning"]
 ```
 
-> B10–B17 are **post-B9 work**, not a linear continuation. B9's seventh criterion (the 7-day soak) is still open; B13–B17 exist because dogfooding the graph kept exposing gaps — inert Idle/Distraction patterns, CPU being the wrong primary signal, the Wayland focus sensor going deaf (twice), and one real app landing as two or three `app:` nodes because two sensors name it differently. Each fix has its own phase, its own plan doc (`B13_PLAN.md` … `B17_PLAN.md`), and its own test report.
+> B10–B18 are **post-B9 work**, not a linear continuation. B9's seventh criterion (the 7-day soak) is still open; B13–B18 exist because dogfooding the graph kept exposing gaps — inert Idle/Distraction patterns, CPU being the wrong primary signal, the Wayland focus sensor going deaf (twice), one real app landing as two or three `app:` nodes because two sensors name it differently, and generated labels that froze, duplicated and copied each other. Each fix has its own phase; the full plan, root-cause analysis, test evidence and rejected alternatives for B13–B18 are in **§21, one chapter per branch**.
 
 ### 10.1 The methodology rules
 
@@ -616,6 +619,8 @@ flowchart LR
 | **B15** | The Wayland activity sensor was **deaf, not dead** — a GC'd `zcosmic_toplevel_handle_v1` proxy on ~1 in 3 starts; two `Display` connections, the second segfaulting on teardown | Strong-ref dict + one shared `WaylandConnection` + poll-pump; **0/20 restarts deaf** (was ~1/3); this is the mechanism behind B7's three zero-L5 soaks |
 | **B16** | B15's fix was **half of one** — it strong-ref'd the child cosmic proxy but not its parent `ext_foreign_toplevel_handle_v1`, and keyed the cache by the dead parent's `id()`; the sensor still deafened itself within 180 s and its liveness watchdog was doing 100 % of the work (soak: 54/65 gaps at exactly 180 s) | Strong-ref **both** proxies keyed by a monotonic int; reachable `_drop`; `finished` binding; a real "events arriving" health state (`window~`); watchdog re-scoped to fire only for a *never-delivered* subscription (the proxy fix exposed the old one as a false-positive generator). `--leak`/`--hold` probe + daemon A/B confirm; 587 tests green |
 | **B17** | One real app was **2–3 `app:` nodes** — the focus sensor keys by Wayland `app_id` (`app:com.system76.CosmicFiles`), the B13 census by process name (`app:cosmic-files`), `upsert_node` de-dups by exact id; the behavioural edges on one, the RAM/CPU on the other. B13 §7 deferred the "round-2 name map". Also `app:MainThread` (a thread name `psutil` reported as a process). | `AppIdentity.resolve()` (alias table + minimal normaliser) canonicalises every `app:` id at one correlator chokepoint; `canonicalise_app_nodes()` folds a pre-B17 graph once at boot. Graph window: readable names, the 11 hubs pinned on a fixed ring, a click-to-open node detail panel. Real soak graph 63 → 57 nodes; 643 tests green |
+| **T7** | Every Hebbian edge weight was `0.0` — "wire together" was never built | `wire_cooccurrence` (create-or-bump), a co-activation window on focus switches, decay in the idle sweep (§16.1) |
+| **B18** | Generated labels were frozen text: stale after renames, duplicated after restarts, drawn as lookalikes, and copied into each other | Every generated node stores a `LabelSpec` (what it is about, by id); one renderer; the node id is the fact fingerprint (schema v5); graph-backed repeat gate replaces the in-memory Jaccard buffer. Real graph 89 → 60 nodes live; 699 tests green |
 
 ---
 
@@ -775,7 +780,7 @@ action_enabled_tiers             = ["safe"]
 **Why the 2026-09-03 gate pass and the soak run it started do not count.** The gate
 "passed" on an idle edge with ~7 minutes to spare and saw ~4 app switches in the
 hour; the soak that followed reached 5.8 % before it was stopped. B15
-(`B15_PLAN.md §2a`) then found the Wayland focus sensor had been **deaf** the whole
+(§21.3, B15 §2a) then found the Wayland focus sensor had been **deaf** the whole
 time: the `zcosmic_toplevel_handle_v1` proxy carrying "which window is focused" was
 held only in a local variable and GC'd non-deterministically — measured at **~1 in 3
 daemon starts fully deaf**, binary per start. This is the same mechanism behind B7's
@@ -1222,7 +1227,7 @@ for this one sensor took five tries.
 | **T2** | The B1 1-hour RSS soak drifts ~25 % before it plateaus. Not an unbounded leak — a bounded allocator warm-up (steady-state drift 0.00 %) — but the scripted 5 % check samples *inside* the ramp and reports FAIL on a healthy system. | 🟡 Open. Options: measure the back half only; `malloc_trim(0)` after `save()`; cap the arena. |
 | **T3** | The B2 24-hour soak ran only 11 h — the machine slept. Partial-window numbers all pass. Residual risk (a leak slower than ~0.1 MiB/h, or late onset) is low. | 🟡 Open; **subsumed by the B9 7-day soak**. |
 | **T6** | `scripts/soak_state.py`'s `rss_trend()` reported a huge, misleading leak slope right after a daemon restart — `(last − first) / span` over the longest daemon life, so a one-time warm-up step divided by a short window extrapolated absurdly. Observed live 2026-09-04: RSS jumped 43 → 1476 MiB in one 60 s sample, then sat flat for 3+ hours, and the tool reported **`+5600.7 MiB/day`** in the popup and tray widget. | 🟢 **Mitigated 2026-09-08** (B15 harness rebuild). `warm_rss_slope()` fits the slope only over samples of the longest daemon life **after RSS crosses 500 MiB** (the GGUF has mapped in), so the startup jump is outside the window; `assess` grades on that warm slope. The raw `rss_trend()` figure is kept and shown for context — a genuine post-warm-up leak still moves it. |
-| **T7** | Every Hebbian edge `weight` in the ~22 h soak graph is `0.0` — co-occurrence reinforcement is not accumulating on the graph. `reinforce_cooccurrence` is exercised in unit tests (§8, "+0.01 on existing edges only, ~1.4 ms"), so the mechanism works; either the daemon path that would call it on real signals is not wired, or the weights are being reset by an edge re-add elsewhere. Found in the B17 graph review. | 🟢 **Diagnosed + fixed 2026-09-10** (`T7_PLAN.md`, `T7_TEST_REPORT.md`). **Root cause: "wire together" was never built.** `reinforce_cooccurrence` only strengthens *existing* edges; nothing ever *created* an edge between two co-occurring nodes — the correlator wires activity nodes to `domain:` hubs, never to each other, and the episode handed to the reinforcer is sibling `app:` nodes with no edge among them, so every bump was a no-op. Aggravators: `_add_edge_unsafe` re-add reset `weight`→0.0 (latent, masked); reinforcement was gated behind the ~5/day model-only insight path. The tests passed because they pre-wire the cited nodes — exactly what production never did. Fix: upsert-safe `_add_edge_unsafe`; new `GraphMemory.wire_cooccurrence()` (create-or-bump); a co-activation time-window in `correlator.on_app_switch` drives it model-free on every focus switch; `decay_cooccurrence_edges()` in the B6 idle sweep makes weight a recency-weighted affinity; 7 `Config` knobs. Closes on a ≥ 24 h soak showing a stable non-zero weight distribution. |
+| **T7** | Every Hebbian edge `weight` in the ~22 h soak graph is `0.0` — co-occurrence reinforcement is not accumulating on the graph. `reinforce_cooccurrence` is exercised in unit tests (§8, "+0.01 on existing edges only, ~1.4 ms"), so the mechanism works; either the daemon path that would call it on real signals is not wired, or the weights are being reset by an edge re-add elsewhere. Found in the B17 graph review. | 🟢 **Diagnosed + fixed 2026-09-10** (full chapter: §21.6). **Root cause: "wire together" was never built.** `reinforce_cooccurrence` only strengthens *existing* edges; nothing ever *created* an edge between two co-occurring nodes — the correlator wires activity nodes to `domain:` hubs, never to each other, and the episode handed to the reinforcer is sibling `app:` nodes with no edge among them, so every bump was a no-op. Aggravators: `_add_edge_unsafe` re-add reset `weight`→0.0 (latent, masked); reinforcement was gated behind the ~5/day model-only insight path. The tests passed because they pre-wire the cited nodes — exactly what production never did. Fix: upsert-safe `_add_edge_unsafe`; new `GraphMemory.wire_cooccurrence()` (create-or-bump); a co-activation time-window in `correlator.on_app_switch` drives it model-free on every focus switch; `decay_cooccurrence_edges()` in the B6 idle sweep makes weight a recency-weighted affinity; 7 `Config` knobs. Closes on a ≥ 24 h soak showing a stable non-zero weight distribution. |
 
 ### 16.2 Methodological limitations — stated, not hidden
 
@@ -1416,7 +1421,7 @@ scripts/soak_dashboard.py --open     # the explained HTML dashboard
 | `memory.md` | Living project state — **read first, update last** |
 | `problems.md` | Risk register, the research-claims section, and the testing log |
 | `pruning.md` | The deferred personal-model-pruning design |
-| `B13_PLAN.md` … `B15_PLAN.md`, `B15_TEST_REPORT.md` | Per-phase plans and live test runs for the post-B9 work |
+| §21 of this document | Every post-B9 plan and test report (B13–B18 and T7), merged here — one chapter per branch |
 | `LICENSE` · `AUTHORS.md` · `.mailmap` | AGPL-3.0-only text; commit-identity normalisation |
 | **`RESEARCH_DOSSIER.md`** | **This document — the consolidated research record** |
 
@@ -1469,9 +1474,1800 @@ flowchart TD
 
 ---
 
+## 21. The post-B9 build chronicle — B13 to B18, step by step
+
+**In plain words.** After B9, the system was running every day on the real
+machine, and each week of use exposed a real gap. This section is the story of
+those gaps, one branch at a time. Each chapter answers the same questions in
+the same order: *which branch, what we saw, why it happened, how we fixed it,
+what we built, how we proved it, what we rejected, and what is still open.*
+It replaces the separate per-phase plan and test-report files
+(`B13_PLAN.md` … `B17_TEST_REPORT.md`, including `B15_TEST_REPORT.md`,
+`T7_PLAN.md`, `T7_TEST_REPORT.md` and `LABELS_PLAN.md`), whose full content is
+merged here.
+
+The original documents' section numbers are kept in each chapter as
+*(orig. §N)*, so older references such as "B15 §2a" or "B16 §5d" still point
+to the right paragraph.
+
+```mermaid
+flowchart LR
+    B9["B9 soak:<br/>0 insights in 3 days"] --> B13["B13<br/>resource-aware sensing"]
+    B13 --> B14["B14<br/>web-app attribution"]
+    B14 -->|live smoke test<br/>finds 0 webapp nodes| B15["B15<br/>deaf sensor, round one"]
+    B15 -->|soak: watchdog<br/>does all the work| B16["B16<br/>deaf sensor, round two"]
+    B16 -->|graph review:<br/>1 app = 2–3 nodes| B17["B17<br/>one app, one node"]
+    B17 -->|graph review:<br/>weights all 0.0| T7["T7<br/>Hebbian wire-together"]
+    B17 -->|stale / duplicate /<br/>lookalike labels| B18["B18<br/>one labeling system"]
+```
+
+| Branch | Problem we saw (X) | Issues found (Y) | Approach (Z) | Outcome |
+| --- | --- | --- | --- | --- |
+| **B13** `feat/b13-*` | Soak: 0 insights in 3 days | Idle/Distraction signals carried no nodes; CPU is the wrong main signal; resource data was dropped on save | Attach nodes to Idle/Distraction; a per-app RAM census; durable resource fields (schema v3); RAM-aware patterns | 484 tests green; the loop fires under real use |
+| **B14** `feat/brave-webapp-attribution` | The whole browser was one node | No event on a tab switch; nowhere for tab identity to land; the raw title carries personal data | Match the title against an allowlist inside the collector; `NodeType.WEBAPP` (schema v4) | ~524 tests green; no raw title leaves the collector |
+| **B15** `fix/wayland-poll-pump` | Daemon saw ~4 switches/hour | A GC'd focus proxy; two Wayland connections (segfault); errors swallowed silently | Strong-ref the proxy; one shared connection; a poll-pump; honest health; a watchdog | 0/20 restarts deaf (was ~1/3); 561 tests |
+| **B16** `b16-wayland-subscription-stability` | The watchdog did 100 % of the work | The parent proxy was never held; caches keyed by a reused `id()`; `closed` never fired; health could not see silence | Hold both proxies by a monotonic int key; `window~` health; watchdog only for never-delivered | Live stream confirmed; 587 tests |
+| **B17** `b17-app-identity-canonicalization` | One app = 2–3 `app:` nodes | Two sensors name apps differently; thread names counted as apps; raw ids as labels | `AppIdentity.resolve()`; a one-time canonical pass; readable names + pinned hubs + detail panel | 63 → 57 nodes; 643 tests |
+| **T7** `t7-hebbian-weights-zero` | Every edge weight `0.0` | Nothing ever created an edge between co-used apps; an edge re-add reset its weight; reinforcement only on the rare model path | Upsert-safe edges; `wire_cooccurrence` (create-or-bump); a co-activation window on every focus switch; decay + prune | 673 + 10 tests; closes on a soak |
+| **B18** `feat/b18-unified-labels` | Stale, duplicate and lookalike labels | Label text frozen at creation; in-memory novelty buffer; labels copying labels | Store what a node is about (`LabelSpec`); render names on demand; id = fingerprint (schema v5) | 87 → 59 nodes on the real graph; 699 tests |
+
+---
+
+### 21.1 B13 · Resource-aware sensing, and non-inert Idle / Distraction
+
+| | |
+| --- | --- |
+| **Branch** | B13 series (B13-A, B13-B1…B4, B13-C) |
+| **Found** | 2026-09-08, the "zero insights in 3 days" investigation on the B9 soak |
+| **Depends on** | B2.5b (activity / app_map), B3 (patterns), B4 (L4 gate), B7 (L5 pressure) |
+| **Ruling** | D-19 |
+| **Outcome** | Merged. 484 tests green (39 new). The loop now fires under real dogfooding, not just the positive control. |
+
+**In plain words.** Two of the four "what is this person doing" detectors fired
+but never said *which app* they were about, so everything downstream threw
+their signals away. And the system watched CPU, which is almost always near
+zero; memory is the better sign of what you are working with. B13 made those
+detectors name an app, and added a memory census per app.
+
+#### Step 1 · What we saw *(orig. §1)*
+
+The B9 soak had accrued ~3 days of runtime and produced:
+
+```
+Sensing     66 idle/active edges, 28 app switches
+Drive       0 contributions, 0 low / 0 high crossings
+Cognition   0 insights, 0 actions proposed
+```
+
+#### Step 2 · Why it happened *(orig. §1)*
+
+Traced end to end:
+
+1. **L4 only consumes `SIGNAL_CORRELATED`.** Of the four L3 patterns, only
+   `HighLoadPattern` and `FocusSessionPattern` attach nodes to their signal.
+   `IdlePattern` and `DistractionPattern` emitted `related_node_ids = ()`.
+2. A nodeless signal is **dropped by L4 at the `no_nodes` gate** (before any
+   inference) and **no-op'd by L5** (`for node_id in signal.related_node_ids`
+   over an empty tuple). It fires and vanishes.
+3. The two node-bearing patterns need conditions an unattended machine never
+   creates: sustained **>90 % CPU for 5 min with concurrent file churn**, or a
+   **20-min uninterrupted focus hold at ≥10 % mean CPU** in `engineering` /
+   `research`. On an idle soak box neither happens; `HighLoadPattern` only ever
+   fired via an injected positive control (see §12.3).
+4. Everything downstream of L3 is in-memory and resets on each daemon restart
+   (~1/80 min in the soak), so multi-snapshot patterns cannot mature.
+
+A third cause was found later: the Wayland focus sensor was deaf for that whole
+run (§21.3, §21.4).
+
+#### Step 3 · How we fixed it — the approach *(orig. §1–§3)*
+
+Two independent fixes, bundled because they complement each other and touch the
+same files:
+
+- **B13-A — make Idle/Distraction non-inert.** They already fire; give them
+  nodes so L4/L5 can act. Small, no schema change.
+- **B13-B — resource-aware sensing.** CPU is the wrong primary signal — it is
+  bursty and mostly ~0. **RAM footprint is the stable indicator** of what is
+  loaded and being worked with (browser tab-sets, IDE projects, VMs, containers,
+  media tools). Memory becomes a first-class sensed dimension, per process,
+  grouped by app, with **how long the app has been running** as the third axis.
+
+Neither fix makes the *unattended soak* produce insights — after excluding the
+daemon's own work there is nothing behaviourally rich left. They make the loop
+work during **real interactive use**, and narrow the soak's job to what it can
+actually validate (plumbing, restart-safety, decay, bounded growth, cost).
+
+**Scope, in dependency order** *(orig. §2)*
+
+| Part | What | Schema / enum change? | Approval gate |
+| --- | --- | --- | --- |
+| **B13-A** | `IdlePattern` / `DistractionPattern` attach nodes | none | Architecture.md §5 line edit |
+| **B13-B1** | Aggregate memory-pressure pattern (existing `mem_percent` + baseline) | none | Architecture.md §5 |
+| **B13-B2** | `ProcessCollector` — per-process RAM/CPU/runtime census, app-grouped | new collector class | new public class, config fields, Architecture.md §4 |
+| **B13-B3** | `Node` gains durable resource attributes (`ram_mb`, `cpu_percent`, `first_seen_at`, `last_seen_at`) | **schema v-bump** | D-19, human approval |
+| **B13-B4** | RAM-aware patterns: resource pressure; RAM corroboration in `FocusSessionPattern`; new `HeavyAppStartedPattern` | **new `SignalType`** | D-19, human approval |
+| **B13-C** | 7-day soak re-run under the B9 harness with B13 config | none | — |
+
+B13-A shipped first and alone — the highest value-per-line change in the set.
+
+**The decisions ratified as D-19** *(orig. §3)*
+
+- **D-19(a) — Reuse `NodeType.APP`, no `NodeType.PROCESS`.** A memory-heavy
+  process resolves, via `app_map` / process name, to the **same `app:<id>`
+  node** a focus event would create. There is no per-PID node. This follows the
+  B8 precedent (`ephemeral:` / `idle:` / `insight:` prefixes carry semantics,
+  not attributes) and avoids an enum change.
+- **D-19(b) — RSS for grouping now, PSS flagged as the known inaccuracy.**
+  `memory_info().rss` summed across an app's processes **double-counts shared
+  libraries** (a 15-process browser looks larger than it is). Accepted because
+  it is fast and loop-safe. `memory_full_info().uss` is 10–50× slower and
+  sometimes privileged; **PSS** via `/proc/<pid>/smaps_rollup` is the documented
+  follow-up if the soak shows the inflation matters.
+- **D-19(c) — Minimal self-exclusion in round 1.** The operator asked for "don't
+  bother excluding, see the results", amended to: exclude **only**
+  `os.getpid()` + `psutil.Process().children(recursive=True)`. Three lines, and
+  it stops the daemon observing its own ~1477 MiB BitNet RSS (and, in a
+  non-dry-run future, proposing to kill itself). Claude Code, `pytest`, `node`
+  and the soak harness are **not** excluded in round 1 — the noise is
+  recoverable and proves the census works. The round-2 list is a soak output.
+- **D-19(d) — Idle attaches to the last-active app**, not `YOU`, not a
+  `SESSION` node. `IdlePattern` gains `"activity"` in its `collectors` and emits
+  one `NodeSpec` for the last focused `app:<id>` — "you went idle after working
+  in X", on connected, traversable structure. Headless (no activity collector)
+  → Idle stays nodeless, an acceptable degradation.
+- **D-19(e) — New `SignalType.WORKING_SET_CHANGE`** for
+  `HeavyAppStartedPattern`. Enum change → schema bump → approval.
+- **D-19(f) — 200 MB grouped-total threshold, name-based grouping,
+  empirically tuned.** An app is censused when its **summed RSS across all
+  same-name processes ≥ 200 MB** (`brave` × 15 → one `brave` row). Not the group
+  maximum; not 100 MB (Electron renderers idle at 200–500 MB each).
+
+#### Step 4 · What was built *(orig. §4)*
+
+**B13-A · Non-inert Idle / Distraction** (`diagnosis/patterns.py`, tests,
+`Architecture.md` §5). `DistractionPattern` already computed `distinct` (the
+distinct `app_id`s in the 2-min thrash window) and discarded it. Now:
+
+```python
+node_specs = tuple(
+    NodeSpec(node_id=f"app:{app_id}", node_type=NodeType.APP, label=app_id)
+    for app_id in distinct
+)
+```
+
+No `edges` — the `app --part_of--> domain` edge is owned by the `APP_SWITCH`
+classification path. **Do not re-emit it**: `_add_edge_unsafe` keyed on
+`(source, target, relation)` and a second `add_edge` with the same key
+**overwrote** it, resetting `weight` to 0 and wiping any Hebbian reinforcement
+(the latent bug T7 later made structurally impossible).
+
+`IdlePattern` adds `"activity"` to `collectors`; in `_draft` it reads
+`windows.get("activity", ())` and, if the last snapshot carries an `app_id`,
+emits `NodeSpec(f"app:{app_id}", APP, label=app_id)`. Downstream, unchanged,
+now live:
+
+- L4 can form `distraction: rapid switching implicates app:slack` — dropped at
+  `no_nodes` before.
+- L5 accumulates pressure on the thrash-set apps — exactly the accumulation the
+  gradient is designed for.
+- Hebbian: the thrash-set apps co-occur in the episode.
+
+*Known ceiling, documented:* on a 3-app machine, Distraction always cites the
+same apps, so L4's novelty gate drops every distraction after the first. B13-B
+widens the app vocabulary. A test asserts the ceiling so it is intentional
+(since B18 the gate is the graph-backed repeat gate, §21.7).
+
+**B13-B1 · Aggregate memory-pressure pattern** (`patterns.py`, `config.py`).
+The `system` snapshot already carries `mem_percent` / `mem_available_mb`, and
+`SignalCorrelator` already keeps a `MetricBaseline` for every numeric metric.
+New `MemoryPressurePattern` (`_RunLengthPattern`, `collectors = ("system",)`):
+
+- hit: `mem_percent` z-score `> 2.0` **or** `mem_available_mb < 1024`;
+- sustained 180 s (shorter than HighLoad's 300 s — a memory ceiling is a
+  slower, more meaningful event than a CPU spike);
+- cleared: z-score `< 1.0` and available above the floor;
+- confidence from the z-score margin; node attribution = the memory-heavy
+  `app:` nodes from the concurrent `process` snapshot.
+
+Config: `mem_pressure_z = 2.0`, `mem_pressure_floor_mb = 1024.0`,
+`mem_pressure_sustain_seconds = 180.0`.
+
+**B13-B2 · `ProcessCollector`** (new `sensing/collectors/process.py`, wiring,
+config). A polled `BaseCollector` (`is_blocking = True`; always run via
+`asyncio.to_thread`), default 60 s. `collect()`:
+
+1. `own = {os.getpid()} | {p.pid for p in psutil.Process().children(recursive=True)}`.
+2. Iterate `psutil.process_iter(["name", "memory_info", "cpu_percent",
+   "create_time"])`; skip `own`, `NoSuchProcess`, `AccessDenied`.
+3. Group by `name`: summed `rss`, summed `cpu_percent`, **earliest
+   `create_time`**, process count.
+4. Keep groups with **summed RSS ≥ `process_min_rss_mb`** (200).
+5. Emit `MetricSnapshot(collector_name="process", data={"processes": [{name,
+   rss_mb, cpu_percent, proc_count, running_seconds}, …]})`, sorted by `rss_mb`
+   descending. `running_seconds = now - oldest_start`.
+
+Privacy (`rules.md §6`): **`name` only** — never `cmdline`, `exe`, `environ`,
+`open_files`, `connections`. A test greps the collector source for those
+attributes. Config: `process_collector_enabled`, `process_min_rss_mb`, a
+`"process"` poll interval.
+
+**B13-B3 · Durable resource attributes on `Node`** (`models.py`,
+`graph_memory.py`). `Node` persisted a *fixed* field set — any `ram_mb` hung on
+a node via `upsert_node(attributes=…)` was **silently discarded** at creation
+and again on every `save()` (the ad-hoc-attribute drop that bit B8). Added:
+
+```python
+ram_mb: float = 0.0            # last observed grouped RSS for this app, MB
+cpu_percent: float = 0.0       # last observed grouped CPU
+first_seen_at: datetime | None = None   # first census sighting
+last_seen_at: datetime | None = None    # most recent census sighting
+```
+
+Round-tripped by `_add_node_unsafe` / `_node_to_attrs` / `_node_record` /
+`_deserialise`; `first_seen_at` is write-once (protected like `created_at`);
+the other three refresh on every census. **Schema v3**; a v2 graph still loads.
+`ram_mb` deliberately does **not** feed `relevance_score`. Written by
+`SignalCorrelator` through a new optional `NodeSpec.attributes`.
+
+**B13-B4 · RAM-aware patterns** (`patterns.py`, `enums.py`).
+
+1. Resource pressure: kept as two classes — `HighLoadPattern` (CPU, unchanged)
+   and the standalone `MemoryPressurePattern` — rather than one class doing
+   both.
+2. **`FocusSessionPattern` RAM corroboration:** if the focused `app_id` is the
+   **largest non-browser RSS group**, add `+0.15` confidence (clamped). A 20-min
+   focus session emitted `confidence = 0.6`, **below L4's 0.7 gate** — a named
+   reason for zero insights.
+3. **`HeavyAppStartedPattern`** (`WORKING_SET_CHANGE`, `collectors =
+   ("process",)`): fires once when an app group crosses `process_min_rss_mb`
+   that was absent from the previous snapshot; re-arms when it drops or
+   disappears; `confidence = 0.5`; attaches that `app:<id>` with its resource
+   attributes. In real use it fires on "launched a VM", "opened Blender",
+   "Docker came up".
+
+**B13-C · Soak re-validation.** The B9 7-day harness with `neuropaca.b13.toml`
+(`process_collector_enabled = true`, `process_min_rss_mb = 200`, pattern
+defaults, `action_dry_run = true`). The boot popup gains `Census N app groups
+tracked, top <name>@<rss>` and `Cognition M insights (K from idle/distraction)`.
+
+**How it shipped** *(orig. §8)* — as independently reviewable PRs: B13-A
+(doc sign-off) → B13-B2 (census baking, feeding nothing) → B13-B3 (schema v3,
+D-19) → B13-B1 + B4 (new `SignalType`, D-19) → B13-C (config + soak).
+
+#### Step 5 · How we proved it *(orig. §5, §6)*
+
+`rules.md §8`: tests ship with the code; no test loads a real model, sleeps, or
+touches real `psutil` outside an integration marker.
+
+| Tier | Test | Asserts |
+| --- | --- | --- |
+| patterns | `test_distraction_attaches_the_distinct_apps` | 6 switches across `{brave, slack, term}` → the three `app:` ids, order stable |
+| patterns | `test_distraction_does_not_re_emit_domain_edges` | the existing `app:brave --part_of--> domain:habits` weight survives |
+| patterns | `test_idle_attaches_last_active_app` / `…_with_no_activity_data_stays_nodeless` | last focused app cited; empty window → `()`, no crash |
+| patterns | `test_memory_pressure_fires_on_sustained_z` / `…_rearms` | fires once on a 3σ series, silent on flat; re-arms on a second episode |
+| patterns | `test_focus_session_ram_corroboration_crosses_l4_gate` | 20-min focus + top RSS editor → confidence ≥ 0.7 (was 0.6) |
+| patterns | `test_heavy_app_started_edge_triggers_on_appearance` / `…_ignores_sub_threshold` | fires once on appearance, re-arms; 150 MB → nothing |
+| patterns | `test_a_synthetic_6th_pattern_registers_with_no_correlator_change` | B3 invariant preserved |
+| collector | `test_groups_same_name_processes_and_sums_rss` | 15 `brave` @ ~120 MB → one row ≈ 1800 MB, `proc_count == 15` |
+| collector | `test_threshold_is_on_the_group_total` | 250 MB kept; 5×40 MB kept; 5×30 MB dropped |
+| collector | `test_self_and_children_are_never_censused`, `test_running_seconds_uses_earliest_create_time`, `test_sorted_by_rss_descending` | the D-19 contract |
+| collector | `test_never_reads_cmdline_or_environ`, `test_access_denied_on_one_process_does_not_abort_the_census` | privacy + best-effort census |
+| schema | `test_resource_attributes_survive_a_save_and_reload`, `test_first_seen_at_is_write_once`, `test_ram_mb_updates_on_reobservation`, `test_a_v2_graph_loads_under_v3`, `test_schema_version_is_written_as_v3` | the B8 precedent, applied |
+| integration | `test_a_distraction_signal_now_produces_an_insight` | L3 → L4 → `INSIGHT_GENERATED`, `traces_to_evidence()` |
+| integration | `test_distraction_pressure_accumulates_and_crosses_low_threshold`, `test_idle_pressure_lands_on_the_last_active_app` | L3 → L5 |
+| integration | the novelty/repeat-ceiling test | 3-app graph, 5 identical distractions → exactly 1 insight |
+| integration | `test_memory_pressure_signal_attaches_the_heavy_apps`, `test_heavy_app_started_to_insight` | the new patterns end to end |
+| isolation | `test_process_census_never_stalls_the_loop` | a 500 ms blocking `collect()` → loop lag < 10 ms |
+| perf | `test_census_cost_bound` (integration) | p95 `collect()` < 1000 ms on the dev box |
+| stress | `test_snapshot_stays_bounded_under_process_churn` | 2000 short-lived names → bounded snapshot + deque, flat RSS |
+| privacy | `test_process_snapshot_carries_no_identifying_strings`, `test_graph_json_after_a_census_soak_has_no_cmdline` | exact field set; no `/home/`, `--`, `.py ` in the graph |
+
+**Exit criteria.** Idle/Distraction each attach ≥ 1 real node and stay
+nodeless-safe; an idle/distraction signal round-trips to a stored insight
+(L4) and to a pressure crossing (L5); no pattern re-emits a structural edge;
+the census groups, thresholds, sorts and self-excludes; names only (source scan
++ real-psutil graph grep); resource attributes survive save/reload
+(`first_seen_at` write-once, v2 loads under v3); memory pressure fires, stays
+silent on the negative, re-arms; RAM corroboration lifts a real session past
+0.7; HeavyAppStarted edge-triggers and re-arms; the census never stalls the
+loop > 10 ms (p95 < 1 s); bounded under a 2000-process storm; the small-graph
+ceiling asserted as intentional; a synthetic pattern still registers with no
+correlator change; `Architecture.md` §3/§4/§5 updated. The 48 h+ soak criterion
+(census self-disable count 0, ≥ 1 populated `app:` node, RSS slope within the
+B9 envelope) was carried into the B9 soak — which B15 and B16 then voided for
+focus data.
+
+#### Step 6 · What we rejected *(orig. §7)*
+
+The full table is in §15.9. In short: `NodeType.PROCESS`; PSS/USS from day
+one; special-casing L4/L5 for nodeless signals (a global `__system__` bucket);
+Idle → `YOU`; Idle → a `SESSION` node now; `ram_mb` feeding `relevance_score`;
+one class doing CPU-or-memory; a 100 MB threshold; full self + tooling
+exclusion in round 1.
+
+| If… | Then… |
+| --- | --- |
+| RSS-summed totals wildly overstate memory (browser at "8 GB") | switch to PSS via `smaps_rollup`, accept the ~5–15× slower census, poll at 120 s |
+| `app:python` / `app:node` / `app:claude` pollute the graph | the round-2 exclusion list (from the soak, not guessed); consider cgroup-scope grouping (`app-<app_id>.scope`) — *done in part by B17's `process_exclude_names` default* |
+| the novelty gate still collapses insight flow | scale the threshold with node count — *superseded by B18's repeat gate* |
+| memory pressure flaps on a near-full 16 GB dev box | it is z-score-relative to the box; if it still flaps, `mem_pressure_z = 2.5` and a longer sustain |
+| `AccessDenied` on some processes | handled per process; a whole-collector failure self-disables like any other |
+
+#### Step 7 · What is left *(orig. §9)*
+
+Non-goals, recorded so they are not silent omissions: no change to
+`relevance_score`; no `SESSION` node / session accumulator; no `USER_RETURN`
+pattern; no cgroup grouping in round 1; no "app causing distraction" action
+class; the unattended soak is **not** expected to produce insights.
+
+---
+
+### 21.2 B14 · Web-app attribution — the browser stops being one opaque blob
+
+| | |
+| --- | --- |
+| **Branch** | `feat/brave-webapp-attribution` |
+| **Written / built** | 2026-09-08 |
+| **Ruling** | B14 D1–D7, all taken as recommended (D2/D3 operator-ratified) |
+| **Outcome** | Implemented; 524 tests green, ruff + mypy clean |
+
+**In plain words.** The graph showed Brave as one node, but Gmail, Gemini,
+GitHub and YouTube are very different activities. B14 gives the browser
+sub-identities (`webapp:gmail`, `webapp:github`, …), but only for sites on an
+allowlist, and the raw window title — which contains your email address and
+unread count — never leaves the sensing layer.
+
+This superseded the "per-tab tracking breaks the B13 names-only contract"
+objection: the operator owns the contract and changed it. The privacy
+protection moved from "don't look" to "look, match against an allowlist, keep
+only the label."
+
+#### Step 1 · What we saw *(orig. §1–§2)*
+
+`app:brave-browser` was a single node wired to `domain:habits` — a lie of
+resolution. Goals:
+
+- the graph gains `webapp:<label>` nodes for an allowlisted set of sites;
+- `webapp:gmail.access_count` == times Gmail was focused;
+- each `webapp:` node is wired to its browser **and** its own routing domain
+  (`webapp:github → domain:engineering`, not `habits`);
+- unrecognised sites collapse to the browser node, exactly as before;
+- the raw title stays in the sensing layer — only the matched label reaches the
+  bus, the correlator, the graph, or any log.
+
+Non-goals: background tabs; full URLs / history (no extension, title text
+only); per-document resolution (`google-docs`, full stop); Firefox/Chrome in
+round 1 (the matcher is browser-agnostic, but only `brave-browser` was
+validated).
+
+The pipeline as it stood:
+
+```
+compositor
+  │  ext_foreign_toplevel_list_v1  (app_id, title per toplevel)
+  │  zcosmic_toplevel_info_v1      (which toplevel is `activated`)
+  ▼
+WaylandWindowSource._recompute_focus()          sensing/activity/window.py
+  │  fires on_switch(WindowInfo(app_id, title))
+  │  ── ONLY when app_id != self._focused_app_id  ← gap #1
+  ▼
+ActivityCollector._on_window_switch(window)      sensing/activity/collector.py
+  │  dedup: `if window.app_id == self._focused_app_id: return`  ← gap #2
+  │  publishes APP_SWITCH  {app_id, title, previous_app_id}
+  ▼
+SignalCorrelator.on_app_switch(event)            diagnosis/correlator.py
+  │  domain = AppMap.classify(app_id)
+  │  _classify_into_graph(app_id, domain): upsert app node + PART_OF domain (once)
+  │  synthetic MetricSnapshot(collector="activity", data={app_id, previous_app_id, title, domain})
+  ▼
+graph.json
+```
+
+| Fact | Consequence for B14 |
+| --- | --- |
+| `_recompute_focus` fires only on `app_id` change | Gmail → Gemini (both `brave-browser`) produces **zero events** |
+| `_on_window_switch` re-dedups on `app_id` | a second guard, same effect |
+| `title` is in the payload but **no pattern reads it** | the raw title can be dropped with no loss |
+| `upsert_node` bumps `access_count` every call | the focus counter already exists — point it at `webapp:` ids |
+| `_known_apps` guards the one-time domain edge | a parallel `_known_webapps` is needed |
+| Brave's Wayland `app_id` is `brave-browser` | the matcher keys off this |
+| Brave title: `Inbox (351) - bhanot1054@gmail.com - Gmail - Brave` | the title **leaks the email address and unread count** — must never persist raw |
+| `AppMap` values are validated `domain:<slug>` ids | the webapp map reuses the exact validation |
+| Node schema v3; a new node type bumps it | `NodeType.WEBAPP` ⇒ v4, forward-incompatible |
+
+#### Step 2 · Why it happened *(orig. §3)*
+
+1. **No event fires on a tab switch** — both the Wayland source and the
+   collector dedup on `app_id`, and a tab switch keeps `app_id ==
+   "brave-browser"`.
+2. **Even if it fired, the identity has nowhere to land** — `AppMap` maps
+   `app_id → domain` with no notion of "same app_id, different meaning by
+   title".
+
+#### Step 3 · How we fixed it — the approach *(orig. §4, §9)*
+
+**The privacy boundary is the collector.**
+
+```
+ ┌─────────────── sensing/activity ───────────────┐
+ │  raw title lives here and ONLY here            │
+ │  window.py   →  collector.py                   │
+ │                   │  derive_webapp(app_id, title) → "gmail" | None
+ │                   │  raw title dropped from the payload
+ └──────────  APP_SWITCH {app_id, webapp, webapp_domain, previous_app_id, previous_webapp}
+                                  ▼
+                 correlator, graph, logs, CSV — see only the allowlisted label
+```
+
+`derive_webapp()` is a **pure function** in `sensing/activity/webapp.py`:
+
+1. `None` immediately if `app_id` is not a configured browser.
+2. Strip a known browser suffix (` - Brave`, ` — Mozilla Firefox`,
+   ` - Chromium`, ` - Google Chrome`).
+3. Split on ` - `, ` — `, ` · `, ` | ` and lowercase each segment.
+4. Return the first segment that is a key in the **WebAppMap**, else `None`.
+5. Never return, log or retain any other substring.
+
+Deliberately not a regex engine — exact set membership against
+delimiter-split segments.
+
+*Why the collector, not the correlator:* in the correlator the raw title would
+be on the bus, in every `Event`, and one careless `_log.debug("%r", event)`
+leaks it. In the collector the leak is **structurally impossible**, as B13 made
+"the census reads a cmdline" structurally impossible. The dedup logic needs
+`derive_webapp` anyway.
+
+**Dedup on a "focus key"** = `(app_id, derive_webapp(app_id, title))`, replacing
+the `app_id` guard. Gmail "Inbox (351)" → "Inbox (352)": same key, no event.
+Gmail → Gemini: one event. A YouTube timestamp ticking: stable key. Any
+non-browser: `(app_id, None)`, exactly as before. Option **(b)** was chosen:
+`window.py` fires on every `(app_id, title)` change and the collector owns the
+policy — the thin transport stays dumb, and the extra callbacks are a dict
+comparison plus an early return, at human pace.
+
+**Graph shape.**
+
+```
+      domain:engineering        domain:comms          domain:habits
+             ▲                       ▲                     ▲
+             │ PART_OF               │ PART_OF             │ PART_OF
+        webapp:github           webapp:gmail         app:brave-browser
+             │                       │                     ▲
+             └──────── PART_OF ──────┴──── PART_OF ────────┘
+```
+
+`webapp:<label>` (`NodeType.WEBAPP`) has two `PART_OF` edges — to its browser
+(structural) and to its own domain (semantic), written once via
+`_known_webapps`. It touches exactly one `domain:*`, so it never trips the
+bridge score. **Schema v4**; `_MIN_READABLE_SCHEMA_VERSION` stays 1; a v4 file
+is refused by v3 code (single-user, documented).
+
+**Decisions (all taken as recommended)** *(orig. §9)*
+
+| # | Decision | Taken |
+| --- | --- | --- |
+| D1 | New `NodeType.WEBAPP` + v4, or reuse `APP` with a prefix? | **New type + v4** |
+| D2 | Does a focused webapp's domain override `brave = habits` for `FocusSessionPattern`? | **Yes** — 20 min in GitHub is a focus session |
+| D3 | Do tab switches feed `DistractionPattern`? | **Yes**, `distinct` keyed on `webapp or app_id` |
+| D4 | Domain for Gemini / ChatGPT / Claude | `tools`; the operator retunes |
+| D5 | Enable in the pure-soak config too? | **All three configs** — the soak must exercise it |
+| D6 | Round-1 allowlist | operator-edited |
+| D7 | Multi-word ids | **slugify** → `webapp:google-docs`, label "Google Docs" |
+
+#### Step 4 · What was built *(orig. §5–§7, §12, §14)*
+
+Config (`core/config.py`):
+
+```python
+webapp_tracking_enabled: bool = True
+webapp_map_path: str = "data/webapp_map.default.toml"
+webapp_browser_app_ids: tuple[str, ...] = ("brave-browser",)
+```
+
+`webapp_tracking_enabled = False` is a one-line kill switch. The map path gets
+"warn, don't raise" like `app_map_path`.
+
+`data/webapp_map.default.toml` — same contract as `app_map`, loaded at
+`ActivityCollector.start()`, domains validated against `DOMAIN_SLUGS`, bad rows
+warned and skipped:
+
+```toml
+[webapp]
+"gmail"          = "comms"
+"google gemini"  = "tools"
+"gemini"         = "tools"
+"youtube"        = "habits"
+"github"         = "engineering"
+"stack overflow" = "engineering"
+"google docs"    = "projects"
+"google sheets"  = "projects"
+"notion"         = "projects"
+"reddit"         = "habits"
+"chatgpt"        = "tools"
+"claude"         = "tools"
+"linear"         = "projects"
+"figma"          = "projects"
+```
+
+| Site | Title (approx) | Matches? |
+| --- | --- | --- |
+| Gmail | `Inbox (351) - x@gmail.com - Gmail` | ✅ `gmail` |
+| YouTube | `<video> - YouTube` | ✅ |
+| Google Gemini | `Gemini` or `<chat> - Google Gemini` | ✅ (both keys) |
+| GitHub | `owner/repo: description · GitHub` or `Issue title · owner/repo` | ⚠️ partial — needs a regex fallback (round 2: per-key `pattern = "…"`) |
+| Google Docs | `<doc name> - Google Docs` | ✅ — the doc name is in a discarded segment |
+
+Component changes:
+
+- **`webapp.py` (new)** — `WebAppMap` (mirror of `AppMap`), `_BROWSER_SUFFIXES`,
+  `_DELIMITERS`, `derive_webapp(...)` (~15 lines, unit-testable with literal
+  titles).
+- **`window.py`** — tracks `_focused_title`; fires on `(app_id, title)` change
+  (~6 lines).
+- **`collector.py`** — builds the matcher from config; tracks `_focus_key`;
+  publishes `{app_id, webapp, webapp_domain, previous_app_id,
+  previous_webapp}`; **`title` removed from the payload** — the privacy
+  boundary.
+- **`enums.py`** — `NodeType.WEBAPP`; the `APP_SWITCH` payload comment.
+- **`graph_memory.py`** — `_SCHEMA_VERSION = 4`.
+- **`correlator.py`** — `_known_webapps`; `_classify_webapp_into_graph`
+  (`webapp:` node + both `PART_OF` edges once); the synthetic snapshot's
+  `domain` is the webapp's domain when known; the domain comes from the
+  collector's `webapp_domain` field, so only the collector loads the map.
+- **`patterns.py`** — `FocusSessionPattern` attributes `webapp:{webapp}` when
+  present (D2); `DistractionPattern` keys `distinct` on `webapp or app_id`
+  (D3); `IdlePattern` attributes the pre-idle focus to the webapp.
+- Soak / dashboard — an optional "top web-apps by focus count" surface.
+
+Delivered in four steps: **B14-A** (`webapp.py`, map, config, unit tests) →
+**B14-B** (window + collector wiring, payload change, privacy tests) →
+**B14-C** (correlator nodes/edges, schema v4, D2/D3) → **B14-D** (soak surface,
+map retune, docs).
+
+#### Step 5 · How we proved it *(orig. §8, §10, §13)*
+
+The phase is only acceptable if the raw title is provably contained:
+
+1. **Payload test** — `test_app_switch_payload_has_no_raw_title`: emitting
+   `("brave-browser", "Inbox (351) - x@gmail.com - Gmail - Brave")` publishes
+   `webapp == "gmail"` and **no payload value contains** `Inbox`,
+   `@gmail.com` or `351`.
+2. **Graph grep** — `test_graph_json_after_webapp_soak_has_no_title_text`:
+   a scripted title sequence, `save()`, `graph.json` read as text → none of
+   `@`, `Inbox`, `(351)`, the doc names.
+3. **No-log test** — no log record carries the raw title (caplog).
+4. **Unmatched site** — `"Some Bank - Account Summary - Brave"` → `None`,
+   non-browser-shaped payload, nothing `webapp:` written.
+5. **Kill switch** — `webapp_tracking_enabled = False` → B13 behaviour exactly.
+6. `raw_metrics.csv` unaffected (the recorder subscribes `METRIC_COLLECTED`
+   only) — regression assert.
+
+| Layer | File | Cases |
+| --- | --- | --- |
+| `derive_webapp` | `test_webapp_derive.py` (new) | each allowlisted title; suffix variants; non-browser; disabled; unmatched; delimiters; no delimiter |
+| `WebAppMap` | `test_webapp_map.py` (new) | default file; unknown domain skipped + warned; missing file |
+| window / collector | `test_activity.py` | title-only change fires; focus-key dedup; payload shape; no raw title |
+| correlator | `test_diagnosis.py` | node + both edges once; `webapp=None` path == B13; snapshot domain |
+| patterns | activity-pattern tests | FocusSession for `webapp:github`; Distraction counts tab switches |
+| privacy | `test_webapp_privacy.py` (new) | items 1–5 above |
+| schema | `test_core_foundation.py` | v4 round-trips; v3 loads; v4 refused on a v3 reader |
+
+**Exit criteria:** Gmail → Gemini → Gmail leaves `webapp:gmail.access_count ==
+2`, `webapp:gemini == 1`; `webapp:github` is `PART_OF` both engineering and the
+browser; 20 min in GitHub produces one `FOCUS_SESSION` attributed to
+`webapp:github`; after a 1-hour real-use window `graph.json` holds **no** email
+address, unread count or document name; the kill switch reproduces B13 exactly;
+full suite + bare `ruff check .` + `mypy` green.
+
+#### Step 6 · What we rejected *(orig. §11)*
+
+| Alternative | Why rejected |
+| --- | --- |
+| Read Brave's `History` SQLite / session store | deep inspection of browser internals — a new trust surface — when the title gives focused-tab identity at near-zero cost |
+| A browser extension with `tabs` permission | new component, packaging and permission prompt, and it sees background tabs |
+| Regex-parse the full title into fields | titles are localised, unstable and PII-bearing; an allowlist keeps the blast radius to a fixed vocabulary |
+| Store the raw title, filter at query time | the raw title would sit in `graph.json`; filtering at read can be forgotten, containment at write cannot |
+| Match in the correlator | puts the raw title on the bus |
+| Reuse `NodeType.APP`, no schema bump | a webapp is a genuinely distinct kind of node |
+| Fire `APP_SWITCH` on every `(app_id, title)` change, dedup downstream | a firehose of unread-count ticks on the bus |
+
+#### Step 7 · What is left
+
+The GitHub issue/PR title gap (regex fallback); Firefox/Chrome validation; a
+dogfood-tuned allowlist. And the discovery that opened B15: the live smoke test
+produced **0** `webapp:` nodes from the daemon, while the same code in a shell
+caught 7 switches in 50 s.
+
+---
+
+### 21.3 B15 · The Wayland activity sensor goes deaf — one shared connection
+
+| | |
+| --- | --- |
+| **Branch** | `fix/wayland-poll-pump` (off `feat/brave-webapp-attribution`, landed after B14) |
+| **Found** | 2026-09-08, during the B14 live smoke test |
+| **Outcome** | Fixed + verified (unit + autonomous live) — the full test run is Step 5 below. Later shown to be half of the fix (§21.4). |
+
+**In plain words.** The part of the daemon that notices which window you are
+using was usually "on" but hearing nothing. About one daemon start in three it
+went permanently deaf, because a Python object that carried "this window is
+focused" was thrown away by the garbage collector. Two parallel connections to
+the display server also crashed on shutdown.
+
+#### Step 1 · What we saw *(orig. §1)*
+
+- B7 burned three soaks with L5 firing **zero** times.
+- The B9 soak gate saw **4 app switches in a full hour** of real use.
+- B14 live test: the daemon produced **0** `webapp:` nodes and **1 switch**,
+  while a freshly-built `ActivityCollector` on the *identical code*, run from a
+  shell, caught **7** switches with correct labels in 50 s. The collector
+  reported `window✓` throughout — **deaf, not dead**.
+
+#### Step 2 · Why it happened *(orig. §2)*
+
+Three bugs, found in this order (the first was the hardest to see):
+
+- **2a · GC'd `zcosmic_toplevel_handle_v1` proxies — the flaky deafness.**
+  `_on_toplevel` did `cosmic_handle =
+  self._info_manager.get_cosmic_toplevel(handle)` and set
+  `cosmic_handle.dispatcher["state"]` — but `cosmic_handle` was a **local
+  variable**. Python's GC collected it non-deterministically, and a collected
+  pywayland proxy silently stops delivering events, so that window's focus
+  changes became **permanently invisible**. Measured: **~1 in 3 starts deaf**,
+  binary per start. This is the mechanism behind B7's zero-L5 soaks and the
+  4-switch hour; it had been in `window.py` since B2.5b.
+- **2b · Two `pywayland.Display` connections in one process — the segfault.**
+  `WaylandIdleSource` and `WaylandWindowSource` each opened a `Display`:
+
+  | Collector shape | 25 forced changes | Teardown |
+  | --- | --- | --- |
+  | real window + `FakeIdleSource` (**one** connection) | ~7 events | clean |
+  | both real (**two** connections) | 1 event | **SIGSEGV (exit 139)** |
+
+  libwayland is one connection per client; the second connection's delivery was
+  unreliable and both crashed on finalise.
+- **2c · Silent, permanent, invisible death.** `_on_readable` caught **every**
+  exception and permanently `stop()`ped — no log — and `_window_ok` was never
+  updated, so `health()` kept printing `window✓`. pywayland's `loop.add_reader`
+  integration is known-fragile (flacjacket/pywayland#16), and it dispatched
+  only when the fd was readable, whereas the working B2.5 spike dispatched
+  **every tick**.
+- **2d · A phantom worth recording.** ~2 h went to a false lead,
+  `XDG_SESSION_ID` (absent under `systemd --user`). **`systemctl --user
+  restart` was silently not taking effect** for a stretch — the old code kept
+  running and `ExecMainStartTimestamp` never advanced. A clean A/B (`stop` →
+  confirm the PID is gone → `start` → new PID) showed the fix works with or
+  without the variable. **No unit change.** Lesson: when a restart "does
+  nothing", check `MainPID` / `ExecMainStartTimestamp` first.
+
+#### Step 3 · How we fixed it — the approach *(orig. §3)*
+
+- **3a · Strong-ref the cosmic handles.** `_cosmic_handles: dict[int, Any]`
+  holds every proxy for its toplevel's life; cleared in `bound()` / `lost()`,
+  dropped in `_drop()`. 10/10 clean restarts (was ~1/3 deaf).
+- **3b · One shared `WaylandConnection`** (new `wayland_conn.py`). Idle-notify
+  and toplevel-info bind on **one** `Display` and one poll-pump. The two
+  sources became `WaylandProtocolHandler`s (`wants()` / `bound()` / `primed()`
+  / `lost()`) that attach to a connection. This also erased the segfault.
+- **3c · The poll-pump**, mirroring the working spike: `_PRIME_ROUNDTRIPS` (2)
+  roundtrips then `primed()`; every 0.2 s, a non-blocking `select`, `read()`
+  only when readable, then **always** `dispatch(block=False)` + `flush()`. Cost
+  ~5 Hz of a non-blocking syscall. (A per-tick `roundtrip()` warm-up was tried
+  and *increased* deafness — the cause was 2a — so it was dropped.)
+- **3d · Resilience, honest health, a liveness watchdog.** A failing pump tick
+  → `_log.exception`, `handler.lost()`, teardown, bounded reconnect (2, 4, 8,
+  16, 32 s), then `is_alive = False`. A **watchdog** for the residual ~1/20
+  startup race: zero events for 180 s **while an `activity_probe` says the user
+  is active** → one forced reconnect. `health()` reads `is_alive` **live**, so
+  `window✓` means "the pump is running and connected". **No systemd unit
+  change.**
+
+#### Step 4 · What was built *(orig. §4)*
+
+```
+NEW   src/neuropaca/sensing/activity/wayland_conn.py     WaylandConnection + WaylandProtocolHandler
+EDIT  src/neuropaca/sensing/activity/window.py           WaylandWindowSource -> protocol handler
+EDIT  src/neuropaca/sensing/activity/wayland_idle.py     WaylandIdleSource  -> protocol handler
+EDIT  src/neuropaca/sensing/activity/idle.py             IdleSource.is_alive + Fake
+EDIT  src/neuropaca/sensing/activity/collector.py        one shared connection; live is_alive in health()
+NEW   tests/test_wayland_conn.py                         pump cadence, reconnect, connect flow (fake pywayland)
+NEW   tests/test_wayland_handlers.py                     window/idle handler hooks + callbacks
+EDIT  tests/test_activity.py                             shared-connection wiring, health died/live
+NEW   scripts/b15_live_check.py                          autonomous live check (zenity-forced focus)
+```
+
+#### Step 5 · How we proved it *(orig. §5, §6 + the B15 test report)*
+
+**Run:** 2026-09-08 on the target box (Pop!_OS / COSMIC `cosmic-comp`,
+Wayland). **Result:** all green — 565 pytest pass, ruff + mypy clean, the
+autonomous live check passes, and forced-focus daemon restarts show no deafness
+and no segfault.
+
+**What was on the branch** — `fix/wayland-poll-pump` was cut from
+`feat/brave-webapp-attribution` (B14, commit `cbc2493`); B15 was built as
+subparts:
+
+| # | Subpart | Files |
+| --- | --- | --- |
+| **S0** | Strong-ref every `zcosmic_toplevel_handle_v1` proxy (`_cosmic_handles`) — the deafness fix | `sensing/activity/window.py` |
+| **S1** | `WaylandConnection` — one shared `Display`, one poll-pump, bounded reconnect, `is_alive` | `sensing/activity/wayland_conn.py` (new) |
+| **S2** | `WaylandWindowSource` → a `WaylandProtocolHandler` on the shared connection (toplevel-info) | `sensing/activity/window.py` |
+| **S3** | `WaylandIdleSource` → a `WaylandProtocolHandler` on the shared connection (idle-notify) | `sensing/activity/wayland_idle.py` |
+| **S4** | `ActivityCollector` builds the one connection, wires both handlers + the watchdog's `activity_probe`; `health()` reads `is_alive` live | `sensing/activity/collector.py` |
+| **S5** | `IdleSource` / `WindowSource` protocols + fakes gain `is_alive` | `sensing/activity/idle.py`, `window.py` |
+| **S6** | Docs | this chapter, `phases.md` |
+
+**Test programs, per subpart.**
+
+*`tests/test_wayland_conn.py` — S1, the shared connection (15 tests, no
+compositor).* Two layers, neither needs Wayland:
+
+- poll-pump / resilience, with a fake `display` and a real `os.pipe()` fd:
+  `test_dispatch_runs_every_tick_even_when_fd_not_readable` (`dispatch` fires
+  every tick, `read()` zero times — the unconditional drain is the fix);
+  `test_read_runs_only_when_fd_is_readable`;
+  `test_transient_error_reconnects_recovers_and_re_primes` (one `RuntimeError` →
+  old display disconnected, `handler.lost()`, a new display, `bound()` +
+  `primed()` re-run, pump resumes); `test_permanent_failure_gives_up_and_reports_dead`;
+  `test_cancellation_propagates`; `test_is_alive_state_machine`;
+- connect flow, with a fake `pywayland.client` in `sys.modules`:
+  `bound` strictly before `primed`; `CollectorError` without `WAYLAND_DISPLAY`;
+  a handler's `CollectorError` in `bound()` disconnects and propagates; a
+  `primed()` failure is wrapped and torn down; every handler bound and primed;
+  teardown calls `lost()` on every handler, is idempotent, and survives a
+  handler that raises; `test_liveness_watchdog_reconnects_when_active_but_silent`
+  (180 s of zero events while the probe is True → one reconnect) and
+  `test_liveness_watchdog_stays_quiet_when_user_is_idle`.
+
+*`tests/test_wayland_handlers.py` — S0 + S2 + S3, the two handlers (19 tests, no
+compositor).* Fake proxies drive the hooks directly; `wants()` (the one method
+importing pywayland) is `importorskip`-guarded.
+
+- window: `wants` returns the 2 toplevel interfaces; `bound` stores the info
+  manager and wires the dispatcher, and **raises** on a missing global; the
+  callback fires on an `app_id` change and not when nothing changed; a title
+  tick fires only for a configured browser, never a terminal; `closed` drops
+  and recomputes; `lost()` clears every field; `is_alive` delegates;
+  shared-mode `start()` does not call `conn.start()`;
+- **S0, the deafness fix:** `test_window_keeps_a_strong_ref_to_every_cosmic_handle`
+  (the proxy is stored in `_cosmic_handles[key]`, and `closed` drops it);
+  `test_window_lost_and_bound_clear_the_cosmic_handles`;
+- idle: `wants` returns notifier + seat; `bound` raises on a missing global;
+  `primed` calls `get_idle_notification(threshold_ms, seat)` and wires
+  `idled` / `resumed`; transitions fire the callback; `lost()` **fails safe to
+  ACTIVE**; `is_alive` delegates;
+- wiring: two handlers register on one connection.
+
+*`tests/test_activity.py` — S4, the collector (13 tests; 4 for B15).*
+`test_health_turns_unhealthy_when_a_started_source_goes_deaf` (`window✗ idle✓`);
+`test_real_path_builds_one_shared_connection_with_both_handlers` (exactly one
+connection, 2 handlers, `start()` once, `stop()` once);
+`test_real_path_wayland_unavailable_disables_both_halves` (both `✗`, **one**
+`SYSTEM_ERROR` labelled `sensing.activity.wayland`, module tolerated);
+`test_real_path_connection_dies_later_drags_health_unhealthy`. All pre-existing
+degraded-path / APP_SWITCH / B14 webapp tests unchanged and green.
+
+*`scripts/b15_live_check.py` — S1–S4 end to end on the real compositor
+(autonomous).* The bug was live-only, so this is the load-bearing check: a
+**real** `ActivityCollector` (real `ext-foreign-toplevel` + `ext-idle-notify`
+on `cosmic-comp`), with throwaway `zenity` dialogs forcing real focus changes —
+no human. Six assertions: both halves alive and `health().ok`; exactly one
+shared connection with 2 handlers; 5 forced changes → ≥ 5 `APP_SWITCH`; the
+payload carries the B14 fields and **no** `title`; still healthy after the
+storm; `stop()` disconnects with **no segfault**.
+
+**Unit results.**
+
+```
+$ .venv/bin/python -m pytest -q
+565 passed, 3 skipped, 23 deselected
+  tests/test_wayland_conn.py          15 pass
+  tests/test_wayland_handlers.py      19 pass   (incl. 2 for the _cosmic_handles ref)
+  tests/test_activity.py              13 pass   (4 new for B15)
+$ .venv/bin/ruff check .          All checks passed!
+$ .venv/bin/mypy src/neuropaca    Success: no issues found in 72 source files
+```
+
+The 3 skips are pre-existing and environmental. CI does not install
+`pywayland`; the new tests are import-safe without it.
+
+**Live results.**
+
+| Live check run | Result | Forced focus changes | `APP_SWITCH` gained |
+| --- | --- | --- | --- |
+| 1 | **ALL PASSED** (6/6) | 5 | 10 |
+| 2 | **ALL PASSED** (6/6) | 5 | 10 |
+
+Sample payload: `{'app_id': 'zenity', 'webapp': None, 'webapp_domain': None,
+'previous_app_id': 'com.system76.CosmicTerm', 'previous_webapp': None}` — B14
+shape, no raw title, clean teardown.
+
+Root-cause confirmation, two connections vs one (run directly, in-session): one
+`Display` → ~7 events from 25 forced changes, clean teardown; two `Display`s →
+1 event, **SIGSEGV (exit 139)**.
+
+**Daemon flakiness A/B** — the load-bearing check for the deafness fix. Each
+iteration: `systemctl --user stop` → confirm `MainPID` gone → `start` → 3
+`zenity` focus steals (delta 6 expected: focus-in + focus-out per dialog).
+
+| Daemon code | Restarts | Deaf / partial |
+| --- | --- | --- |
+| B15 minus the `_cosmic_handles` ref | 10 | **3** fully deaf (delta 0–1) |
+| **+ `_cosmic_handles` ref** | 10 | **0** |
+| + `_cosmic_handles` ref (confidence run) | 20 | **1 partial** (delta 2 — caught one of three) |
+| **+ liveness watchdog** | 8 | **0** |
+
+**33 % → ~5 %.** Every good run: base 1, after 7, no SIGSEGV, no pump errors.
+The residual ~1/20 was a rarer startup race (a new window's `state`
+subscription racing the connect) — the one the watchdog heals.
+
+**`XDG_SESSION_ID` A/B** (the false lead, 2d): plain unit vs a drop-in forcing
+`XDG_SESSION_ID=4` → **identical**, 1 → 11 either way.
+
+**Files changed:**
+
+```
+ src/neuropaca/sensing/activity/wayland_conn.py  | 191 ++++++++++++  (new)
+ src/neuropaca/sensing/activity/window.py        | 155 +++++--------
+ src/neuropaca/sensing/activity/wayland_idle.py  | 132 +++++-------
+ src/neuropaca/sensing/activity/collector.py     |  58 +++++--
+ src/neuropaca/sensing/activity/idle.py          |   7 +
+ tests/test_wayland_conn.py                      | 320 ++++++++  (new)
+ tests/test_wayland_handlers.py                  | 250 ++++++++  (new)
+ tests/test_activity.py                          | 132 ++++++
+ scripts/b15_live_check.py                       | 210 ++++++++  (new)
+ phases.md                                       |  33 ++
+```
+
+The daemon was left running on the final clean unit (`neuropacad.service`, no
+wrapper), config `neuropaca.b13.toml`, `window✓` and the switch count climbing.
+
+**Exit criteria:** dozens of switches per hour consistently across restarts ✅;
+`health().ok` false within one poll of a dropped connection and recovering ✅
+(unit); a one-off `read()` failure does not disable the source ✅ (unit); suite +
+ruff + mypy ✅; no segfault on `stop()` ✅.
+
+#### Step 6 · What we rejected
+
+- A per-tick `roundtrip()` warm-up (made deafness worse).
+- A dedicated Wayland thread now — the canonical libwayland pattern, but bigger
+  load-bearing change against `rules.md §3` ("no thread"); held in reserve.
+- The `XDG_SESSION_ID` unit change (the phantom, 2d).
+
+#### Step 7 · What is left *(orig. §7)*
+
+- **The ~1/20 startup race.** The strong ref took it from ~1/3 to ~1/20; the
+  watchdog self-heals the rest. A guaranteed fix would be a dedicated Wayland
+  thread doing `wl_display_dispatch(block=True)` and marshalling via
+  `loop.call_soon_threadsafe` — only if the watchdog proves insufficient in the
+  soak. **It did (§21.4)**, but for a different reason.
+- The soak gate's liveness check still keyed on the old counters (rebuilt, see
+  §11.10).
+- A browser-driven autonomous `webapp:` check was not included — closing a
+  specific Brave window from the CLI on Wayland is not clean — but
+  `webapp:gmail` / `crunchyroll` / `claude` / `jiohotstar` were verified live
+  from a standalone collector.
+- At the time of the report, B15 was committed on `fix/wayland-poll-pump` with
+  its PR not yet opened, and its parent B14 also unmerged (both later merged).
+
+---
+
+### 21.4 B16 · The focus sensor deafens itself — proxy lifetime, round two
+
+| | |
+| --- | --- |
+| **Branch** | `b16-wayland-subscription-stability` (off `main`, after #25) |
+| **Found** | 2026-09-09, ~21 h into the B15-rebuilt 7-day soak |
+| **Outcome** | Merged (`ff278fd` + watchdog fix `f29e004`, `40bb362`); 584 → 587 tests green; probe + daemon A/B confirmed |
+
+**In plain words.** B15's safety net — reconnect if nothing arrives for 3
+minutes — turned out to be doing all the work. The sensor connected, read one
+snapshot, then went silent within 3 minutes, every time. B15 had kept the
+*child* object alive but not its *parent*, and it kept track of them with a
+number that Python reuses, so opening a new window could kill an old window's
+subscription.
+
+#### Step 1 · What we saw *(orig. §1)*
+
+From `data/soak/` and `data/neuropaca.log`, soak session 2 (active daytime use,
+2026-09-09 21:47 IST onward):
+
+| Signal | Value |
+| --- | --- |
+| `assess` verdict | `FAIL 72 Wayland reconnects over 0.9d (watchdog)` |
+| inter-reconnect gap, active hours | **54 of ~65 gaps exactly 180–181 s** — back-to-back watchdog fires |
+| events dispatched between reconnects | **zero** (why each 180 s watchdog fires) |
+| longer gaps (4790 s, 5696 s, 16450 s) | user idle — watchdog gated off |
+| session 1 (overnight, idle) | 44 reconnects / 19 h ≈ 2.3/h — looked tolerable, equally deaf |
+| session 2 (active) | ~14/h and climbing |
+| `health()` | `window✓` throughout |
+| focus data that did land | batch-stamped at reconnect priming (5 nodes all at `18:22:12.941002Z`) — snapshots, not a stream |
+
+B15's "0/20 restarts deaf" was true **for the first snapshot after a connect**
+and false after. Effective behaviour: **focus polled every 3 minutes**, only
+while the user kept the watchdog armed. The soak's purpose — prove sensing runs
+clean for a week — could not be met on this data.
+
+#### Step 2 · Why it happened *(orig. §2)*
+
+**The compositor was not going quiet. The daemon destroyed its own toplevel
+objects and then dropped the compositor's events as "zombie" traffic.**
+
+- **2a · `ext_foreign_toplevel_handle_v1` proxies were never
+  strong-referenced.** In `_on_toplevel(self, _list, handle)`, `handle` was
+  stored nowhere — only `id(handle)`. pywayland does not retain proxies either:
+  the interface `registry` is a `WeakValueDictionary`, `Display._children` a
+  `WeakSet`, a `new_id` event arg builds a fresh proxy handed to the callback,
+  and `Proxy._ptr = ffi.gc(ptr, lib.wl_proxy_destroy)`. So when `_on_toplevel`
+  returned, `handle`'s refcount hit 0 and cffi ran **`wl_proxy_destroy`**.
+  Every later `app_id` / `title` / `closed` event for that toplevel arrived for
+  a destroyed id and libwayland **discarded it silently**. Identity landed at
+  all only because the first events were in the same read batch.
+- **2b · Caches keyed by `id()` of an already-dead object → address reuse
+  evicted live cosmic handles.** CPython reuses a freed address aggressively,
+  so the next window's `id(new_handle) == id(old_handle)` and
+  `self._cosmic_handles[key] = new` **evicted** a working cosmic handle, which
+  was then GC'd — so that window's focus events were dropped too. Every window
+  opened could destroy an older window's subscription: session 1 (few opens)
+  decayed slowly, session 2 (many opens) to total silence. **The exact
+  active-vs-idle split in the soak numbers.**
+- **2c · `closed` never fired → `_drop` never ran → the caches leaked and could
+  not self-heal.** A minor contributor to the `+22 MiB/day` warm slope; mainly,
+  the source had no way to notice a dead subscription.
+- **2d · On `zcosmic_toplevel_info_v1` v3, `app_id` / `title` exist only on the
+  foreign handle** (deprecated on the cosmic handle since v2). The daemon binds
+  v3, so identity came **only** from the proxy 2a threw away; `state`
+  (activation) is correctly on the 2b-fragile cosmic handle. Dropping to v1
+  would re-introduce the deprecated path.
+- **2e · Monitoring blind spot.** `WaylandConnection.seconds_since_event` — the
+  literal deafness signature — existed and `health()` never read it. `window✓`
+  = "pump running and connected", true for a fully deaf connection.
+- **2f · The poll-pump could not paper over it.** A destroyed proxy receives
+  nothing; the pump was not the bug.
+
+#### Step 3 · How we fixed it — the approach *(orig. §3)*
+
+- **3a · Strong-ref both proxies, keyed by a stable counter, for the
+  toplevel's whole life.**
+
+  ```python
+  def _on_toplevel(self, _list, handle):
+      key = self._next_key
+      self._next_key += 1
+      self._foreign[key] = handle            # THE missing strong ref
+      self._tops[key] = _Toplevel()
+      handle.dispatcher["app_id"] = lambda _h, app_id, k=key: self._set(k, "app_id", app_id)
+      handle.dispatcher["title"]  = lambda _h, title,  k=key: self._set(k, "title",  title)
+      handle.dispatcher["closed"] = lambda _h,         k=key: self._drop(k)
+      cosmic = self._info_manager.get_cosmic_toplevel(handle)
+      self._cosmic[key] = cosmic
+      cosmic.dispatcher["state"] = lambda _c, state, k=key: self._set(
+          k, "activated", _STATE_ACTIVATED in list(state)
+      )
+  ```
+
+  A monotonically increasing int bound into each lambda — never `id()`, never
+  reused. `_drop(key)` pops all caches and is now reachable. (`wl_proxy_get_id`
+  is not exposed by pywayland 0.4.19, so the counter is the right key.)
+- **3b · Bind `ext_foreign_toplevel_list_v1.finished`** — a retired list
+  global (screen lock, compositor reload) is treated as `lost()` so the
+  connection re-primes.
+- **3c · `health()` reads `seconds_since_event`.** `window✓` requires
+  `is_alive` **and** (recent events **or** the user is idle); otherwise
+  **`window~`**, `health().ok = False`, and a rate-limited `sensor-degraded`
+  `SYSTEM_ERROR` on the bus.
+- **3d · Pump / watchdog hardening.** Every watchdog fire counts as a defect
+  signal; reconnects log at `WARNING` with `seconds_since_event` and cache
+  size; the shutdown-race `RuntimeError("Failed to read events")` is swallowed
+  at `DEBUG`.
+- **3e · Escalation held in reserve:** the dedicated Wayland thread (B15 §7) —
+  not needed; proxy lifetime fully explains the symptom, and a thread does not
+  fix a GC'd proxy.
+
+#### Step 4 · What was built *(orig. §4)*
+
+```
+EDIT  sensing/activity/window.py          both proxies held, int keys, reachable _drop, `finished`
+EDIT  sensing/activity/wayland_conn.py    reconnect logging, shutdown-race guard
+EDIT  sensing/activity/collector.py       health() reads seconds_since_event; sensor-degraded event
+EDIT  tests/test_wayland_handlers.py      proxy retained; _drop via closed; int-key stability; id()-reuse regression
+EDIT  tests/test_wayland_conn.py          shutdown-race guard; reconnect log fields
+EDIT  tests/test_activity.py              health() degraded-while-silent; sensor-degraded event
+NEW   spikes/b16_toplevel_lifetime/observe.py   standalone lifetime probe
+```
+
+No systemd unit change. No `neuropaca.toml` change.
+
+#### Step 5 · How we proved it *(orig. §5, §6 + the B16 test report)*
+
+**Unit suite:** 584 passed, 3 skipped; bare ruff and mypy clean (72 files).
+
+| Test | What it pins |
+| --- | --- |
+| `test_window_keeps_a_strong_ref_to_both_proxies` | both proxies cached by one int key; `closed` drops **and** destroys both |
+| `test_window_foreign_handle_survives_gc_after_on_toplevel_returns` | the handle is alive after the callback + `gc.collect()` — the B16 regression |
+| `test_window_keys_never_collide_across_toplevel_churn` | 20 toplevels → 20 keys; fails on the old `id()` key |
+| `test_window_list_finished_invalidates_cache_and_marks_not_alive` | `finished` clears the cache; a fresh `bound()` recovers |
+| `test_window_lost_destroys_every_held_proxy` | teardown destroys every proxy; `tracked == 0` |
+| `test_window_deaf_while_active_degrades_health_and_emits` | alive + silent + active → `window~`, one `sensor-degraded`; recovers |
+| `test_window_deaf_but_user_idle_is_not_degraded` | the same silence while idle → still `window✓` |
+| `test_shutdown_race_is_not_counted_as_a_pump_error` | quiet exit, `pump_errors == 0` |
+
+**Standalone lifetime probe** (`spikes/b16_toplevel_lifetime/observe.py`):
+one `Display`, both protocols, the B15 poll-pump, `gc.collect()` every tick,
+logging every event, every proxy finalisation and a 10 s heartbeat.
+
+`--leak` (no strong ref on the foreign handle — pre-B16) **reproduces** it:
+
+```
+00:17:52  list.toplevel -> #0 / #1 / #2          ← priming: 9 events, 3 windows
+00:17:52  >>> FINALISED foreign#0  (proxy destroyed)   ← same second, before any switch
+00:17:52  >>> FINALISED cosmic#0 / foreign#1 / cosmic#1 / foreign#2 / cosmic#2
+00:18:02  -- 10s: 9 events, fd-readable x2, read() x2, dispatch>0 x1  live=[]
+00:18:12  -- 10s: 0 events, fd-readable x0 ...    (silence for the rest of the run)
+```
+
+Every proxy was finalised microseconds after `_on_toplevel` returned; from then
+on the compositor sent nothing (`fd-readable x0`) — the daemon's soak signature,
+reproduced without a single window switch.
+
+`--hold` (retain both — B16), with the operator alt-tabbing through 3 windows:
+
+```
+00:39:18  cosmic#2.state activated=True         ← brave has focus
+00:39:19  cosmic#1.state activated=True ; cosmic#2.state activated=False   ← → terminal
+00:39:28  -- 10s: 23 events, fd-readable x20, read() x20, dispatch>0 x20  live=[all 6]
+00:39:30  cosmic#1 → cosmic#2 activated       ← → brave
+```
+
+A continuous real-time focus stream, proxies never collected. (A `RuntimeError:
+Cannot find display` at probe exit is a spike-script teardown artifact; the
+daemon's shutdown-race guard handles that path.)
+
+**Daemon A/B on the target box** (restart onto B16, `neuropaca health` every
+15 s for ~3.5 min of normal use):
+
+```
+00:41:07  window✓ ·  5 switches · 0 reconnects      ← priming snapshot
+00:41:38  window✓ · 11 switches · 0 reconnects
+00:42:23  window✓ · 15 switches · 0 reconnects
+00:43:09  window✓ · 19 switches · 0 reconnects
+00:43:55  window✓ · 23 switches · 0 reconnects
+```
+
+**The watchdog false-positive it exposed (commit `f29e004`).** 20 minutes of
+post-merge observation still showed **3** watchdog fires — now false positives.
+B16 made "delivered once → delivers forever" structurally true, so "no events
+in 180 s while active" now only means *the focused window has not changed* (the
+`--hold` probe shows `fd-readable x0` whenever switching stops). Fix: the
+watchdog fires only while the subscription has **never** delivered an event
+(`confirmed_live` False — the came-up-deaf case it exists for); the first real
+event disarms it for the connection's life; while unconfirmed the interval backs
+off 180 s → 1800 s; `window~` / `sensor-degraded` are gated on `confirmed_live`.
+Also (`40bb362`): `_on_list_finished` calls
+`WaylandConnection.request_reconnect()` (a pump-checked flag, safe inside a
+dispatch callback). Tests: `test_watchdog_disarms_once_an_event_has_been_dispatched`,
+`test_watchdog_interval_backs_off_while_never_confirmed`,
+`test_window_silent_but_confirmed_live_is_not_degraded`.
+
+Re-check on `f29e004`: "subscription confirmed live — watchdog off" 4 s after
+start; focus then held on one window for 3+ minutes — past the old trip point
+— with **0 watchdog reconnects**.
+
+| # | Exit criterion | Status |
+| --- | --- | --- |
+| 1 | probe `--hold` streams across switches, 0 stray finalises; `--leak` reproduces silence | ✅ both |
+| 2 | daemon real use: < 1 watchdog reconnect, real-time switches | ✅ 5 → 23 switches real-time, 0 reconnects |
+| 3 | `health().ok` false within one sample of going silent while active + `sensor-degraded` | ✅ unit |
+| 4 | caches drain to empty after all windows close | ✅ unit |
+| 5 | suite + ruff + mypy green; no segfault on `stop()` | ✅ |
+| 6 | 48 h soak: reconnects < ~1/day, switches ≥ 10× pre-B16 | ⏳ the operator chose to **continue** the 2026-09-08 run from ~22 h, so `assess` carries mixed pre/post-B16 counts |
+
+#### Step 6 · What we rejected
+
+- Dropping to `_TOPLEVEL_INFO_MAX_VERSION = 1` to read identity off the cosmic
+  handle (the deprecated path).
+- The dedicated Wayland thread (3e) — does not fix a GC'd proxy; breaks a
+  `rules.md` invariant.
+- Keeping the 180 s watchdog as-is — after the fix it fires on stable focus.
+- A wrapped C proxy id as the key (`wl_proxy_get_id` is not exposed).
+
+#### Step 7 · What is left *(orig. §7 + test report §5)*
+
+- **A clean soak restart** (orig. §5d). The 2026-09-08 run's focus data is
+  void; the operator kept it running from ~22 h for continuity of the RSS trend.
+  Only a clean restart gives a gradeable focus-liveness verdict.
+- `scripts/_provenance.py` re-run at merge (needs `PROV_SECRET`).
+- `assess` could also grade on the new `sensor-degraded` events.
+- `RawMetricsRecorder` CSV was already 845 KB after 21 h — unrelated, worth a
+  glance (on by default only in `neuropaca.b13.toml`).
+
+---
+
+### 21.5 B17 · One app, one node — canonical identity, readable names, structured graph view
+
+| | |
+| --- | --- |
+| **Branch** | `b17-app-identity-canonicalization` (off `main`, after B16) |
+| **Found** | 2026-09-10, graph review |
+| **Ruling** | D-20 |
+| **Outcome** | Merged `880fab4`; 643 tests green; real graph cleaned 63 → 57 nodes |
+
+**In plain words.** The same app showed up as two or three nodes — one from the
+window sensor ("com.system76.CosmicFiles") and one from the memory census
+("cosmic-files") — with the activity on one and the RAM on the other. B17 gives
+every app one canonical name, merges the old duplicates once at startup, and
+makes the graph window readable: plain-English names, the 11 master nodes pinned
+in a fixed ring, and a panel that opens when you click a node.
+
+The operator's brief: (1) one node per real app; (2) a naming layer so labels
+read in plain English; (3) click a node → a side panel with its details; (4)
+the 11 master nodes pinned in a fixed, even structure; (5) execute, full test,
+update docs, clean the live graph, merge, push.
+
+#### Step 1 · What we saw *(orig. §1)*
+
+`data/graph.json` at ~22 h of soak had 24 `app:` / `webapp:` nodes for ~12 real
+apps:
+
+| Real app | Focus node (`ram_mb 0`, high `access_count`, all edges) | Census node (`ram_mb > 0`, ~no edges) |
+| --- | --- | --- |
+| Brave | `app:brave-browser` — ac 109, 4 `webapp:` children, 2 insights | `app:brave` — 3811 MiB |
+| Claude | `app:com.anthropic.Claude` — ac 0 | `app:claude` 342 MiB · `app:claude-desktop` 1192 MiB |
+| Cosmic Files | `app:com.system76.CosmicFiles` — ac 10 | `app:cosmic-files` 588 MiB |
+| Obsidian | `app:md.obsidian.Obsidian` — ac 3 | `app:obsidian` 890 MiB |
+
+Also `app:MainThread` (a thread name), the daemon and its tooling in its own
+graph (`app:neuropacad`, `app:python3`, `app:chrome-devtools-mcp`), and raw ids
+as labels (`domain:mental_models`, `webapp:google-gemini`).
+
+#### Step 2 · Why it happened *(orig. §2)*
+
+`upsert_node` de-dups perfectly by **exact `node_id`**, and two sources format
+the id from two different names:
+
+| Source | Field | Value |
+| --- | --- | --- |
+| focus sensor → `APP_SWITCH` → `_classify_into_graph`, focus-pattern `NodeSpec`s | Wayland `app_id` (reverse-DNS) | `com.system76.CosmicFiles` |
+| B13 `ProcessCollector` census → `_heavy_app_specs`, `_idle_app_spec`, census patterns | Unix process name (`psutil` `name`) | `cosmic-files` |
+
+`patterns.py` said *"where they differ … a round-2 name map merges them (B13
+§7)"* — never built. `AppMap` maps `app_id → domain` only. `psutil.name()` is
+`/proc/<pid>/comm`, which a runtime can set to a thread name (`MainThread`), and
+which names an Electron helper separately (`claude` vs `claude-desktop`).
+`_merge_nodes_unsafe` existed and was correct; nothing told it these were the
+same thing.
+
+#### Step 3 · How we fixed it — the approach *(orig. §3)*
+
+- **No schema bump.** A de-duplicated v4 file is structurally identical to a v4
+  file. Canonical ids are written going forward, and a **single idempotent
+  `canonicalise_app_nodes(resolver)` pass** runs once at orchestrator start
+  after `load()`, covered by the same quarantine machinery as any load failure.
+- **`display_name` is not stored** — derived, presentation-only, in the graph
+  window. *(B18 later replaced this with one shared renderer, §21.7.)*
+- **Canonical form = the short process-style slug** (`brave`, not
+  `brave-browser`). The census can only produce that; the focus sensor is
+  taught the alias. A default table ships; the operator tunes it.
+- **Graph window changes are pure presentation.**
+
+#### Step 4 · What was built *(orig. §4)*
+
+**4a · `diagnosis/app_identity.py`** — `AppIdentity`, pure and immutable, built
+once from `data/app_identity.default.toml` (`Config.app_identity_path`):
+
+```
+resolve(raw: str) -> str          # canonical slug for the node id
+is_non_app(raw: str) -> bool      # thread names, shells — never a real activity
+pretty(canonical: str) -> str     # "Cosmic Files"
+```
+
+Resolution: exact `[alias]` hit → minimal normalise (lowercase; strip a
+trailing `-browser` / `-desktop` / `-bin` / `-gtk` / `-wayland`; `_` / `.` /
+space → `-`) → passthrough. **No reverse-DNS flattening** — `com.system76.CosmicTerm`
+and `cosmic-comp` do not converge, so those are aliases. `[non_app]` is exact
+match plus a thread-name regex (`MainThread`, `sh`, `bash`, `zsh`, `Thread-*`).
+The default table covers COSMIC apps, Brave / Chrome / Firefox, VS Code, Zed,
+Obsidian, Claude, Slack, Discord, Spotify, ….
+
+**4b · Canonical ids wired in** — `SignalCorrelator` builds the identity;
+`on_app_switch` resolves `app_id` once for `_classify_into_graph` and
+`_classify_webapp_into_graph`; every `app:` `NodeSpec` in `patterns.py`
+resolves its raw name first; `label` becomes the canonical slug. `AppMap` keeps
+keying on the raw `app_id` — routing and identity are independent.
+
+**4c · `GraphMemory.canonicalise_app_nodes(resolve, is_non_app)`** — one lock
+cycle per mutation: group every `app:` / `webapp:` node by `resolve(bare id)`;
+merge each group into the exact canonical id if present, else the
+most-connected node (oldest `created_at` on a tie), renamed `app:<canonical>`;
+delete nodes whose bare id `is_non_app`. *As built, `is_non_app` alone is the
+gate* — `access_count` is not a "was focused" signal (it bumps on every census
+upsert too), and `is_non_app` is written to only ever match thread labels and
+bare shells. Returns `(merged, dropped)`; idempotent.
+
+**4d · Census hygiene** — `ProcessCollector` drops `_THREAD_NAME_RE` rows
+(`^MainThread$`, `^Thread-\d+`, `^asyncio_\d+`, `^ThreadPoolExecutor`, …);
+`Config.process_exclude_names` defaults to `neuropacad, python3, node,
+chrome-devtools-mcp, cosmic-comp, Xwayland` (B13's round-2 list, soak-informed).
+
+**4e · The graph window** — readable names; `YOU` at the origin and the 10
+`domain:` hubs on a circle of radius `HUB_RING` at `2πi/10` in `DOMAIN_ORDER`,
+pinned and re-pinned every step, not draggable; members still cluster to their
+hub. A right-docked detail panel: click a node → name, raw id, type, relevance,
+access count, priority, first/last seen, RAM/CPU, and a click-through
+**Connected to** list; click empty space or `Esc` to close.
+
+**4f · `scripts/graph_cleanup.py`** — standalone (stdlib), applies the alias
+fold from the same TOML, drops edgeless non-hub nodes and `[non_app]` nodes,
+writes atomically, prints a before/after diff; `--dry-run` by default,
+`--apply` to write.
+
+```
+NEW   src/neuropaca/diagnosis/app_identity.py      NEW   data/app_identity.default.toml
+EDIT  core/config.py · diagnosis/correlator.py · diagnosis/patterns.py · core/graph_memory.py
+EDIT  orchestration/orchestrator.py (call once after load) · sensing/collectors/process.py
+NEW   scripts/graph_cleanup.py                     EDIT  scripts/neuropaca_graph_window.py
+NEW   tests/test_app_identity.py · tests/test_graph_window.py · tests/test_graph_cleanup.py
+EDIT  tests/test_graph_memory.py · activity-pattern and process-collector tests
+```
+
+No systemd unit change; no new dependency (`tomllib` is stdlib).
+
+#### Step 5 · How we proved it *(orig. §6 + the B17 test report)*
+
+**Unit suite:** 643 passed, 3 skipped; bare ruff and mypy clean (73 files).
+
+| Test file | What it pins |
+| --- | --- |
+| `test_app_identity.py` (37) | alias collapses Wayland id + process name to one slug; normaliser (`Brave-Browser` → `brave`, `foot` → `foot`); passthrough; `is_non_app`; `pretty`; missing file → normalise-only |
+| `test_graph_memory.py` (+4) | canonicalise: folds the two schemes (ac summed, webapp edge rewired, `ram_mb` kept); renames a lone focus node; drops `is_non_app` + edges; never touches hubs; idempotent `(0, 0)` |
+| `test_graph_window.py` (8) | the name table; the 11 hubs on a deterministic ring, first at 12 o'clock; `pin_hubs` fixes and overrides drift |
+| `test_graph_cleanup.py` (6) | fold + rewire + resource keep; edgeless drop; idempotent; `--dry-run` writes nothing; `--apply` writes valid JSON |
+| `test_b13_process_collector.py` (+1) | `MainThread` / `Thread-7 (worker)` rows dropped; `zed` kept |
+| pipeline tests | updated to canonical ids (`app:brave`, `app:zed`, `app:cosmic-term`) |
+
+**On a copy of the real soak graph:**
+
+```
+drop   app:MainThread  (not an application)
+rename app:com.system76.CosmicTerm    -> app:cosmic-term
+merge  app:brave-browser              -> app:brave
+rename app:com.system76.CosmicMonitor -> app:cosmic-monitor
+merge  app:com.system76.CosmicFiles   -> app:cosmic-files
+merge  app:com.anthropic.Claude       -> app:claude
+merge  app:claude-desktop             -> app:claude
+merge  app:md.obsidian.Obsidian       -> app:obsidian
+rename app:neuropaca_graph_window.py  -> app:neuropaca-graph-window-py
+rename app:sublime_text               -> app:sublime-text
+
+nodes 63 -> 57   edges 61 -> 58
+```
+
+24 → 19 `app:` / `webapp:` nodes, 0 dangling edges; the merged Brave node keeps
+`ram_mb ≈ 3811` **and** its focus count **and** all four webapp children;
+Claude's three nodes → one; a second pass finds nothing.
+
+**Live daemon:** stop → backup (`graph.json.pre-b17-backup`) → `graph_cleanup.py
+--apply` (63 → 57) → start. The daemon booted at exactly 57 nodes / 58 edges and
+logged **no** canonical-pass merges — the cleanup script and
+`canonicalise_app_nodes` agree. Later: 15 `app:` nodes, all canonical, no
+duplicate reappeared. The graph window was verified visually: an even,
+non-draggable labelled ring around "You", and the click panel.
+
+| # | Exit criterion | Status |
+| --- | --- | --- |
+| 1 | resolver: alias, normaliser, passthrough, `is_non_app`, `pretty` | ✅ 37 tests |
+| 2 | canonical pass on a hand-built graph — fold / rename / drop / hub-safe / idempotent | ✅ 4 tests |
+| 3 | on the real graph — 24 → 19, attributes preserved, 0 dangling, idempotent | ✅ |
+| 4 | one focus + one census snapshot for the same app → one node | ✅ pipeline tests |
+| 5 | `ProcessCollector` drops thread-label rows | ✅ |
+| 6 | graph window names, deterministic hub ring, pinned | ✅ 8 tests + live |
+| 7 | `graph_cleanup.py` dry-run / apply | ✅ 6 tests + live |
+| 8 | suite + ruff + mypy; load within budget | ✅ (the pass is O(n), a no-op after first boot) |
+| 9 | live: one node per touched app, no tooling nodes, no new duplicates | ✅ |
+
+#### Step 6 · What we rejected
+
+- A schema bump plus a `_migrate` step for the merge (no structural change to
+  gate, and new risk).
+- Reverse-DNS flattening in the normaliser (does not converge with process
+  names).
+- A stored `display_name` field (presentation belongs to the view — until B18
+  moved it into one shared renderer).
+- Merging on `access_count`-based "was focused" heuristics (the census bumps
+  it too).
+
+#### Step 7 · What is left *(orig. §8 + test report §5)*
+
+- **Default-table completeness** — an unknown COSMIC/GNOME app still splits
+  until an alias is added; the normaliser catches the `-browser` / `-desktop`
+  half. (B18 §6 proposes an optional model-assisted alias suggester.)
+- **Over-merge risk** — `[alias]` is exact-match and wins first; the normaliser
+  is deliberately conservative.
+- `app:neuropacad` / `app:python3` / `app:chrome-devtools-mcp` /
+  `app:cosmic-comp` survived (census edges, not `is_non_app`); they are now
+  excluded from the census and will decay.
+- **Hebbian weights all `0.0`** — found in the same review, out of scope,
+  fixed in **T7** (§21.6).
+
+---
+
+### 21.6 T7 · Hebbian edge weights never left zero — "wire together" was never built
+
+| | |
+| --- | --- |
+| **Branch** | `t7-hebbian-weights-zero` (off `main`, after B17) |
+| **Found** | 2026-09-10, B17 graph review (logged in §16.1) |
+| **Outcome** | Merged (PR #26, `2ace615`); 673 + 10 integration tests green, ruff + mypy clean. Closes on a ≥ 24 h soak showing a stable non-zero weight distribution. |
+
+**In plain words.** The graph is supposed to learn which apps you use together
+— "fire together, wire together" — by strengthening the line between them. After
+a day of running, every line still had strength zero. The code that strengthens
+a line worked, but nothing ever *drew* a line between two apps used together, so
+there was never anything to strengthen.
+
+#### Step 1 · What we saw *(orig. §1)*
+
+Every edge `weight` in `data/graph.json` was `0.0`, confirmed on the post-B17
+graph (2026-09-10 11:00):
+
+```
+nodes 67 · edges 74
+weight histogram: {0.0: 74}          # all 74 edges
+relations: {related_to: 61, part_of: 13}
+nonzero edges: 0
+```
+
+Co-occurrence reinforcement (`GraphMemory.reinforce_cooccurrence`, §8) had not
+moved a single weight in ~22 h of soak. The graph was structure without
+strength: the window's edge-opacity encoding was uniform, and
+`relevance_score`'s non-weight terms carried the whole score. Yet the unit and
+integration tests for the mechanism **passed** ("+0.01 on existing edges only,
+one lock, ~1.4 ms") — so the primitive was correct and the bug was in how, or
+whether, production drove it.
+
+#### Step 2 · Why it happened *(orig. §2, §3)*
+
+- **2.1 · One call site, rarely reached.** `reinforce_cooccurrence` had exactly
+  one caller, `BitNetPlasticity._store_insight`, with `episode =
+  [*insight.cited_node_ids, *signal.related_node_ids]`. It runs only when every
+  L4 gate passes (confidence ≥ 0.7, nodes present, model not busy, the novelty
+  gate, the model loads, a cited candidate exists, the model does not abstain).
+  In ~22 h that happened **5 times**.
+- **2.2 · The primitive creates nothing.** `_reinforce_edge_unsafe` bumps only
+  an edge that *already exists* between two episode members (`if not
+  has_edge(u, v): continue`) — "if the edge exists", by design.
+- **2.3 · No path ever made an edge between two peer activity nodes.**
+
+  | Path | Edge it writes |
+  | --- | --- |
+  | `correlator._classify_into_graph` (APP_SWITCH) | `app:<x> --PART_OF--> domain:<d>` |
+  | `correlator._classify_webapp_into_graph` | `webapp:<w> --PART_OF--> app:<browser>`, `webapp:<w> --PART_OF--> domain:<d>` |
+  | `FocusSessionPattern` NodeSpec | `app:<x> --PART_OF--> domain:<d>` |
+  | `_store_insight` | `insight:<i> --RELATED_TO--> <cited>` |
+  | `GraphMemory.link_orphan_nodes` (B6) | `<orphan> --RELATED_TO--> YOU` |
+  | DMN idle imagination | `<concept> --RELATED_TO--> <concept>` (once, at creation) |
+
+  Every edge ran node → hub, insight → node, or orphan → YOU — never `app ↔ app`,
+  `app ↔ webapp`, or `webapp ↔ webapp`.
+- **2.4 · The episodes were exactly the pairs with no edge.** `related_node_ids`
+  held only the pattern's own nodes (the domain edge targets were not appended),
+  and the cited ids are a subset of them:
+
+  | Pattern | Episode shape |
+  | --- | --- |
+  | `FocusSessionPattern` | **1 node** — zero pairs |
+  | `HighLoadPattern` / `IdlePattern` | 0–1 `app:` nodes |
+  | `DistractionPattern` | N `app:` / `webapp:` nodes — siblings under a domain, **no edge between them** |
+  | `MemoryPressurePattern` / `HeavyAppStartedPattern` | N `app:` nodes — no edges at all |
+
+  So every `has_edge` check returned `False` and `bumped == 0`, every time.
+- **2.5 · A second, latent defect: an edge re-add clobbered its weight.**
+  `_add_edge_unsafe` called networkx `add_edge` with the same key, which merges
+  the kwargs into the live edge dict:
+
+  ```
+  after bump:    {'weight': 0.35, 'created_at': 't0'}
+  add_edge(u, v, key='part_of', weight=0.0, created_at='t1')   # same key
+  after re-add:  {'weight': 0.0,  'created_at': 't1'}           # CLOBBERED
+  ```
+
+  `correlator._update_graph` called `add_edge` unconditionally on every pattern
+  fire, and the `_known_apps` / `_known_webapps` guards reset on every restart.
+  Two patterns already carried comments omitting `edges` *to avoid exactly this*
+  — a known hazard, only partially mitigated. Masked by 2.4 (nothing
+  accumulated, so nothing was lost); any fix to 2.4 would un-mask it.
+- **2.6 · A third factor: reinforcement was gated behind the model.** Even
+  fixed, ~5 events/day across the whole graph measures nothing. Co-occurrence
+  is a high-rate signal (every focus switch).
+
+**Root cause, in one sentence:** "wire together" was never implemented —
+`reinforce_cooccurrence` only strengthens existing edges, nothing ever created
+an edge between two co-occurring nodes, so the primitive ran on node sets with
+no internal edges and was a no-op by construction.
+
+**Why the tests never caught it:** the integration test **manually created
+`RELATED_TO` edges between the cited nodes** before calling the reinforcer — the
+exact pre-wiring production never did. It proved the primitive while assuming a
+connected input that no real caller supplied.
+
+#### Step 3 · How we fixed it — the approach *(orig. §4)*
+
+Four parts: A and B are mechanism, C is the driver, D keeps the graph sparse;
+E is config.
+
+- **4A · Clobber-proof edges** (fixes 2.5). `_add_edge_unsafe` became a true
+  upsert: an existing `(source, target, relation)` keeps its `weight` and
+  earliest `created_at`; `weight` applies only on creation. New
+  `_bump_or_create_edge_unsafe(u, v, relation, *, delta, base)` returns
+  `"created"` or `"bumped"`. A standalone correctness fix: accumulated strength
+  must survive a structural re-assertion.
+- **4B · `GraphMemory.wire_cooccurrence()`** — the missing "wire together"
+  (fixes 2.4). One lock cycle:
+
+  ```python
+  async def wire_cooccurrence(
+      self,
+      node_ids: Sequence[str],
+      *,
+      delta: float,
+      base: float,
+      max_episode: int = 8,
+      max_new_edges: int = 12,
+  ) -> tuple[int, int]:          # (created, bumped)
+  ```
+
+  De-dupe, drop absent ids, truncate to `max_episode` (most relevant first); for
+  each unordered pair, bump every existing edge between them by `delta`, else
+  create one `RELATED_TO` at `base` — **creation only when both ends are `app:`
+  / `webapp:`** (keeps `file:` / `concept:` noise out), at most `max_new_edges`
+  per call. `reinforce_cooccurrence` stays as the bump-only primitive.
+- **4C · Drive it continuously from `APP_SWITCH`** (fixes 2.6). A bounded
+  co-activation window in the correlator, which already consumes `APP_SWITCH`
+  and owns the canonical ids:
+
+  ```python
+  # SignalCorrelator.__init__
+  self._coactive: deque[tuple[str, float]] = deque(maxlen=config.coactivation_max_nodes)
+
+  # on_app_switch, after _classify_* (both nodes now exist):
+  focus_id = f"webapp:{webapp}" if webapp else self._canon_app_id(app_id)[0]
+  now = time.monotonic()
+  warm = [nid for nid, ts in self._coactive
+          if nid != focus_id and now - ts <= config.coactivation_window_seconds]
+  if warm:
+      await self._graph.wire_cooccurrence(
+          [focus_id, *warm], delta=config.hebbian_delta, base=config.hebbian_base)
+  self._coactive.appendleft((focus_id, now))
+  ```
+
+  Every switch reinforces the new focus against everything focused in the last
+  300 s: apps used in the same session gain weight; apps never used together
+  never get an edge. `_store_insight` switched to `wire_cooccurrence` at `delta
+  × hebbian_insight_multiplier` — a model-confirmed association is stronger
+  evidence.
+- **4D · Decay + prune** — "use it or lose it", so weights stay meaningful
+  instead of saturating. `decay_cooccurrence_edges(factor, floor)` in the B6
+  idle sweep (between `consolidate()` and `link_orphan_nodes()`): multiply every
+  `RELATED_TO` weight > 0 by `factor` (0.9), delete an edge now below `floor`
+  (0.02) **unless** it is its node's only edge (never re-orphan). Weight becomes
+  a recency-weighted affinity — what the window's opacity has always claimed to
+  show.
+- **4E · Config**, all operator-tunable:
+
+  | Key | Default | Meaning |
+  | --- | --- | --- |
+  | `hebbian_delta` | 0.01 | per-co-occurrence bump (was `plasticity._HEBBIAN_DELTA`) |
+  | `hebbian_base` | 0.05 | initial weight of a new co-occurrence edge |
+  | `hebbian_insight_multiplier` | 3.0 | model-confirmed episodes bump harder |
+  | `coactivation_window_seconds` | 300 | two focuses within this are co-active |
+  | `coactivation_max_nodes` | 16 | deque cap (bounds the O(k²) work) |
+  | `hebbian_decay_factor` | 0.9 | idle-cycle multiplier |
+  | `hebbian_floor` | 0.02 | prune a decayed edge below this |
+
+- **4F · No backfill.** `data/graph.json` is disposable and recovers within
+  ~2–3 days once 4C is live; the orchestrator gets no T7 load-time pass.
+
+#### Step 4 · What was built *(orig. §6 + test report)*
+
+| Area | Before | After |
+| --- | --- | --- |
+| `_add_edge_unsafe` | an existing `(u, v, key)` merged kwargs → `weight` reset, `created_at` bumped | re-asserting an existing edge is a no-op that returns it unchanged |
+| Hebbian primitive | `reinforce_cooccurrence` — bump existing only | + `wire_cooccurrence` — create when absent and both ends are activity nodes, else bump |
+| Driver | only `_store_insight` (~5/day) | + the co-activation window on every focus switch; `_store_insight` at `delta × multiplier` |
+| Decay | none | `decay_cooccurrence_edges` in the idle sweep; sub-floor edges pruned, never re-orphaning |
+| Config | a module constant | 7 validated `Config` knobs |
+
+```
+EDIT  src/neuropaca/core/graph_memory.py      _add_edge_unsafe upsert; _bump_or_create_edge_unsafe;
+                                              wire_cooccurrence; decay_cooccurrence_edges
+EDIT  src/neuropaca/core/config.py            7 new keys
+EDIT  src/neuropaca/diagnosis/correlator.py   co-activation deque in on_app_switch
+EDIT  src/neuropaca/learning/plasticity.py    reinforce_cooccurrence -> wire_cooccurrence
+EDIT  src/neuropaca/idle/dmn.py               decay_cooccurrence_edges in _reminiscence
+EDIT  tests/integration/test_hebbian_plasticity.py   no longer pre-wires; asserts create-then-bump
+NEW   tests/test_cooccurrence_window.py       correlator window
+EDIT  tests/test_graph_memory.py              upsert; wire_cooccurrence; decay (the planned
+                                              separate test_wire_cooccurrence.py landed here)
+```
+
+No schema change (weight already serialises), no new dependency, no systemd
+change.
+
+#### Step 5 · How we proved it *(orig. §7 + the T7 test report)*
+
+`ruff check .` clean · `mypy` (src) clean · **673 passed** (`-m "not
+integration"`, +17 vs `main`) · **10 passed** (`-m integration`, +1) · 3
+skipped (pre-existing).
+
+| # | Check | Test | Result |
+| --- | --- | --- | --- |
+| 1 | upsert — a re-add keeps weight 0.35 and the original `created_at` | `test_add_edge_never_resets_an_existing_edges_weight` | ✅ |
+| 2 | create — 3 unconnected `app:` → 3 `RELATED_TO` @ `base`, `(3, 0)`; re-run `(0, 3)` @ `base + delta` | `test_wire_cooccurrence_creates_then_strengthens_activity_pairs`; integration `test_wire_cooccurrence_creates_the_mesh_the_correlator_never_builds` | ✅ |
+| 3 | caps — `max_episode` truncates; `max_new_edges` bounds creation | `…_caps_episode_size`, `…_caps_new_edges_per_call` | ✅ |
+| 4 | activity-only creation; an existing edge to a non-activity node still bumped | `test_wire_cooccurrence_only_creates_between_activity_nodes` | ✅ |
+| 5 | window — two switches 60 s apart wire @ `base`; a revisit inside → `base + delta`; 600 s later (window 300 s) → no edge; deque ≤ cap; no self-edge; a webapp focus wires the `webapp:` node | `test_cooccurrence_window.py` (6) | ✅ |
+| 6 | insight path bumps at `delta × multiplier` (0.03), one lock, < 50 ms loop lag on the 10k fixture | `test_hebbian_bump_on_co_occurring_edge`; `test_store_insight_with_50_citations_stays_off_the_loop` | ✅ |
+| 7 | decay — weights × `factor`; sub-floor pruned unless a last edge; weight-0 structural `RELATED_TO` untouched | `test_decay_cooccurrence_edges_fades_and_prunes`, `…_never_reorphans_a_node`, `…_leaves_structural_related_to_alone` | ✅ |
+| 8 | an episode id not in the graph is ignored | `test_wire_cooccurrence_skips_absent_ids` | ✅ |
+| 9 | full suite + ruff + mypy; no regression in diagnosis / webapp / DMN / orchestrator tests | full run | ✅ |
+
+**Behaviour changes a reviewer should know:** `reinforce_cooccurrence` is now
+unused in `src/` (kept as the public bump-only primitive); the `_store_insight`
+bump is 3× larger; the integration test no longer pre-wires its fixture; the
+DMN summary line gained `faded N`; and the first non-zero weights ever mean
+`relevance_score` shifts for nodes in a dense co-occurrence mesh (the
+`connectivity` term reads degree) — bounded by `max_new_edges` and decay.
+
+#### Step 6 · What we rejected *(orig. §5)*
+
+| # | Alternative | Why rejected |
+| --- | --- | --- |
+| 5.1 | Fix only the clobber (2.5) | necessary, not sufficient — nothing creates peer edges, weights stay 0.0 |
+| 5.2 | Append domain hub ids to `related_node_ids` so `PART_OF` edges get bumped | reinforces the wrong thing: every app in a domain trends up together → `weight ≈ f(access_count)`, no discriminative value |
+| 5.3 | Keep driving Hebbian only from `_store_insight` | ~5 events/day; and the novelty gate specifically *suppressed* recurring co-occurrence — the opposite of what Hebbian learning wants |
+| 5.4 | A new `HebbianReinforcer` module on `APP_SWITCH` | correct but heavier: the correlator already consumes the event and owns the canonical ids; a deque there is ~20 lines vs a module with lifecycle, health, wiring and tests |
+| 5.5 | A new `CO_OCCURS_WITH` relation | cleaner semantics, but a new enum value touching serialisation, two graph scripts and scoring; `RELATED_TO` + weight matches "a bright line is a Hebbian-reinforced pair" — a future refinement |
+| 5.6 | Backfill by replaying `actions.jsonl` / `raw_metrics.csv` | real code + tests for a one-session benefit on a disposable file |
+| 5.7 | Wire on `SIGNAL_CORRELATED` instead of an `APP_SWITCH` window | most signals carry 0–1 nodes; the window captures co-occurrence the patterns never surface |
+
+#### Step 7 · What is left *(orig. §7.10–7.11, §8)*
+
+- **Soak confirmation:** a live run showing a spread of non-zero `RELATED_TO`
+  weights between co-used apps with `PART_OF` hub edges untouched by decay; a
+  `weight_nonzero_fraction` / `max_cooccurrence_weight` probe in
+  `scripts/soak_probe.py`. T7 closes on a ≥ 24 h soak with a stable, bounded
+  non-zero distribution.
+- **Edge-count growth** — guarded by activity-only creation, `max_new_edges`,
+  the deque cap and decay; if edges trend up unbounded, shorten the window or
+  raise the floor.
+- **Default constants are first estimates** (`base 0.05`, `delta 0.01`, `decay
+  0.9`, window 300 s) — tune from the first soak.
+- A restart still re-adds `PART_OF` edges (empty `_known_apps`); 4A makes that
+  harmless for weight, but a genuine re-add after a delete keeps the stale
+  `created_at` — acceptable edge case.
+- `CO_OCCURS_WITH` (5.5) left for a future phase; re-baseline the
+  `relevance_score` distribution in the soak.
+
+---
+
+### 21.7 B18 · One labeling system — labels are rendered, never stored
+
+| | |
+| --- | --- |
+| **Branch** | `feat/b18-unified-labels` |
+| **Found / built** | 2026-09-10, graph review after B17 |
+| **Ruling** | D-21 |
+| **Outcome** | Merged `0ddc50f` (PR #28); 699 tests green; live graph migrated 89 → 60 nodes on the daemon restart |
+
+**In plain words.** Every generated node (an insight, an idle thought, an L8
+probe) used to get a sentence glued on when it was made — e.g. `"anomaly: idle
+implicates app:brave-browser"` — and that sentence never changed. When B17
+renamed `brave-browser` to `brave`, the old sentence stayed. When the same fact
+happened again after a restart, nothing recognised it, so a new node appeared.
+And the graph window, unable to read those sentences, shortened every probe to
+"Summary" or "Learning". The fix is one idea applied everywhere:
+
+> **A node stores *what it is about* — structured facts that point at other
+> nodes by id. Its readable name is computed from those facts, on demand, by
+> one function. Its identity — "have I seen this already?" — is computed from
+> the same facts, by one other function.**
+
+#### Step 1 · What we saw
+
+`data/graph.json` (2026-09-10 13:27): 90 nodes; 55 generated (`insight:` 8,
+`idle:` 15, `ephemeral:` 32). Re-expressed as structured facts with B17
+canonical names: **25 distinct facts** — 55 % of the generated nodes were
+redundant. Three visible symptoms, the three issues the operator raised:
+
+1. **Stale names** — insights about `app:brave-browser` **and** `app:brave`
+   on one node.
+2. **Duplicate insights** — `"anomaly: idle implicates app:brave"` ×3.
+3. **Lookalike captions** — every `ephemeral:summary:*` drawn as "Summary",
+   every `ephemeral:source-learning:*` as "Learning".
+
+#### Step 2 · Why it happened
+
+| Issue | Evidence | Root cause |
+| --- | --- | --- |
+| 1 · stale names | `app:brave-browser` and `app:brave`; `app:com.system76.CosmicTerm` and `app:cosmic-term` | `Insight.summary` baked the raw id into text; `supervisor._grow_subcluster` did the same. B17's `canonicalise_app_nodes` rewires edges but cannot rewrite text. |
+| 2 · duplicate insights | identical text ×2–×3 | The novelty gate compared **node-id sets** in an in-memory `deque` — empty after every restart. The existing text merge only ran inside a completed idle cycle and only matched identical text. |
+| 3 · lookalike captions | "Summary" / "Learning" everywhere | `pretty_label` could only read the id, because the label was unparseable prose. |
+| **4 · labels copy labels** (found in analysis) | a summary label `"pressure 1.59 on …: L4 anomaly: anomaly: idle implicates …"`; a thought `"How does learning corroborated app:com.system76.CosmicTerm affect pressure 1.30 on …?"` | `pressure.py` copied `insight.summary` into the reason; the DMN excluded only `INSIGHT` / `IDLE_THOUGHT` from seeds, so `ephemeral:` probes (type `CONCEPT`) became thought seeds and their text was quoted verbatim. |
+
+Issue 4 is why stale names *spread*: one frozen sentence was copied into two or
+three more.
+
+#### Step 3 · How we fixed it — the approach, and the research behind it
+
+| Source | Idea | Use here |
+| --- | --- | --- |
+| Zep / Graphiti (Rasmussen et al., 2025, arXiv 2501.13956) | Episodic nodes keep raw input; entity nodes are deduplicated abstractions. Dedup = cheap candidate retrieval (embedding + full-text) → an LLM adjudicates `is_duplicate` and emits a canonical name; edge dedup restricted to the **same entity pair**. | Our generated facts are already structured, so "same pair" becomes an exact key — no retrieval or LLM needed. Retrieve → adjudicate is kept only for unknown app aliases (Step 7). |
+| A-MEM (Xu et al., NeurIPS 2025, arXiv 2502.12110) | Each memory is a note with structured attributes that later memories update in place. | A repeat reinforces the existing node (count, last seen) instead of creating one. |
+| Idempotency keys (event-driven practice) | A key derived from content makes a write safe to repeat. | The fact fingerprint *is* an idempotency key. |
+| SemHash-LLM (2026, arXiv 2607.01601); embedding dedup | Semantic hashing / embeddings for free-text near-duplicates, thresholds ~0.7–0.85. | **Rejected** — our text is template output; exact keys are free and exact. |
+| Grammar-constrained decoding for small models (ACL Industry 2025; arXiv 2605.02363) | Grammars make small models reliably parseable. | If a model is ever used (Step 7), it answers a closed `same \| different \| unsure` grammar only — consistent with D-11. |
+
+**The design, as built.**
+
+- **`LabelSpec(kind, refs, facet, value)`** on every generated node, persisted
+  as `Node.spec` (**schema v5** — necessary, because the graph drops ad-hoc
+  attributes, so an id-prefix hack cannot carry references). `refs` are node
+  ids in meaning order; `value` (pressure, confidence) is shown but is **not**
+  part of identity. Leaf nodes (apps, files, hubs) have no spec — their label
+  is their name.
+
+  | kind | refs | facet | value | id prefix |
+  | --- | --- | --- | --- | --- |
+  | `insight` | `(cited,)` | `<category>/<signal>`, e.g. `anomaly/idle` | confidence | `insight:` |
+  | `thought` | `(x,)` or `(x, y)` | the `THOUGHT_TEMPLATES` key | – | `idle:` |
+  | `probe` | `(trigger,)` | `summary/L4.anomaly`, `source/learning`, `source/diagnosis` | pressure | `ephemeral:` |
+
+  Rule: **a spec may reference other nodes only through `refs`** — text never
+  flows from one label into another. That closes issue 4 by construction.
+- **One stdlib-only module, `core/labels.py`**, shared by the daemon and the
+  graph window (which loads this one file by path and still imports nothing
+  from the package):
+  - `fingerprint(spec)` = `blake2b(kind | facet | refs)`, 64-bit; a thought's
+    refs are unordered ("A affects B" and "B affects A" are one open question).
+  - **`fact_id(spec)` = prefix + fingerprint — the node id *is* the
+    fingerprint.** The plan's side index (`_fp_index`) was dropped during the
+    build: with derived ids a duplicate is impossible by construction and there
+    is no index to lose or corrupt.
+  - `render(spec, name_of, mode)` — one template table, `short` for captions,
+    `full` for the panel and terminal. Names come from the refs' *current*
+    names, so a rename heals every label at once.
+
+    | kind | short | full |
+    | --- | --- | --- |
+    | insight | `Brave · anomaly` | `Anomaly on Brave (idle) · confidence 0.82` |
+    | probe summary | `Brave · pressure 1.6` | `Pressure 1.59 on Brave (L4 anomaly)` |
+    | probe source | `Brave · via learning` | `Learning corroborated the pressure on Brave` |
+    | thought | `Brave → Cosmic Term?` | `How does Brave affect Cosmic Term?` |
+
+    In short mode each *name* is clipped to 16 characters before the caption is
+    assembled (whole caption ≤ 34), so the distinguishing tail always survives
+    a long app name — a bug caught by the high-level test.
+  - `leaf_name` / `pretty_slug` — the one name tidier (`AppIdentity.pretty`
+    delegates); `ref_namer` — how a ref is named inside another label (one
+    level deep, never recursive); `disambiguate` — only captions still equal on
+    screen get a hint (a time), then `#n`.
+  - `parse_legacy` — the four pre-B18 label templates, for migration.
+- **One write path: `GraphMemory.upsert_fact(spec) -> (node, created)`** — a
+  repeat reinforces (`access_count`, `last_accessed`, latest `value`, label
+  re-rendered); a new fact is created and edged `RELATED_TO` its refs. Plus
+  `find_fact` and `display_name`. `label` survives as a render cache so
+  `search_by_label` and prompt context keep working.
+
+**What each issue became.**
+
+- **Issue 1** — names resolve through refs; `canonicalise_app_nodes` now also
+  remaps spec refs through `AppIdentity.resolve`, re-derives ids, merges facts a
+  rename unites, and re-renders.
+- **Issue 2** — two graph-backed gates. *Before inference:* skip when **every**
+  candidate the model could cite already carries an insight for this signal
+  reinforced within `insight_refractory_minutes` (default 360) — any answer
+  would be a repeat, so the model call is saved. *After inference:*
+  `upsert_fact`; `INSIGHT_GENERATED` is published only for a new fact, so L5 and
+  L9 stop double-counting. The in-memory Jaccard deque and
+  `adaptation_buffer_size` were **deleted**.
+- **Issue 3** — captions come from `render(…, "short")` + `disambiguate`; the
+  window's per-prefix special cases are gone.
+- **Issue 4** — the pressure reason names a cause only (`L4 anomaly (idle)`);
+  the DMN excludes `ephemeral:` probes from seeds; L8 probe facets are a closed
+  vocabulary (`summary/L#.cause`, `source/<layer>`).
+
+#### Step 4 · What was built
+
+- `core/labels.py` (new); `Node.spec`; graph **schema v5**.
+- **Migration v4 → v5 on load**: legacy labels parsed back into specs; thoughts
+  that quoted another label are dropped (they cannot be expressed as refs);
+  ids re-derived; collisions merged with `_merge_nodes_unsafe`; labels
+  re-rendered. A backup `graph.json.pre-b18-backup` is written **only when there
+  is something to migrate** (a test fixture with no generated nodes once left a
+  stray backup in `tests/fixtures/` — fixed, with a regression test).
+- L4 (`plasticity.py`): repeat gate + publish-on-create; Jaccard buffer
+  removed. L6 (`dmn.py`): thoughts are facts (template key + refs); probes
+  excluded from seeds; the per-cycle `seen` set removed. L8 (`supervisor.py`):
+  probes are facts, reinforced not re-spawned — `spawn_node(facet, *,
+  trigger_node, value)`; apoptosis keys on `last_accessed`. L5 (`pressure.py`):
+  reason names a cause. `learning/insight.py`: `Insight.spec` / `.template` /
+  `.label`; `summary` renders. `learning/prompts.py`: the thought template table
+  moved into `labels.py`.
+- **Code abandoned** because the new system made it useless: the Jaccard
+  buffer + `_too_similar` + `adaptation_buffer_size`; the graph window's private
+  naming code and word table; the duplicate word table in `app_identity.py`;
+  text-based merging of facts in `consolidate`; the DMN `seen` set; the
+  `Insight.detail` rendered-question field.
+
+#### Step 5 · How we proved it
+
+- **Tests:** 699 passed, 3 skipped (including the default-deselected stress and
+  integration tiers); bare ruff, format check and mypy clean. New
+  `tests/test_labels.py` (14): fingerprint rules; no raw id in any rendered
+  name; disambiguation touches only real collisions; the same fact across a
+  restart is one node; **50 concurrent identical upserts → 1 node**; a rename
+  heals labels and merges facts; migration of the real legacy shapes (including
+  the issue-4 drop); an old graph with nothing to migrate leaves no backup;
+  **L4 does not re-ask the model about a known fact after a restart**; probe
+  repeats reinforce one node per facet; closed cause facets; DMN seeds skip
+  probes. The gating-storm stress test now asserts growth is bounded by
+  *distinct facts*.
+- **High-level test on a copy of the real graph** (load → migrate →
+  canonicalise with the real `AppIdentity` → save): 87 → 59 nodes, 51 → 23
+  generated; 0 nodes without a spec, 0 raw ids in labels, 0 dangling refs, 0
+  duplicate facts, 0 caption collisions; a second pass is a no-op. Under system
+  python the window rendered 58/58 distinct captions without importing the
+  package.
+- **Live:** the soak daemon restarted onto B18 on 2026-09-10 14:14; the backup
+  was written, and at the first save the real graph became v5 — **89 → 60
+  nodes, 53 → 24 generated**, every generated node spec'd, labels such as
+  "Anomaly on Brave (idle) · seen 5"; health all ✓, 0 errors; soak session 8
+  opened with accrued runtime carried over (1 d 2 h 17 m of 7 d).
+
+#### Step 6 · What we rejected
+
+| Alternative | Why rejected |
+| --- | --- |
+| Persist the Jaccard buffer to disk | patches one symptom (restart) and adds a second source of truth; still compares node sets, so renamed variants slip through |
+| Rewrite old label text after renames | every future rename needs another pass, and nested copies (issue 4) are unreachable |
+| Embedding / MinHash / SemHash near-duplicate detection | our facts are structured — exact keys are free and exact; embeddings add a model, a threshold and false merges |
+| LLM-written node names | breaks D-11 grounding and reproducibility, and brings back frozen text |
+| Encode facets in the id and parse ids for display | what `pretty_label` did; cannot carry refs, so cannot render names or survive renames |
+| Random uuid ids + an index for dedup | a lost or corrupt index silently produces duplicates; fingerprint-derived ids make them impossible |
+| A side fingerprint index (the plan's `_fp_index`) | redundant once the id *is* the fingerprint |
+
+#### Step 7 · What is left
+
+- **Where an AI model could help — and where it must not.** Not in labels: a
+  label must be reproducible from the saved graph and traceable to evidence
+  (D-11; BitNet cannot write grounded sentences, problems.md 1.13), and a
+  model-written sentence is frozen text again. The one open-ended question is
+  "are these two app ids the same app?" (`app:python` / `app:python3`, scripts
+  appearing as apps). An **optional, not built** step: candidates without a
+  model (token-set Jaccard ≥ 0.5 or a shared prefix, plus co-occurrence in one
+  census); one grammar-constrained Qwen2.5-3B call (the idle interactive
+  model) answering `same | different | unsure`, only inside a DMN idle cycle,
+  one call per cycle, under the single `_inference_lock`; a `same` answer only
+  writes a **suggested** alias the user must accept. It ships only if an
+  ablation against a hand-labelled alias set beats rules alone — otherwise it is
+  recorded as a rejected alternative.
+- `scripts/soak_probe.py --labels` (generated nodes ÷ distinct fingerprints,
+  target 1.0; caption collisions, target 0) — not wired; the high-level test
+  script computes the same numbers.
+- **Risks:** schema v5 is a one-way door for older builds (backup +
+  `_MIN_READABLE_SCHEMA_VERSION` still 1); reinforce-instead-of-create means
+  fewer `INSIGHT_GENERATED` events and so less L5 pressure — intended, but the
+  B7 positive control should be re-run; a refractory window can hide a real
+  recurrence (it still reinforces the count; only the model call and a new node
+  are skipped).
+
+---
+
 ## Appendix A — decision log index
 
-Twenty numbered rulings (D-1 … D-20), plus the B14–B17 phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and the per-phase `B1x_PLAN.md` docs.
+Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.
 
 | # | Decision, in one line |
 | --- | --- |
@@ -1495,6 +3291,7 @@ Twenty numbered rulings (D-1 … D-20), plus the B14–B17 phase rulings, each r
 | **D-18** | **B12 — the terminal is a read-only project guide.** No free text, no `$` / `?` / `!` grammar; the B5/B11 natural-language paths (`ask` / `diagnose` / `chat`) are withdrawn — a 3B-Q4 model paraphrasing a retrieved chunk is not reproducible. `neuropaca tell <path>` / `overview` are deterministic `ast` extraction; `--explain` keeps an optional flagged paraphrase; `$!` / `$$` survive only as an internal L9→L7 wire enum behind `neuropaca run` |
 | **D-19** | **B13 resource-aware sensing** — reuse `NodeType.APP` (no `PROCESS` type); RSS not PSS for round 1; no census exclusions in round 1; idle → last active app; new `SignalType.WORKING_SET_CHANGE` (schema v3); 200 MB name-grouped census threshold; CPU and memory stay separate patterns |
 | **D-20** | **B17 canonical app identity** — the canonical form is the short process-style slug (`brave`), not the Wayland reverse-DNS id; an `[alias]` table + a minimal normaliser (no reverse-DNS flattening — it does not converge with process names); resolution at a correlator chokepoint, not in the patterns; **no schema bump** — an idempotent `canonicalise_app_nodes()` pass at boot, not a `_migrate` step; `display_name` is derived in the graph window, not stored; the 11 master nodes are pinned in a fixed ring |
+| **D-21** | **B18 one labeling system** — generated nodes store a `LabelSpec` (kind, refs by node id, facet, value) and never free text; one stdlib-only renderer (`core/labels.py`) names every node on demand; the node id **is** the fact fingerprint (no side index); schema v5 with an on-load v4 migration; the in-memory Jaccard novelty buffer is replaced by a graph-backed repeat gate; no model writes labels (an optional grammar-constrained alias suggester is deferred behind an ablation) |
 | **B14 D2/D3** | **Web-app attribution** (operator-ratified 2026-09-08) — the focused tab's domain overrides `brave = habits`; browser tab switches feed `DistractionPattern`; `NodeType.WEBAPP` + schema v4. Rejected: an id-prefix on `NodeType.APP` (no schema bump), reading browser history/session files, a browser extension, storing the raw title and filtering at read |
 | **B15** | **The Wayland sensor fix** — a strong-ref dict for cosmic toplevel proxies (the flaky-deafness fix), one shared `WaylandConnection` collapsing two `Display` connections (erases the teardown segfault), and a `select`-based poll-pump that always `dispatch`es (the proven B2.5 shape, not `add_reader`). No systemd unit change |
 | **B16** | **The Wayland sensor fix, round two** — strong-ref *both* toplevel proxies (B15 held only the child), keyed by a monotonic int not `id()` (a collected proxy's `id()` is reused and evicts live handles); make `_drop` reachable; bind `finished`; add a `window~` health state that reads "events actually arriving", not just "pump alive". Escalation to a dedicated Wayland thread held in reserve (not needed — proxy lifetime fully explains it). No systemd unit change |
@@ -1550,9 +3347,10 @@ Twenty numbered rulings (D-1 … D-20), plus the B14–B17 phase rulings, each r
 | B15 watchdog reconnects, 7-day soak session 2 | **54 of ~65 gaps at exactly 180 s** — the watchdog doing 100 % of the work | B16 |
 | Toplevel-proxy lifetime probe | `--leak`: every proxy finalised < 1 s, `fd-readable ×0` after · `--hold`: continuous focus stream, 0 stray finalises | B16 |
 | Daemon A/B, B16 build, ~3 min real use | **19 focus switches tracked in real time, 0 watchdog reconnects, `window✓`** (old build: count frozen, a reconnect every ~180 s) | B16 |
-| B13 test count / B14 / B15 / B16 / B17 | 484 / ~524 / 561 / 587 / **643** green | B13–B17 |
+| B13 test count / B14 / B15 / B16 / B17 / B18 | 484 / ~524 / 561 / 587 / 643 / **699** green | B13–B18 |
+| B18 label migration, real graph | copy: 87 → 59 nodes, 51 → 23 generated · live: 89 → 60 nodes, 53 → 24 generated; 0 duplicate facts, 0 raw ids in labels, 0 caption collisions | B18 |
 | B17 graph clean, real soak graph | 63 → 57 nodes (24 → 19 `app:`/`webapp:`); Brave's 2 nodes → 1 keeping `ram_mb ≈ 3811` **and** the focus count **and** 4 webapp children; 0 dangling edges; idempotent | B17 |
-| Graph schema version | **v4** (`NodeType.WEBAPP`); v1 still readable | B14 |
+| Graph schema version | **v5** (`Node.spec`, B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 
