@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B4 integration · Hebbian graph math + lock safety at scale (D-11).
+"""B4 integration · Hebbian graph math + lock safety at scale (D-11), T7.
 
 Loads the deterministic 10 000-node fixture, wires a real `BitNetPlasticity` +
-`GraphMemory`, and drives `_store_insight` with a synthetic `Insight` citing 50
-nodes. Proves:
+`GraphMemory`, and drives the co-occurrence path. Proves:
 
-- `reinforce_cooccurrence` adds exactly `+0.01` to every **existing** edge
-  between the episode's nodes (both directions, all parallel relations) and
-  creates nothing — `graph.edge_count` grows only by the INSIGHT node's own
-  `RELATED_TO` edges.
-- the whole 50-node co-occurrence update runs in **one `_lock` cycle** and never
-  wakes a 10 ms loop probe more than 50 ms late.
+- `reinforce_cooccurrence` adds `+delta` to every **existing** edge between the
+  episode's nodes (both directions, all parallel relations) and creates nothing.
+- `wire_cooccurrence` (T7) *creates* the peer `RELATED_TO` edge the correlator
+  never builds when both ends are activity nodes, then strengthens it — the
+  earlier version of this file pre-wired those edges by hand, hiding the fact
+  that production never did.
+- `_store_insight` citing 50 nodes runs the whole co-occurrence update in **one
+  `_lock` cycle** and never wakes a 10 ms loop probe more than 50 ms late.
 
 Excluded from the default suite (`-m 'not integration'`).
 """
@@ -85,6 +86,41 @@ async def test_reinforce_cooccurrence_bumps_only_existing_edges(tmp_path: Path) 
     assert not any(e.target_id == cited[49] for e in graph.get_edges(cited[0]))
 
 
+async def test_wire_cooccurrence_creates_the_mesh_the_correlator_never_builds(
+    tmp_path: Path,
+) -> None:
+    """T7 · the production gap: activity nodes are wired to `domain:` hubs, never
+    to each other, so `reinforce_cooccurrence` had nothing to bump. `wire_cooccurrence`
+    creates the peer edge on first co-activation and strengthens it after."""
+    graph = await _loaded_10k(tmp_path)
+    apps = [f"app:t7-{i}" for i in range(4)]
+    for nid in apps:
+        await graph.upsert_node(nid, NodeType.APP, {"label": nid})
+    baseline_edges = graph.edge_count
+
+    created, bumped = await graph.wire_cooccurrence(apps, delta=_DELTA, base=0.05)
+    assert (created, bumped) == (6, 0)  # C(4,2) new RELATED_TO edges
+    assert graph.edge_count == baseline_edges + 6
+    for i, a in enumerate(apps):
+        for b in apps[i + 1 :]:
+            assert next(e for e in graph.get_edges(a) if e.target_id == b).weight == pytest.approx(
+                0.05
+            )
+
+    created2, bumped2 = await graph.wire_cooccurrence(apps, delta=_DELTA, base=0.05)
+    assert (created2, bumped2) == (0, 6)  # second pass only strengthens
+    assert graph.edge_count == baseline_edges + 6
+    a, b = apps[0], apps[1]
+    assert next(e for e in graph.get_edges(a) if e.target_id == b).weight == pytest.approx(
+        0.05 + _DELTA
+    )
+
+    # a non-activity node in the episode is never a *new* edge's endpoint
+    await graph.upsert_node("concept:t7", NodeType.CONCEPT, {"label": "c"})
+    created3, _ = await graph.wire_cooccurrence([apps[0], "concept:t7"], delta=_DELTA, base=0.05)
+    assert created3 == 0
+
+
 async def test_store_insight_with_50_citations_stays_off_the_loop(tmp_path: Path) -> None:
     graph = await _loaded_10k(tmp_path)
     bus = EventBus.get_instance()
@@ -93,10 +129,14 @@ async def test_store_insight_with_50_citations_stays_off_the_loop(tmp_path: Path
         bus, Config(inference_backend="fake"), graph, BitNetRuntime.get_instance()
     )
 
+    # `leaf:` nodes are not activity nodes, so wire_cooccurrence only strengthens
+    # the pre-existing edges here — it creates none — keeping the edge-count math
+    # simple while still exercising the O(k^2) one-lock update.
     cited = tuple(f"leaf:{i:05d}" for i in range(50))
     for i in range(0, 48, 2):
         await graph.add_edge(cited[i], cited[i + 1], RelationType.RELATED_TO, weight=0.1)
     edges_before = graph.edge_count
+    insight_delta = module.config.hebbian_delta * module.config.hebbian_insight_multiplier
 
     insight = Insight(
         category="anomaly",
@@ -135,10 +175,10 @@ async def test_store_insight_with_50_citations_stays_off_the_loop(tmp_path: Path
     assert node is not None and node.node_type is NodeType.INSIGHT
     assert graph.edge_count == edges_before + len(cited)
 
-    # the 24 pre-existing co-occurrence edges each gained exactly +0.01
+    # the 24 pre-existing co-occurrence edges each gained exactly one insight bump
     for i in range(0, 48, 2):
         edge = next(e for e in graph.get_edges(cited[i]) if e.target_id == cited[i + 1])
-        assert edge.weight == pytest.approx(0.1 + _DELTA)
+        assert edge.weight == pytest.approx(0.1 + insight_delta)
 
     assert lag, "probe never sampled"
     assert max(lag) < _LAG_LIMIT_MS, f"_store_insight stalled the loop {max(lag):.1f} ms"

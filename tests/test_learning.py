@@ -213,12 +213,30 @@ async def test_repeated_signal_is_dropped_by_jaccard_novelty(tmp_path) -> None:
 
 async def test_hebbian_bump_on_co_occurring_edge(tmp_path) -> None:
     module, bus, gm = await _wired(tmp_path)
+    cfg = module.config
     before = next(e for e in gm.get_edges("file:/a.py") if e.target_id == "file:/b.py").weight
     await module.on_signal_event(_event(_signal()))
     await bus.join()
-    # cited = file:/a.py ; other related = file:/b.py ; the a<->b edge exists
+    # cited = file:/a.py ; other related = file:/b.py ; the a<->b edge exists, so
+    # wire_cooccurrence strengthens it — a model-confirmed episode bumps at
+    # delta * hebbian_insight_multiplier (T7).
     after = next(e for e in gm.get_edges("file:/a.py") if e.target_id == "file:/b.py").weight
-    assert after == pytest.approx(before + 0.01)
+    assert after == pytest.approx(before + cfg.hebbian_delta * cfg.hebbian_insight_multiplier)
+    await module.stop()
+    await bus.stop()
+
+
+async def test_hebbian_does_not_wire_non_activity_nodes(tmp_path) -> None:
+    # file: nodes with no edge between them stay unconnected — wire_cooccurrence
+    # only *creates* edges between app:/webapp: nodes (T7). The a<->b edge here
+    # is the only new one, from _store_insight's own RELATED_TO writes aside.
+    module, bus, gm = await _wired(tmp_path)
+    await gm.upsert_node("file:/c.py", NodeType.FILE, {"label": "c.py"})
+    await module.on_signal_event(
+        _event(_signal(nodes=("file:/a.py", "file:/c.py")))  # no a<->c edge exists
+    )
+    await bus.join()
+    assert not any(e.target_id == "file:/c.py" for e in gm.get_edges("file:/a.py"))
     await module.stop()
     await bus.stop()
 

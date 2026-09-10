@@ -52,7 +52,6 @@ _log = logging.getLogger(__name__)
 
 _CONFIDENCE_GATE = 0.7
 _NOVELTY_GATE = 0.8  # Jaccard above this -> too similar to a recent signal
-_HEBBIAN_DELTA = 0.01
 _CONTEXT_K = 5  # top-K cited candidates offered to the model
 
 
@@ -213,14 +212,28 @@ class BitNetPlasticity(BaseModule):
 
     async def _store_insight(self, insight: Insight, signal: Signal) -> Insight:
         """Write the `INSIGHT` node + its `RELATED_TO` edges, then the Hebbian
-        co-occurrence bump for the whole episode (cited nodes + the signal's
-        other related nodes) in one `_lock` cycle (Architecture.md §6, D-11)."""
+        co-occurrence update for the whole episode (cited nodes + the signal's
+        other related nodes) in one `_lock` cycle (Architecture.md §6, D-11).
+
+        A model-confirmed episode is stronger evidence of a real association
+        than a bare focus co-activation, so it uses `wire_cooccurrence` (which
+        also *creates* the pair edge the correlator never builds — T7) with the
+        `hebbian_insight_multiplier` applied to the delta."""
         node_id = f"insight:{uuid4().hex[:12]}"
         await self._graph.upsert_node(node_id, NodeType.INSIGHT, {"label": insight.summary})
         for cited_id in insight.cited_node_ids:
             await self._graph.add_edge(node_id, cited_id, RelationType.RELATED_TO)
         episode = [*insight.cited_node_ids, *signal.related_node_ids]
-        await self._graph.reinforce_cooccurrence(episode, _HEBBIAN_DELTA)
+        # the insight pipeline already bounds this set (cited <= _CONTEXT_K, the
+        # signal's related ids are a pattern's own NodeSpecs) — reinforce all of
+        # it, no extra truncation. The 50-citation loop-lag test is the ceiling.
+        await self._graph.wire_cooccurrence(
+            episode,
+            delta=self.config.hebbian_delta * self.config.hebbian_insight_multiplier,
+            base=self.config.hebbian_base,
+            max_episode=len(episode) or 1,
+            max_new_edges=len(episode) or 1,
+        )
         return replace(insight, node_id=node_id)
 
 

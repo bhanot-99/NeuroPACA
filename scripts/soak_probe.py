@@ -94,10 +94,41 @@ def module_detail(health: dict[str, Any], name: str) -> str:
     return ""
 
 
-def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, Any]:
+def hebbian_weight_stats(graph_path: str | None) -> dict[str, Any]:
+    """T7 · best-effort read of the on-disk graph for the co-occurrence weight
+    distribution. A daemon that is wiring co-activations shows a rising
+    `weight_nonzero_fraction` and a `max` well above `hebbian_base`; a week of
+    zeros is the T7 signature returning. Any read/parse failure yields `{}` --
+    same philosophy as an unreachable daemon (a fact, not an abort)."""
+    if not graph_path:
+        return {}
+    try:
+        with open(graph_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        edges = payload.get("edges", payload.get("links", []))
+        weights = [float(e.get("weight", 0.0)) for e in edges]
+        rel = [
+            float(e.get("weight", 0.0)) for e in edges if str(e.get("relation", "")) == "related_to"
+        ]
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+    if not weights:
+        return {}
+    nonzero = [w for w in weights if w > 0.0]
+    return {
+        "graph_edges_total": len(weights),
+        "weight_nonzero_fraction": round(len(nonzero) / len(weights), 4),
+        "max_cooccurrence_weight": round(max(rel), 4) if rel else 0.0,
+        "mean_nonzero_weight": round(sum(nonzero) / len(nonzero), 4) if nonzero else 0.0,
+    }
+
+
+def build_sample(
+    health: dict[str, Any] | None, actions: int = 0, graph_path: str | None = None
+) -> dict[str, Any]:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if health is None:
-        return {"ts": now, "daemon_up": False}
+        return {"ts": now, "daemon_up": False, **hebbian_weight_stats(graph_path)}
 
     counters = module_counters(health)
     activity = counters.get("activity", {})
@@ -147,9 +178,14 @@ def build_sample(health: dict[str, Any] | None, actions: int = 0) -> dict[str, A
         "pressure_high": drive.get("high", 0),
         "insights": counters.get("learning", {}).get("insights", 0),
         "proposed": counters.get("action", {}).get("proposed", 0),
+        # T7 · cumulative Hebbian co-occurrence edges created or strengthened by
+        # the correlator's co-activation window. Flat at 0 for a week == the
+        # driver is not firing (the original T7 signature).
+        "hebbian_wired": counters.get("diagnosis", {}).get("hebbian", 0),
         "errors": errors,
         "actions": actions,
         "degraded": [m["name"] for m in health.get("modules", []) if not m.get("ok")],
+        **hebbian_weight_stats(graph_path),
     }
 
 
@@ -157,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="One soak sample as JSON.")
     parser.add_argument("--socket", default=None)
     parser.add_argument("--actions-log", default=None)
+    parser.add_argument(
+        "--graph", default=None, help="path to data/graph.json for T7 weight stats (optional)"
+    )
     args = parser.parse_args(argv)
 
     actions = 0
@@ -168,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             actions = 0
 
     health = fetch_health(args.socket or default_socket_path())
-    json.dump(build_sample(health, actions), sys.stdout)
+    json.dump(build_sample(health, actions, args.graph), sys.stdout)
     sys.stdout.write("\n")
     return 0
 
