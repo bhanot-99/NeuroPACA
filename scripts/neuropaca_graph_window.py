@@ -740,8 +740,12 @@ def _run(graph_path: Path) -> int:
     area.connect("motion-notify-event", on_motion)
     area.connect("scroll-event", on_scroll)
 
-    # B17 · the node detail panel, docked right. `no_show_all` so the window's
-    # `show_all()` does not force it visible before a node is selected.
+    # B17 · the node detail panel, docked right. It starts hidden (`panel.hide()`
+    # right after `win.show_all()` below) rather than via `set_no_show_all` —
+    # `no_show_all` stops `show_all()` descending into the frame at all, which
+    # left the inner ScrolledWindow unrealised, so `panel.show()` on a click
+    # revealed an empty frame (T7 follow-up). Hiding only the frame keeps the
+    # whole subtree shown, so a click just un-hides it.
     panel_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
     panel_box.set_border_width(12)
     panel_scroll = Gtk.ScrolledWindow()
@@ -751,7 +755,6 @@ def _run(graph_path: Path) -> int:
     panel.set_size_request(300, -1)
     panel.set_shadow_type(Gtk.ShadowType.NONE)
     panel.add(panel_scroll)
-    panel.set_no_show_all(True)
 
     _css = Gtk.CssProvider()
     _css.load_from_data(
@@ -786,6 +789,7 @@ def _run(graph_path: Path) -> int:
     win.connect("map", lambda *_: reload_now(warm=220))
 
     win.show_all()
+    panel.hide()  # realised by show_all above; a node click un-hides it (B17)
     reload_now(warm=260)
     GLib.timeout_add(33, tick)
     Gtk.main()
