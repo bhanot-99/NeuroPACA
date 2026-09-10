@@ -246,6 +246,35 @@ async def _dmn(tmp_path, clock=None, **cfg):
     return dmn, bus, gm
 
 
+async def test_hebbian_decay_follows_elapsed_time_not_cycle_count(tmp_path) -> None:
+    """V-1 · a fixed factor per idle cycle made decay depend on how often the
+    CPU went idle — a day of short idle spells erased every pair used once. Now
+    one half-life of uptime halves a weight, however many sweeps it took."""
+    clock = FakeClock()
+    dmn, bus, gm = await _dmn(tmp_path, clock=clock, hebbian_half_life_hours=72.0)
+    try:
+        for nid in ("app:a", "app:b"):
+            await gm.add_node(nid, NodeType.APP, None)
+            await gm.add_edge(nid, "domain:engineering", RelationType.PART_OF)
+        await gm.add_edge("app:a", "app:b", RelationType.RELATED_TO, weight=0.8)
+
+        def weight() -> float:
+            return next(e for e in gm.get_edges("app:a") if e.target_id == "app:b").weight
+
+        for _ in range(20):  # many sweeps, no time passing: nothing fades
+            await dmn._reminiscence()
+        assert weight() == pytest.approx(0.8)
+
+        await clock.advance(36 * 3600)
+        await dmn._reminiscence()
+        await clock.advance(36 * 3600)
+        await dmn._reminiscence()
+        assert weight() == pytest.approx(0.4)  # 72 h in two sweeps = one half-life
+    finally:
+        await dmn.stop()
+        await bus.stop()
+
+
 async def test_idle_detected_runs_one_cycle_and_publishes_a_thought(tmp_path) -> None:
     dmn, bus, gm = await _dmn(tmp_path)
     for i in range(4):

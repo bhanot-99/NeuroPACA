@@ -98,26 +98,26 @@ async def test_wire_cooccurrence_creates_the_mesh_the_correlator_never_builds(
         await graph.upsert_node(nid, NodeType.APP, {"label": nid})
     baseline_edges = graph.edge_count
 
-    created, bumped = await graph.wire_cooccurrence(apps, delta=_DELTA, base=0.05)
+    created, bumped = await graph.wire_cooccurrence(apps, delta=_DELTA)
     assert (created, bumped) == (6, 0)  # C(4,2) new RELATED_TO edges
     assert graph.edge_count == baseline_edges + 6
     for i, a in enumerate(apps):
         for b in apps[i + 1 :]:
             assert next(e for e in graph.get_edges(a) if e.target_id == b).weight == pytest.approx(
-                0.05
+                _DELTA  # one saturating step from 0
             )
 
-    created2, bumped2 = await graph.wire_cooccurrence(apps, delta=_DELTA, base=0.05)
+    created2, bumped2 = await graph.wire_cooccurrence(apps, delta=_DELTA)
     assert (created2, bumped2) == (0, 6)  # second pass only strengthens
     assert graph.edge_count == baseline_edges + 6
     a, b = apps[0], apps[1]
     assert next(e for e in graph.get_edges(a) if e.target_id == b).weight == pytest.approx(
-        0.05 + _DELTA
+        _DELTA + _DELTA * (1 - _DELTA)
     )
 
     # a non-activity node in the episode is never a *new* edge's endpoint
     await graph.upsert_node("concept:t7", NodeType.CONCEPT, {"label": "c"})
-    created3, _ = await graph.wire_cooccurrence([apps[0], "concept:t7"], delta=_DELTA, base=0.05)
+    created3, _ = await graph.wire_cooccurrence([apps[0], "concept:t7"], delta=_DELTA)
     assert created3 == 0
 
 

@@ -41,6 +41,18 @@ _log = logging.getLogger(__name__)
 # synthetic "activity" deque (maxlen = ceil(correlation_window / this) + 1, D-10).
 _ACTIVITY_NOMINAL_POLL = 2.0
 _ACTIVITY_COLLECTOR = "activity"
+# V-1 · a focus held longer than this is not assumed "in use right up to the
+# next switch" — past it the user most likely walked away, and the app left
+# focused overnight must not wire to the first app of the morning.
+_MAX_FOCUS_DWELL_SECONDS = 2 * 3600.0
+_CANON_CACHE_MAX = 1024
+
+
+def _now() -> float:
+    """Co-activation clock. `CLOCK_BOOTTIME` keeps counting through suspend,
+    where `time.monotonic()` stops — so a lid closed for the night is a long gap,
+    not an instant one."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
 
 
 def _numeric(value: object) -> float | None:
@@ -90,14 +102,20 @@ class SignalCorrelator(BaseModule):
         self._coactive: deque[tuple[str, float]] = deque(maxlen=config.coactivation_max_nodes)
         self._coactivation_window = float(config.coactivation_window_seconds)
         self._hebbian_delta = float(config.hebbian_delta)
-        self._hebbian_base = float(config.hebbian_base)
         self._hebbian_wired = 0
+        self._focus_exclude = frozenset(a.lower() for a in config.focus_exclude_app_ids)
+        # V-1 · when each pair was last stepped; entries older than the
+        # refractory period are swept, so the map holds only recent pairs.
+        self._refractory = float(config.coactivation_refractory_seconds)
+        self._pair_wired_at: dict[frozenset[str], float] = {}
+        self._canon_cache: dict[str, tuple[str, str]] = {}
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
         self._app_map = AppMap.from_file(self._app_map_path)
         if self._identity.alias_count == 0:
             self._identity = AppIdentity.from_file(self._identity_path)
+            self._canon_cache.clear()  # resolved against the old identity
         self.event_bus.subscribe(EventType.METRIC_COLLECTED, self.on_metric_event)
         self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
 
@@ -156,17 +174,26 @@ class SignalCorrelator(BaseModule):
             webapp_domain = raw_wdom if isinstance(raw_wdom, str) and raw_wdom else None
 
             app_domain = self._app_map.classify(app_id) or ""
+            excluded = self._focus_excluded(app_id)
             if app_domain:
                 await self._classify_into_graph(app_id, app_domain)
+            elif webapp is None and not excluded:
+                # V-1 · an app the user really focuses is activity even when
+                # `app_map` has no domain for it — before, it never got a node
+                # here and so never took part in co-activation at all.
+                # lock-free existence check first: a focus storm between two
+                # unmapped apps must not take the graph lock on every event
+                node_id, label = self._canon_app_id(app_id)
+                if not self._graph.has_node(node_id):
+                    await self._graph.upsert_node(node_id, NodeType.APP, {"label": label})
             if webapp is not None:
                 await self._classify_webapp_into_graph(webapp, app_id, webapp_domain)
 
             # T7 · Hebbian co-activation — the focused node is the tab if we
-            # identified one, else the app. Both nodes now exist (the
-            # `_classify_*` calls above upsert them).
+            # identified one, else the app. Both nodes now exist (upserted above).
             if webapp is not None:
                 await self._reinforce_coactivation(f"webapp:{webapp}")
-            elif app_domain:
+            elif not excluded:
                 await self._reinforce_coactivation(self._canon_app_id(app_id)[0])
 
             # The focus's domain is the web-app's when we identified one, else the
@@ -218,9 +245,17 @@ class SignalCorrelator(BaseModule):
 
     def _canon_app_id(self, raw: str) -> tuple[str, str]:
         """`(node_id, label)` for an app, canonicalised so one real app is one
-        node no matter which sensor's name reached here (B17)."""
-        key = self._identity.resolve(raw) or raw
-        return f"app:{key}", self._identity.pretty(key) or key
+        node no matter which sensor's name reached here (B17). Memoised per raw
+        id — resolving is regex work, and a focus storm repeats a handful of ids
+        thousands of times; the cache is bounded by distinct ids, reset if huge."""
+        hit = self._canon_cache.get(raw)
+        if hit is None:
+            key = self._identity.resolve(raw) or raw
+            hit = (f"app:{key}", self._identity.pretty(key) or key)
+            if len(self._canon_cache) >= _CANON_CACHE_MAX:
+                self._canon_cache.clear()
+            self._canon_cache[raw] = hit
+        return hit
 
     async def _classify_into_graph(self, app_id: str, domain_id: str) -> None:
         """Ensure `app:<canonical>` exists and is wired to its domain hub. Bounded
@@ -249,27 +284,43 @@ class SignalCorrelator(BaseModule):
                 await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
             self._known_webapps.add(webapp)
 
+    def _focus_excluded(self, app_id: str) -> bool:
+        key = self._canon_app_id(app_id)[0].removeprefix("app:")
+        return app_id.lower() in self._focus_exclude or key.lower() in self._focus_exclude
+
     async def _reinforce_coactivation(self, focus_id: str) -> None:
         """T7 · "fire together, wire together". Wire `focus_id` to every
-        `app:` / `webapp:` node focused within the last
-        `coactivation_window_seconds`, then record this focus. `wire_cooccurrence`
-        creates the pair edge on first co-activation and strengthens it on each
-        recurrence; the B6 idle sweep decays it. Bounded by the deque's
-        `maxlen`, so the pair work is O(coactivation_max_nodes)."""
-        now = time.monotonic()
+        `app:` / `webapp:` node *last active* within the last
+        `coactivation_window_seconds`, then record this focus. Credit falls
+        linearly with the gap — the app you switched straight from counts fully,
+        one near the edge of the window barely (V-1). Star-shaped
+        (`wire_coactivation`): the recent apps are never re-wired among
+        themselves. Bounded by the deque's `maxlen`."""
+        now = _now()
+        if self._coactive:
+            # the previous focus was in use right up to this switch, so it was
+            # last active *now*, not when it was first focused — up to a dwell cap
+            prev, since = self._coactive[-1]
+            self._coactive[-1] = (prev, min(now, since + _MAX_FOCUS_DWELL_SECONDS))
         warm = [
-            nid
+            (nid, 1.0 - (now - ts) / self._coactivation_window)
             for nid, ts in self._coactive
-            if nid != focus_id and now - ts <= self._coactivation_window
+            if nid != focus_id
+            and now - ts < self._coactivation_window
+            and now - self._pair_wired_at.get(frozenset((focus_id, nid)), -math.inf)
+            >= self._refractory
         ]
         if warm:
-            created, bumped = await self._graph.wire_cooccurrence(
-                [focus_id, *warm],
-                delta=self._hebbian_delta,
-                base=self._hebbian_base,
-                max_episode=(self._coactive.maxlen or 16) + 1,
+            created, bumped = await self._graph.wire_coactivation(
+                focus_id, warm, rate=self._hebbian_delta
             )
             self._hebbian_wired += created + bumped
+            for nid, _ in warm:
+                self._pair_wired_at[frozenset((focus_id, nid))] = now
+            if len(self._pair_wired_at) > 4 * (self._coactive.maxlen or 16):
+                self._pair_wired_at = {
+                    k: t for k, t in self._pair_wired_at.items() if now - t < self._refractory
+                }
         # drop any stale copy of this id, then push it as the newest entry. A
         # deque with `maxlen` evicts from the left on a right append, so the
         # newest focus (rightmost) always survives and the oldest is forgotten.

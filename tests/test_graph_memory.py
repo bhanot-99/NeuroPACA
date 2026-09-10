@@ -356,18 +356,73 @@ async def test_wire_cooccurrence_creates_then_strengthens_activity_pairs(tmp_pat
     for nid in apps:
         await gm.add_node(nid, NodeType.APP if nid.startswith("app:") else NodeType.WEBAPP, None)
 
-    created, bumped = await gm.wire_cooccurrence(apps, delta=0.01, base=0.05)
+    created, bumped = await gm.wire_cooccurrence(apps, delta=0.1)
     assert (created, bumped) == (3, 0)  # C(3,2)
     for i, a in enumerate(apps):
         for b in apps[i + 1 :]:
             w = next(e for e in gm.get_edges(a) if e.target_id == b).weight
-            assert w == pytest.approx(0.05)
+            assert w == pytest.approx(0.1)  # one saturating step from 0
 
-    created2, bumped2 = await gm.wire_cooccurrence(apps, delta=0.01, base=0.05)
+    created2, bumped2 = await gm.wire_cooccurrence(apps, delta=0.1)
     assert (created2, bumped2) == (0, 3)
     assert next(e for e in gm.get_edges("app:zed") if e.target_id == "app:brave").weight == (
-        pytest.approx(0.06)
+        pytest.approx(0.19)  # 0.1 + 0.1 * (1 - 0.1)
     )
+
+
+async def test_wire_cooccurrence_skips_a_tab_and_its_own_browser(tmp_path) -> None:
+    """V-1 · a `PART_OF`-linked pair is structure: no Hebbian weight lands on
+    the `PART_OF` edge and no association edge is added beside it."""
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:brave", NodeType.APP, None)
+    await gm.add_node("webapp:youtube", NodeType.WEBAPP, None)
+    await gm.add_edge("webapp:youtube", "app:brave", RelationType.PART_OF)
+
+    assert await gm.wire_cooccurrence(["webapp:youtube", "app:brave"], delta=0.1) == (0, 0)
+    assert [(e.relation, e.weight) for e in gm.get_edges("webapp:youtube")] == [
+        (RelationType.PART_OF, 0.0)
+    ]
+
+
+async def test_wire_coactivation_is_star_shaped_and_scaled(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    for nid in ("app:focus", "app:p1", "app:p2"):
+        await gm.add_node(nid, NodeType.APP, None)
+
+    created, bumped = await gm.wire_coactivation(
+        "app:focus", [("app:p1", 1.0), ("app:p2", 0.5)], rate=0.1
+    )
+    assert (created, bumped) == (2, 0)
+
+    def w(a: str, b: str) -> float:
+        return next(e for e in gm.get_edges(a) if e.target_id == b).weight
+
+    assert w("app:focus", "app:p1") == pytest.approx(0.1)
+    assert w("app:focus", "app:p2") == pytest.approx(0.05)  # half the credit
+    assert not any(e.target_id == "app:p2" for e in gm.get_edges("app:p1"))  # no peer<->peer
+
+
+async def test_wire_coactivation_ignores_non_activity_and_absent_nodes(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:focus", NodeType.APP, None)
+    await gm.add_node("file:/x.py", NodeType.FILE, None)
+    peers = [("file:/x.py", 1.0), ("app:ghost", 1.0), ("app:focus", 1.0)]
+    assert await gm.wire_coactivation("app:focus", peers, rate=0.1) == (0, 0)
+    assert await gm.wire_coactivation("file:/x.py", [("app:focus", 1.0)], rate=0.1) == (0, 0)
+    assert gm.get_edges("app:focus") == []
+
+
+async def test_decay_heals_stray_weight_on_structural_edges(tmp_path) -> None:
+    """V-1 · pre-fix builds bumped `PART_OF` weight, which decay never touched
+    — the sweep now resets it."""
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:brave", NodeType.APP, None)
+    await gm.add_node("webapp:youtube", NodeType.WEBAPP, None)
+    await gm.add_edge("webapp:youtube", "app:brave", RelationType.PART_OF, weight=0.04)
+
+    await gm.decay_cooccurrence_edges(1.0, 0.02)
+    (edge,) = gm.get_edges("webapp:youtube")
+    assert edge.weight == 0.0
 
 
 async def test_wire_cooccurrence_caps_episode_size(tmp_path) -> None:
@@ -376,7 +431,7 @@ async def test_wire_cooccurrence_caps_episode_size(tmp_path) -> None:
     for nid in apps:
         await gm.add_node(nid, NodeType.APP, None)
 
-    created, _ = await gm.wire_cooccurrence(apps, delta=0.01, base=0.05, max_episode=4)
+    created, _ = await gm.wire_cooccurrence(apps, delta=0.01, max_episode=4)
     assert created == 6  # only the first 4 ids -> C(4,2)
 
 
@@ -386,9 +441,7 @@ async def test_wire_cooccurrence_caps_new_edges_per_call(tmp_path) -> None:
     for nid in apps:
         await gm.add_node(nid, NodeType.APP, None)
 
-    created, _ = await gm.wire_cooccurrence(
-        apps, delta=0.01, base=0.05, max_episode=8, max_new_edges=5
-    )
+    created, _ = await gm.wire_cooccurrence(apps, delta=0.01, max_episode=8, max_new_edges=5)
     assert created == 5  # C(8,2) == 28 possible, capped at 5
 
 
@@ -399,21 +452,25 @@ async def test_wire_cooccurrence_only_creates_between_activity_nodes(tmp_path) -
     await gm.add_node("concept:flow", NodeType.CONCEPT, None)
 
     created, bumped = await gm.wire_cooccurrence(
-        ["app:zed", "file:/x.py", "concept:flow"], delta=0.01, base=0.05
+        ["app:zed", "file:/x.py", "concept:flow"], delta=0.01
     )
     assert (created, bumped) == (0, 0)
     assert gm.get_edges("app:zed") == []
 
-    # an existing edge to a non-activity node is still strengthened
+    # an existing RELATED_TO edge to a non-activity node is still strengthened
     await gm.add_edge("app:zed", "file:/x.py", RelationType.RELATED_TO, weight=0.1)
-    _, bumped2 = await gm.wire_cooccurrence(["app:zed", "file:/x.py"], delta=0.01, base=0.05)
+    _, bumped2 = await gm.wire_cooccurrence(["app:zed", "file:/x.py"], delta=0.01)
     assert bumped2 == 1
+    # ...but a PART_OF edge between them never carries Hebbian weight
+    await gm.add_edge("file:/x.py", "concept:flow", RelationType.PART_OF)
+    _, bumped3 = await gm.wire_cooccurrence(["file:/x.py", "concept:flow"], delta=0.01)
+    assert bumped3 == 0
 
 
 async def test_wire_cooccurrence_skips_absent_ids(tmp_path) -> None:
     gm = await _loaded_graph(tmp_path)
     await gm.add_node("app:zed", NodeType.APP, None)
-    created, bumped = await gm.wire_cooccurrence(["app:zed", "app:ghost"], delta=0.01, base=0.05)
+    created, bumped = await gm.wire_cooccurrence(["app:zed", "app:ghost"], delta=0.01)
     assert (created, bumped) == (0, 0)
 
 

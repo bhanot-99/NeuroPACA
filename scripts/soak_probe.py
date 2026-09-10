@@ -97,7 +97,7 @@ def module_detail(health: dict[str, Any], name: str) -> str:
 def hebbian_weight_stats(graph_path: str | None) -> dict[str, Any]:
     """T7 · best-effort read of the on-disk graph for the co-occurrence weight
     distribution. A daemon that is wiring co-activations shows a rising
-    `weight_nonzero_fraction` and a `max` well above `hebbian_base`; a week of
+    `weight_nonzero_fraction` and a `max` well above one step (`hebbian_delta`); a week of
     zeros is the T7 signature returning. Any read/parse failure yields `{}` --
     same philosophy as an unreachable daemon (a fact, not an abort)."""
     if not graph_path:

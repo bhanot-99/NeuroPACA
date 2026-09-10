@@ -239,8 +239,7 @@ class BitNetPlasticity(BaseModule):
         # it, no extra truncation. The 50-citation loop-lag test is the ceiling.
         await self._graph.wire_cooccurrence(
             episode,
-            delta=self.config.hebbian_delta * self.config.hebbian_insight_multiplier,
-            base=self.config.hebbian_base,
+            delta=min(1.0, self.config.hebbian_delta * self.config.hebbian_insight_multiplier),
             max_episode=len(episode) or 1,
             max_new_edges=len(episode) or 1,
         )
