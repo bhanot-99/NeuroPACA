@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B13 · whole-pipeline replay (B13_PLAN.md §5 integration table).
+"""B13 · whole-pipeline replay (RESEARCH_DOSSIER.md §21.1, B13 §5 integration table).
 
 Synthetic `METRIC_COLLECTED` / `APP_SWITCH` events replayed one at a time through
 a real `SignalCorrelator` (real `EventBus` + `GraphMemory`, no sleeping), and the

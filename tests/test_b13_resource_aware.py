@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""B13 · resource-aware sensing + non-inert Idle/Distraction (B13_PLAN.md, D-19).
+"""B13 · resource-aware sensing + non-inert Idle/Distraction (RESEARCH_DOSSIER.md §21.1, D-19).
 
 Pure/synchronous units: the patterns are driven directly with hand-built
 `MetricSnapshot` windows (no bus, no clock, no graph — rules.md §8); the

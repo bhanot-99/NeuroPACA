@@ -11,12 +11,12 @@
 # B1 T2 (60 min, conditional), B2 T3 (24 h, died at 11 h on a suspend) and B4
 # (1 h, never run) windows -- four debts, one week.
 #
-# AND, post-B15: that the Wayland focus sensor stays alive for a week. B15_PLAN.md
+# AND, post-B15: that the Wayland focus sensor stays alive for a week. RESEARCH_DOSSIER.md §21.3
 # §2a found ~1 in 3 daemon starts came up permanently deaf (GC'd cosmic proxies) —
 # the real reason B7's soaks fired L5 zero times. That is fixed; the residual
 # ~1/20 flaky start is only *self-healed* by a liveness watchdog. `soak_state.py
 # assess` fails the run on a week mostly deaf, on the watchdog reconnecting more
-# than ~1/day (B15_PLAN.md §7 — escalate to a dedicated Wayland thread), or on any
+# than ~1/day (RESEARCH_DOSSIER.md §21.3, B15 §7 — escalate to a dedicated Wayland thread), or on any
 # SIGSEGV marker (the two-connection exit-139 crash B15 §2b removed).
 #
 # HOW IT RUNS (changed deliberately from the original single-invocation design)

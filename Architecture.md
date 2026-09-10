@@ -462,7 +462,7 @@ BitNetPlasticity «Module»
   "insight_category": "routine" | "anomaly" | "distraction" }
 ```
 
-The human-readable `Insight.summary` is a **template** — never model text. Since B18 it is not stored either: an insight is a `LabelSpec(insight, refs=(cited,), facet="<category>/<signal>")` and its words are rendered on demand by `core/labels.py`, the one renderer every surface uses (see `LABELS_PLAN.md`). `null` cited node = discard.
+The human-readable `Insight.summary` is a **template** — never model text. Since B18 it is not stored either: an insight is a `LabelSpec(insight, refs=(cited,), facet="<category>/<signal>")` and its words are rendered on demand by `core/labels.py`, the one renderer every surface uses (see `RESEARCH_DOSSIER.md §21.7`). `null` cited node = discard.
 
 ### The L4 pipeline
 

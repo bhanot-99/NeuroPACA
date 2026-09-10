@@ -5,7 +5,7 @@
 #
 # B7 ran three soaks and L5 fired zero times; B9's first gate saw ~4 app switches
 # in a full hour of real use. Both were blamed on "the collector cannot see
-# Wayland under systemd --user". B15 found the real cause (B15_PLAN.md §2a): the
+# Wayland under systemd --user". B15 found the real cause (RESEARCH_DOSSIER.md §21.3, B15 §2a): the
 # `zcosmic_toplevel_handle_v1` proxy carrying "which window is focused" was kept
 # in a local variable and GC'd non-deterministically — ~1 in 3 daemon starts came
 # up permanently deaf. Fixed (strong-ref dict + one shared connection), and this
@@ -18,7 +18,7 @@
 # soak that is supposed to subsume the carried B1 T2, B2 T3 and B4 windows. A week
 # is too expensive to spend finding that out at the end.
 #
-# THE POST-B15 BAR (check 5). B15_PLAN.md §6 criterion 1: the daemon must record
+# THE POST-B15 BAR (check 5). RESEARCH_DOSSIER.md §21.3, B15 §6 criterion 1: the daemon must record
 # "dozens of focus/tab switches per hour, not ~4". So a pass now needs a real
 # switch rate (>= 20/h), a Wayland connection that is not thrashing (<= 1
 # reconnect, 0 pump-errors in the window), and window✓ live — not merely "one of
@@ -104,7 +104,7 @@ echo "ok: neuropaca health answers over the socket"
 # --- 5. the post-B15 sensing bar over the window -----------------------------
 # The counters are cumulative, so the question is whether they MOVED across the
 # window. Post-B15 the bar is a real switch RATE, not "any one liveness signal
-# moved once": B15_PLAN.md §6 crit 1 is "dozens per hour, not ~4".
+# moved once": RESEARCH_DOSSIER.md §21.3, B15 §6 crit 1 is "dozens per hour, not ~4".
 #
 # PASS needs ALL of:
 #   switches   >= NEED_SWITCHES (20/h, scaled to the window)   -- the desk moved
@@ -159,7 +159,7 @@ echo "window✓ at end:                      ${WINDOW_OK}"
   connection is raising and reconnecting. Check the daemon log before a 7-day run."
 
 [ "$RECONNECTS" -le 1 ] || fail "${RECONNECTS} Wayland reconnects in ${MINUTES} min — the
-  connection is thrashing (B15_PLAN.md §7: watchdog insufficient). Do not start the soak."
+  connection is thrashing (RESEARCH_DOSSIER.md §21.3, B15 §7: watchdog insufficient). Do not start the soak."
 
 if [ "$SWITCHES" -ge "$NEED_SWITCHES" ]; then
   echo "ok: switch rate ${RATE}/h clears the post-B15 bar"

@@ -1,4 +1,4 @@
-# B13 · resource-aware sensing soak (B13_PLAN.md §B13-C, D-19).
+# B13 · resource-aware sensing soak (RESEARCH_DOSSIER.md §21.1, B13 §B13-C, D-19).
 #
 # The config the B13 re-validation soak runs under. It is `neuropaca.soak.toml`
 # plus the three B13 switches:
