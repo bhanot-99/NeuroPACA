@@ -505,7 +505,54 @@ restarted onto it — orchestrator canonical pass a confirming no-op. **No syste
 unit change.**
 
 **Deferred (found in the same review, not B17):** every Hebbian edge weight in the
-graph is `0.0` — reinforcement is not accumulating.
+graph is `0.0` — reinforcement is not accumulating. → **fixed in T7.**
+
+---
+
+## T7 · Hebbian weights never leave zero — "wire together" was never built
+
+**Branch `t7-hebbian-weights-zero`. Full analysis: `T7_PLAN.md`. Report: `T7_TEST_REPORT.md`.**
+
+Root cause: `GraphMemory.reinforce_cooccurrence` only *strengthens existing* edges
+("if the edge exists"). Nothing in the system ever *created* an edge between two
+nodes because they co-occurred — the correlator wires `app:` / `webapp:` nodes to
+`domain:` hubs, never to each other — so the reinforcer was always handed a set of
+sibling nodes with no internal edges and bumped nothing. Two aggravators:
+`_add_edge_unsafe` re-adding an existing edge reset its `weight` to `0.0` (latent,
+masked by the primary bug); and reinforcement ran only from the model-gated
+`_store_insight` path (~5 events/day). The integration test passed because it
+pre-creates `RELATED_TO` edges between the cited nodes — exactly what production
+never does.
+
+Built:
+- `_add_edge_unsafe` → upsert: re-asserting an existing edge never touches its
+  `weight` / `created_at`. New `_bump_or_create_edge_unsafe` helper.
+- `GraphMemory.wire_cooccurrence(node_ids, *, delta, base, max_episode,
+  max_new_edges)` — create-or-strengthen: an existing edge between a pair gains
+  `delta`; a missing one is created at `base` when **both** ends are `app:` /
+  `webapp:` nodes. Episode + new-edge caps bound the O(k²) work.
+- `SignalCorrelator.on_app_switch` keeps a bounded co-activation deque
+  (`coactivation_max_nodes`) and, on every switch, wires the new focus to every
+  node focused within `coactivation_window_seconds` — model-free Hebbian learning
+  on the raw focus stream.
+- `_store_insight` now calls `wire_cooccurrence` (model-confirmed episodes bump at
+  `delta × hebbian_insight_multiplier`).
+- `GraphMemory.decay_cooccurrence_edges(factor, floor)` in the B6 idle sweep —
+  "use it or lose it": co-occurrence weights decay each cycle, edges below the
+  floor are pruned (never re-orphaning a node). Weight becomes a recency-weighted
+  affinity.
+- 7 new `Config` knobs (`hebbian_delta` / `hebbian_base` /
+  `hebbian_insight_multiplier` / `coactivation_window_seconds` /
+  `coactivation_max_nodes` / `hebbian_decay_factor` / `hebbian_floor`), all
+  validated, all operator-tunable.
+
+Files: `core/graph_memory.py`, `core/config.py`, `diagnosis/correlator.py`,
+`learning/plasticity.py`, `idle/dmn.py`; tests `test_graph_memory.py` (+11),
+`test_cooccurrence_window.py` (new, 7), `test_learning.py` (+1),
+`integration/test_hebbian_plasticity.py` (rewired — no longer pre-wires the
+fixture). 659 + 10 integration green, ruff + mypy clean. **No schema change, no
+new dependency, no systemd change.** Closes on a ≥ 24 h soak showing a stable
+non-zero weight distribution that decay keeps bounded.
 
 ---
 
