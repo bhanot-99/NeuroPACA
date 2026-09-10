@@ -6,161 +6,184 @@
 <title>NeuroPACA · behavioural graph</title>
 <!--
   Rendered by scripts/neuropaca_graph.py, which splices the graph payload into
-  the __DATA__ placeholder below. The output is self-contained.
+  the __DATA__ placeholder below. The output is one self-contained file and is
+  meant to be opened straight from the soak tray, in Brave.
 
-  ZERO EGRESS (rules.md §6): no <script src>, no <link href>, no webfont, no
-  fetch. System font stacks only. A viewer for a local-first daemon must not be
-  the one thing in the project that phones home.
+  ZERO EGRESS (rules.md §6): no script src, no link href, no webfont, no network
+  of any kind. System font stacks only. A viewer for a local-first daemon must
+  not be the one thing in the project that phones home.
+
+  THE LAYOUT COOLS AND STOPS.  The old native window ran its physics forever, so
+  the picture never held still and every node drifted toward the middle. This is
+  a d3-style simulation with a decaying alpha: it settles in ~2 s, then freezes
+  and the canvas stops repainting. Dragging a node, scrubbing time, or toggling
+  a filter re-heats it briefly. A collision force keeps nodes off each other, so
+  a busy cluster spreads instead of collapsing into one blob.
 -->
 <style>
-  :root {
-    --ground:#f2f4f7; --panel:rgba(255,255,255,.93); --panel-bd:#c9d1da;
-    --ink:#11161d; --muted:#5d6875; --faint:#8e9aa7;
-    --edge:rgba(60,72,88,.26); --edge-hub:rgba(60,72,88,.09);
-    --accent:#0f7c8c; --halo:rgba(242,244,247,.82);
-    --t-concept:#b8791f; --t-file:#1a8f9c; --t-app:#7c5cd6; --t-insight:#2c8f63;
-    --t-idle_thought:#c0559a; --t-session:#5d6875; --t-metric:#8a6d3b;
-    --t-task:#2f7dbf; --t-person:#c2557a; --t-event_log:#77808c; --t-goal:#3f8f7a;
+  :root{
+    color-scheme:dark;
+    --ground:#070911; --ground-2:#0b0f1a; --vignette:rgba(0,0,0,.55);
+    --panel:rgba(15,20,32,.82); --panel-bd:rgba(120,140,175,.16);
+    --ink:#e8edf6; --muted:#9aa7bd; --faint:#5f6c82;
+    --edge:rgba(160,180,215,.17); --edge-hub:rgba(160,180,215,.09);
+    --edge-lit:#7cc7ff; --edge-part:rgba(150,170,205,.30);
+    --accent:#7cc7ff; --accent-2:#b79cff;
+    --halo:rgba(7,9,17,.78);
+    /* node classes — distinct hue AND size band (see radius() / classOf()) */
+    --t-root:#ffd98a;          /* YOU — the person at the centre           */
+    --t-domain:#9db4d8;        /* the 10 routing hubs — structural, cool   */
+    --t-app:#b79cff;           /* native apps                              */
+    --t-webapp:#5cc8f5;        /* web apps / sites                         */
+    --t-concept:#e0a458;       /* concepts the daemon abstracted           */
+    --t-insight:#5fce9a;       /* insights                                 */
+    --t-idle_thought:#e988c4;  /* default-mode / idle thoughts             */
+    --t-file:#4cc9d4; --t-session:#8c9aa8; --t-metric:#d0a86a;
+    --t-task:#6aaee8; --t-person:#e78aa8; --t-event_log:#9aa5b1; --t-goal:#6cc4ab;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     --mono:ui-monospace,"SF Mono","JetBrains Mono","IBM Plex Mono",Menlo,Consolas,monospace;
   }
-  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-    --ground:#0b0e14; --panel:rgba(19,24,33,.91); --panel-bd:#2a323e;
-    --ink:#e6ecf3; --muted:#98a5b3; --faint:#6b7886;
-    --edge:rgba(190,205,222,.22); --edge-hub:rgba(190,205,222,.07);
-    --accent:#45c0d0; --halo:rgba(11,14,20,.80);
-    --t-concept:#e0a458; --t-file:#4cc9d4; --t-app:#a78bfa; --t-insight:#5fce9a;
-    --t-idle_thought:#e07ab8; --t-session:#8c9aa8; --t-metric:#d0a86a;
-    --t-task:#6aaee8; --t-person:#e78aa8; --t-event_log:#9aa5b1; --t-goal:#6cc4ab;
-  }}
-  :root[data-theme=dark]{
-    --ground:#0b0e14; --panel:rgba(19,24,33,.91); --panel-bd:#2a323e;
-    --ink:#e6ecf3; --muted:#98a5b3; --faint:#6b7886;
-    --edge:rgba(190,205,222,.22); --edge-hub:rgba(190,205,222,.07);
-    --accent:#45c0d0; --halo:rgba(11,14,20,.80);
-    --t-concept:#e0a458; --t-file:#4cc9d4; --t-app:#a78bfa; --t-insight:#5fce9a;
-    --t-idle_thought:#e07ab8; --t-session:#8c9aa8; --t-metric:#d0a86a;
-    --t-task:#6aaee8; --t-person:#e78aa8; --t-event_log:#9aa5b1; --t-goal:#6cc4ab;
-  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.5 var(--sans);
-       height:100vh;overflow:hidden}
+  body{margin:0;height:100vh;overflow:hidden;color:var(--ink);
+       font:13px/1.5 var(--sans);
+       background:
+         radial-gradient(120% 120% at 50% 0%,var(--ground-2),var(--ground) 60%),
+         var(--ground);}
   #stage{position:fixed;inset:0}
+  #stage::after{content:"";position:fixed;inset:0;pointer-events:none;
+       box-shadow:inset 0 0 240px 40px var(--vignette)}
   canvas{display:block;width:100%;height:100%;cursor:grab}
   canvas.dragging{cursor:grabbing}
+
   .panel{position:fixed;background:var(--panel);border:1px solid var(--panel-bd);
-         border-radius:3px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-  #rail{top:16px;left:16px;width:238px;padding:14px 16px 15px}
-  #rail h1{font-size:13px;font-weight:700;letter-spacing:-.01em;margin:0 0 2px}
-  #rail .sub{font-family:var(--mono);font-size:10px;color:var(--faint);
-             letter-spacing:.04em;text-transform:uppercase;margin:0 0 13px}
-  .grp{border-top:1px solid var(--panel-bd);padding-top:10px;margin-top:10px}
-  .grp-label{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
-             text-transform:uppercase;color:var(--faint);margin:0 0 7px}
-  label.row{display:flex;align-items:center;gap:8px;font-size:12px;padding:2.5px 0;
-            cursor:pointer;user-select:none}
+         border-radius:10px;backdrop-filter:blur(14px) saturate(1.2);
+         -webkit-backdrop-filter:blur(14px) saturate(1.2);
+         box-shadow:0 12px 40px -12px rgba(0,0,0,.6)}
+
+  #rail{top:16px;left:16px;width:236px;padding:15px 16px 14px}
+  #rail h1{font-size:13px;font-weight:650;letter-spacing:.02em;margin:0}
+  #rail .sub{font-family:var(--mono);font-size:9.5px;color:var(--faint);
+             letter-spacing:.06em;text-transform:uppercase;margin:3px 0 13px}
+  .grp{border-top:1px solid var(--panel-bd);padding-top:11px;margin-top:11px}
+  .grp:first-of-type{border-top:0;padding-top:0;margin-top:0}
+  .grp-label{font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+             text-transform:uppercase;color:var(--faint);margin:0 0 8px}
+  label.row{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;
+            cursor:pointer;user-select:none;color:var(--muted)}
   label.row input{accent-color:var(--accent);margin:0;cursor:pointer}
-  .slider{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:4px 0 1px}
+  .slider{display:flex;align-items:center;gap:8px;font-size:11px;padding:5px 0 2px;
+          color:var(--muted)}
   .slider input{flex:1;accent-color:var(--accent);min-width:0;cursor:pointer}
-  .slider b{font-family:var(--mono);font-size:10.5px;font-weight:600;min-width:26px;
-            text-align:right}
-  .legend{display:grid;gap:4px}
-  .lg{display:flex;align-items:center;gap:8px;font-size:11.5px}
-  .lg .dot{width:9px;height:9px;border-radius:50%;flex:none}
-  .lg .n{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
-  .stat{display:flex;justify-content:space-between;font-size:11.5px;padding:1.5px 0}
-  .stat b{font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums}
-  .btn{font-family:var(--mono);font-size:10.5px;font-weight:600;background:transparent;
-       color:var(--ink);border:1px solid var(--panel-bd);border-radius:3px;
-       padding:5px 9px;cursor:pointer;letter-spacing:.03em}
+  .slider b{font-family:var(--mono);font-size:10px;font-weight:600;min-width:26px;
+            text-align:right;color:var(--ink)}
+  .legend{display:grid;gap:5px}
+  .lg{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--muted);
+      cursor:pointer;user-select:none}
+  .lg.off{opacity:.32}
+  .lg .dot{border-radius:50%;flex:none;box-shadow:0 0 8px -1px currentColor}
+  .lg .n{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .stat{display:flex;justify-content:space-between;font-size:11px;padding:2px 0;
+        color:var(--muted)}
+  .stat b{font-family:var(--mono);font-weight:600;color:var(--ink);
+          font-variant-numeric:tabular-nums}
+  .actions{display:flex;gap:6px;margin-top:12px}
+  .btn{flex:1;font-family:var(--mono);font-size:10px;font-weight:600;
+       background:rgba(124,199,255,.06);color:var(--ink);
+       border:1px solid var(--panel-bd);border-radius:7px;padding:6px 8px;
+       cursor:pointer;letter-spacing:.04em}
   .btn:hover{border-color:var(--accent);color:var(--accent)}
   .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  #focusBar{display:none;align-items:center;gap:8px;font-size:11.5px;margin-top:9px}
-  #focusBar.on{display:flex}
-  #focusName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
-             white-space:nowrap;font-weight:600;color:var(--accent)}
-  #inspect{top:16px;right:16px;width:252px;padding:13px 15px 15px;display:none}
+
+  #inspect{top:16px;right:16px;width:250px;padding:14px 15px 15px;display:none}
   #inspect.on{display:block}
-  #inspect .lbl{font-size:13px;font-weight:600;margin:0 0 3px;word-break:break-word}
-  #inspect .id{font-family:var(--mono);font-size:10px;color:var(--faint);
-               word-break:break-all;margin:0 0 11px}
-  #inspect dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:0;
-              font-size:11.5px}
+  #inspect .kind{font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+                 text-transform:uppercase;margin:0 0 5px}
+  #inspect .lbl{font-size:14px;font-weight:600;margin:0 0 3px;word-break:break-word}
+  #inspect .id{font-family:var(--mono);font-size:9.5px;color:var(--faint);
+               word-break:break-all;margin:0 0 12px}
+  #inspect dl{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;margin:0;
+              font-size:11px}
   #inspect dt{color:var(--muted)}
   #inspect dd{margin:0;text-align:right;font-family:var(--mono);
               font-variant-numeric:tabular-nums;font-weight:500}
-  .bar{height:3px;background:var(--panel-bd);border-radius:2px;overflow:hidden;margin-top:9px}
-  .bar i{display:block;height:100%;background:var(--accent)}
-  #time{bottom:16px;left:16px;right:16px;padding:11px 16px 13px}
-  .trow{display:flex;align-items:center;gap:14px}
-  #play{font-family:var(--mono);font-size:11px;font-weight:600;background:var(--accent);
-        color:var(--ground);border:0;border-radius:3px;padding:6px 13px;cursor:pointer;
-        letter-spacing:.04em;min-width:78px}
+  .bar{height:3px;background:rgba(150,170,205,.16);border-radius:2px;
+       overflow:hidden;margin-top:11px}
+  .bar i{display:block;height:100%;
+         background:linear-gradient(90deg,var(--accent-2),var(--accent))}
+
+  #time{bottom:16px;left:16px;right:16px;max-width:720px;margin:0 auto;
+        padding:11px 16px 13px}
+  .trow{display:flex;align-items:center;gap:13px}
+  #play{font-family:var(--mono);font-size:10.5px;font-weight:600;
+        background:var(--accent);color:#04121f;border:0;border-radius:7px;
+        padding:7px 14px;cursor:pointer;letter-spacing:.05em;min-width:80px}
   #play:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   #scrub{flex:1;accent-color:var(--accent);cursor:pointer;min-width:0}
-  #clock{font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums;
+  #clock{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;
          color:var(--muted);white-space:nowrap}
   #clock b{color:var(--ink);font-weight:600}
   .ticks{display:flex;justify-content:space-between;font-family:var(--mono);
-         font-size:9.5px;color:var(--faint);margin:7px 92px 0 92px}
-  #note{position:fixed;bottom:94px;left:16px;font-family:var(--mono);font-size:10px;
+         font-size:9px;color:var(--faint);margin:8px 94px 0 94px}
+
+  #hint{position:fixed;left:16px;bottom:74px;font-family:var(--mono);font-size:9.5px;
         color:var(--faint);background:var(--panel);border:1px solid var(--panel-bd);
-        padding:5px 9px;border-radius:3px}
+        padding:5px 9px;border-radius:7px}
   #empty{position:fixed;inset:0;display:none;place-items:center;text-align:center;
          padding:24px;pointer-events:none}
   #empty.on{display:grid}
-  #empty p{max-width:44ch;color:var(--muted);font-size:14px}
-  #empty b{display:block;color:var(--ink);font-size:17px;font-weight:600;margin-bottom:8px}
-  @media (max-width:860px){#rail{width:198px}#inspect{display:none!important}
-    .ticks{margin:7px 20px 0 20px}}
+  #empty p{max-width:42ch;color:var(--muted);font-size:13px}
+  #empty b{display:block;color:var(--ink);font-size:16px;font-weight:600;margin-bottom:8px}
+  @media (max-width:880px){#rail{width:196px}#inspect{display:none!important}
+    .ticks{margin:8px 20px 0 20px}#hint{display:none}}
 </style>
 </head>
 <body>
 
 <div id="stage"><canvas id="c"></canvas></div>
 
-<div id="empty">
-  <p><b>Only the routing hubs so far</b>
-  No behaviour has been recorded into the graph yet. Let the daemon run, then
-  regenerate this page.</p>
-</div>
+<div id="empty"><p><b>Only the routing hubs so far</b>
+  No behaviour has been recorded into the graph yet. Let the daemon run for a
+  while, then reopen this view.</p></div>
 
 <div class="panel" id="rail">
   <h1>Behavioural graph</h1>
   <p class="sub" id="railSub">—</p>
 
-  <div class="grp" style="border-top:0;padding-top:0;margin-top:0">
-    <p class="grp-label">Readability</p>
+  <div class="grp">
+    <p class="grp-label">Layout</p>
     <label class="row"><input type="checkbox" id="cluster" checked> Cluster by domain</label>
-    <label class="row"><input type="checkbox" id="pinHubs" checked> Pin the routing hubs</label>
-    <label class="row"><input type="checkbox" id="hideHubEdges"> Hide hub edges</label>
-    <label class="row"><input type="checkbox" id="showLabels" checked> Labels (decluttered)</label>
-    <label class="row"><input type="checkbox" id="autofit" checked> Auto-fit to view</label>
-    <div class="slider"><span>min&nbsp;weight</span>
-      <input type="range" id="minw" min="0" max="100" value="0"><b id="minwv">0.0</b></div>
-    <div id="focusBar"><span id="focusName"></span>
-      <button class="btn" id="clearFocus">CLEAR</button></div>
+    <label class="row"><input type="checkbox" id="autofit" checked> Keep it framed</label>
+    <label class="row"><input type="checkbox" id="labels" checked> Labels</label>
+    <div class="slider"><span>min&nbsp;link</span>
+      <input type="range" id="minw" min="0" max="100" value="0"><b id="minwv">0.00</b></div>
+    <div class="actions">
+      <button class="btn" id="reheat">RE-SETTLE</button>
+      <button class="btn" id="fit">FIT</button>
+    </div>
   </div>
 
-  <div class="grp"><p class="grp-label">Node type</p><div class="legend" id="legend"></div></div>
+  <div class="grp"><p class="grp-label">Node type · click to toggle</p>
+    <div class="legend" id="legend"></div></div>
 
-  <div class="grp">
-    <p class="grp-label">At this moment</p>
+  <div class="grp"><p class="grp-label">In view</p>
     <div class="stat"><span>Nodes</span><b id="sN">0</b></div>
-    <div class="stat"><span>Edges drawn</span><b id="sE">0</b></div>
-    <div class="stat"><span>Mean score</span><b id="sS">0.0</b></div>
+    <div class="stat"><span>Edges</span><b id="sE">0</b></div>
+    <div class="stat"><span>Mean relevance</span><b id="sS">0.0</b></div>
   </div>
 </div>
 
 <div class="panel" id="inspect">
+  <p class="kind" id="iKind"></p>
   <p class="lbl" id="iLbl"></p><p class="id" id="iId"></p>
   <dl>
     <dt>type</dt><dd id="iType"></dd>
     <dt>domain</dt><dd id="iDom"></dd>
     <dt>relevance</dt><dd id="iScore"></dd>
-    <dt>access count</dt><dd id="iAcc"></dd>
-    <dt>degree</dt><dd id="iDeg"></dd>
-    <dt>created</dt><dd id="iCre"></dd>
+    <dt>focused</dt><dd id="iAcc"></dd>
+    <dt>connections</dt><dd id="iDeg"></dd>
+    <dt id="iRamK">RAM</dt><dd id="iRam"></dd>
+    <dt id="iCpuK">CPU</dt><dd id="iCpu"></dd>
+    <dt>first seen</dt><dd id="iCre"></dd>
   </dl>
   <div class="bar"><i id="iBar"></i></div>
 </div>
@@ -175,7 +198,7 @@
   <div class="ticks" id="ticks"></div>
 </div>
 
-<div id="note">click a node to isolate it · scroll to zoom · drag to pan</div>
+<div id="hint">drag a node · scroll to zoom · click to isolate · double-click to fit</div>
 
 <script>
 (() => {
@@ -185,41 +208,202 @@
   const LABEL_FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const el = id => document.getElementById(id);
-  const colourOf = t => css("--t-" + t) || css("--t-session");
 
-  const SPAN = Math.max(1, DATA.span_seconds);
-  const HUBS = new Set(DATA.hub_ids);
-  const DOMS = DATA.domain_ids;
+  const SPAN  = Math.max(1, DATA.span_seconds);
+  const HUBS  = new Set(DATA.hub_ids);
+  const DOMS  = DATA.domain_ids;
+  const ROOT  = DATA.root_id;
+  const MAXW  = Math.max(DATA.max_weight, 0.01);
 
+  // ---- node class: the thing that sets both colour and size band -----------
+  const classOf = n =>
+    n.id === ROOT ? "root" : HUBS.has(n.id) ? "domain" : n.node_type;
+  const colourOf = c => css("--t-" + c) || css("--t-session");
+
+  // ---- model --------------------------------------------------------------
   const nodes = DATA.nodes.map(n => ({
-    id: n.id, node_type: n.node_type, label: n.label, created_at: n.t,
-    relevance_score: n.score, access_count: n.access, domain: n.domain,
-    hub: HUBS.has(n.id), x: 0, y: 0, vx: 0, vy: 0, fx: 0, fy: 0, deg: 0,
+    id:n.id, node_type:n.node_type, label:n.label || n.id, cat:classOf(n),
+    t:n.t, relevance_score:n.score, access_count:n.access, domain:n.domain,
+    ram:n.ram, cpu:n.cpu, hub:HUBS.has(n.id) || n.id === ROOT,
+    x:0, y:0, vx:0, vy:0, deg:0,
   }));
   const byId = new Map(nodes.map(n => [n.id, n]));
   const edges = DATA.edges
     .filter(e => byId.has(e.s) && byId.has(e.t) && e.s !== e.t)
-    .map(e => ({ source: e.s, target: e.t, relation: e.rel, created_at: e.at, weight: e.w }));
-  edges.forEach(e => { byId.get(e.source).deg++; byId.get(e.target).deg++; });
+    .map(e => ({s:e.s, t:e.t, rel:e.rel, at:e.at, w:e.w}));
+  edges.forEach(e => { byId.get(e.s).deg++; byId.get(e.t).deg++; });
 
-  const slotOf = id => {
+  const CATS = [...new Set(nodes.map(n => n.cat))]
+    .sort((a,b) => (a === "root" ? -2 : a === "domain" ? -1 : 0)
+                 - (b === "root" ? -2 : b === "domain" ? -1 : 0)
+                 || a.localeCompare(b));
+  const hidden = new Set();
+
+  const N = nodes.length;
+  const SCALE = Math.sqrt(Math.max(N, 26) / 26);   // density stays constant as it grows
+  const RING  = 210 * SCALE;                        // where the domain hubs like to sit
+  const KEEPIN = RING * 2.6;                        // far soft wall — only catches true strays
+
+  // deterministic RNG — seeds the first frame only, never touched again
+  let seed = 0x9e3779b9;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+
+  const slotAngle = id => {
     const i = DOMS.indexOf(id);
-    return { i, a: (Math.max(i, 0) / Math.max(DOMS.length, 1)) * Math.PI * 2 - Math.PI / 2 };
+    return i < 0 ? 0 : -Math.PI / 2 + (i / DOMS.length) * Math.PI * 2;
   };
 
-  let seed = 987654321;
-  const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
-
+  // Only YOU is pinned (at the origin). The domain hubs are heavy free nodes:
+  // they drift to sit among the members that actually wire to them, instead of
+  // being nailed to a ring the data does not match. Reproducible run to run —
+  // the RNG is seeded — so reopening the view gives the same picture.
   nodes.forEach(n => {
-    if (n.id === DATA.root_id) { n.x = 0; n.y = 0; return; }
-    const a = n.domain ? slotOf(n.domain).a : rnd() * 6.2832;
-    const r = n.hub ? 230 : 300 + rnd() * 150;
-    n.x = Math.cos(a) * r + (rnd() - .5) * 90;
-    n.y = Math.sin(a) * r + (rnd() - .5) * 90;
+    n.pinned = n.id === ROOT;
+    n.struct = HUBS.has(n.id) && n.id !== ROOT;
+    if (n.pinned) { n.x = n.y = 0; return; }
+    const a = n.struct ? slotAngle(n.id)
+            : n.domain ? slotAngle(n.domain) + (rnd() - .5) * .8
+            : rnd() * 6.283;
+    const r = (n.struct ? RING * 0.8 : n.domain ? RING : RING * 0.65)
+            + (rnd() - .5) * RING * 0.5;
+    n.x = Math.cos(a) * r; n.y = Math.sin(a) * r;
   });
 
-  const TYPES = [...new Set(nodes.map(n => n.node_type))].sort();
+  const radius = n => {
+    if (n.cat === "root")   return 22;
+    if (n.cat === "domain") return 11 + Math.sqrt(Math.max(n.relevance_score, 0)) * 1.1;
+    const r = 4 + Math.sqrt(Math.max(n.relevance_score, 0)) * 2.5 + Math.min(n.deg, 12) * 0.3;
+    return Math.min(r, 14);
+  };
+  nodes.forEach(n => {
+    n.r = radius(n);
+    // "mass": heavy nodes shove light ones and barely move themselves
+    n.q = n.pinned ? 6 : n.struct ? 3.2 : 1 + Math.min(n.deg, 8) * 0.13;
+  });
 
+  // ---- force simulation (d3-ish, with a decaying alpha) --------------------
+  //   An organic layout: YOU pinned at the centre, everything else free. What
+  //   keeps it from balling up (the whole complaint) is four separate forces —
+  //     · charge   inverse-square repulsion, near field clamped, mass-weighted
+  //     · SEP      an explicit minimum-separation spring: two nodes closer than
+  //                r_a+r_b+SEP_GAP are pushed apart EVERY tick, cool or not
+  //     · collide  a hard post-integration de-overlap sweep (×3)
+  //     · gravity  a *weak* pull to the centre — just enough to keep loners in
+  //                frame and the whole thing centred, far too weak to clump
+  //   Links are long and slack so they position without crushing.
+  const CHARGE = -950 * SCALE, CHARGE_MIN_D = 16;
+  const LINK_ROOT = 155 * SCALE, LINK_HUB = 120 * SCALE, LINK_MEMBER = 76 * SCALE;
+  const KS_ROOT = 0.028, KS_HUB = 0.05, KS_MEMBER = 0.06;
+  const SEP_GAP = 40, SEP_K = 0.34;
+  const GRAV = 0.017, CLUS = 0.05, WALL = 0.05;
+  const HUB_ANGLE = 0.09, HUB_MIN_R = RING * 0.62;   // hubs keep their clock slot
+  const COLLIDE_PAD = 16, COLLIDE_ITERS = 4;
+  const VDECAY = 0.58, ALPHA_DECAY = 0.018, ALPHA_MIN = 0.0016;
+
+  let alpha = 1, running = true, dirty = true, drag = null;
+
+  const visN = () => nodes.filter(n => n.t <= now && !hidden.has(n.cat));
+  const visE = () => edges.filter(e => {
+    const a = byId.get(e.s), b = byId.get(e.t);
+    return e.at <= now && e.w >= minW && a.t <= now && b.t <= now
+        && !hidden.has(a.cat) && !hidden.has(b.cat);
+  });
+
+  function reheat(v) { alpha = Math.max(alpha, v); running = true; }
+
+  function step() {
+    const ns = visN(), es = visE();
+    const clustered = el("cluster").checked;
+    const aFloor = Math.max(alpha, 0.14);   // SEP + collide keep biting once cool
+
+    // charge + minimum-separation — one bounded O(n²) pass
+    for (let i = 0; i < ns.length; i++) {
+      const a = ns[i];
+      for (let j = i + 1; j < ns.length; j++) {
+        const b = ns[j];
+        let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+        if (d2 < 1) { dx = rnd() - .5; dy = rnd() - .5; d2 = 1; }
+        const d = Math.sqrt(d2), ux = dx / d, uy = dy / d;
+        const dc = Math.max(d, CHARGE_MIN_D);
+        const w = CHARGE * alpha * a.q * b.q / (dc * dc);
+        // divide the push by mass so a hub barely reacts to a leaf
+        a.vx += ux * w / a.q; a.vy += uy * w / a.q;
+        b.vx -= ux * w / b.q; b.vy -= uy * w / b.q;
+        const sep = a.r + b.r + SEP_GAP;
+        if (d < sep) {
+          const p = (sep - d) * SEP_K * aFloor;
+          a.vx -= ux * p / a.q; a.vy -= uy * p / a.q;
+          b.vx += ux * p / b.q; b.vy += uy * p / b.q;
+        }
+      }
+    }
+    // link springs — long and slack
+    for (const e of es) {
+      const a = byId.get(e.s), b = byId.get(e.t);
+      const root = a.pinned || b.pinned, hubEdge = a.struct || b.struct;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      const L  = root ? LINK_ROOT : hubEdge ? LINK_HUB : LINK_MEMBER;
+      const ks = (root ? KS_ROOT : hubEdge ? KS_HUB : KS_MEMBER) * (0.6 + 0.8 * e.w / MAXW);
+      const f  = (d - L) / d * alpha * ks;
+      const bias = b.q / (a.q + b.q);
+      a.vx += dx * f * bias;        a.vy += dy * f * bias;
+      b.vx -= dx * f * (1 - bias);  b.vy -= dy * f * (1 - bias);
+    }
+    // weak centre gravity + optional pull toward the member's own domain hub +
+    // a far wall for anything with no edges at all
+    for (const n of ns) {
+      if (n.pinned || n === drag) continue;
+      n.vx -= n.x * GRAV * alpha; n.vy -= n.y * GRAV * alpha;
+      const d = Math.hypot(n.x, n.y) || 1;
+      if (n.struct) {
+        // rotate the hub toward its clock slot (angle only — radius stays where
+        // its members put it), and never let it fall onto YOU
+        const a = slotAngle(n.id), rr = Math.max(d, HUB_MIN_R);
+        n.vx += (Math.cos(a) * rr - n.x) * HUB_ANGLE * alpha;
+        n.vy += (Math.sin(a) * rr - n.y) * HUB_ANGLE * alpha;
+        if (d < HUB_MIN_R) {
+          const push = (HUB_MIN_R - d) / d * 0.08 * alpha;
+          n.vx -= n.x * push; n.vy -= n.y * push;
+        }
+      } else if (clustered && n.domain) {
+        const h = byId.get(n.domain);
+        if (h) { n.vx += (h.x - n.x) * CLUS * alpha; n.vy += (h.y - n.y) * CLUS * alpha; }
+      }
+      if (d > KEEPIN) {
+        const pull = (d - KEEPIN) / d * WALL * alpha;
+        n.vx -= n.x * pull; n.vy -= n.y * pull;
+      }
+    }
+    // integrate
+    for (const n of ns) {
+      if (n.pinned || n === drag) { n.vx = n.vy = 0; continue; }
+      n.vx *= VDECAY; n.vy *= VDECAY;
+      n.x += Math.max(-28, Math.min(28, n.vx));
+      n.y += Math.max(-28, Math.min(28, n.vy));
+    }
+    // collision — hard de-overlap, mass-weighted, several sweeps
+    for (let iter = 0; iter < COLLIDE_ITERS; iter++) {
+      for (let i = 0; i < ns.length; i++) {
+        const a = ns[i];
+        for (let j = i + 1; j < ns.length; j++) {
+          const b = ns[j];
+          const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+          const rr = a.r + b.r + COLLIDE_PAD;
+          if (d >= rr) continue;
+          const total = a.q + b.q, ux = dx / d, uy = dy / d, over = rr - d;
+          if (!a.pinned && a !== drag) { a.x -= ux * over * (b.q / total); a.y -= uy * over * (b.q / total); }
+          if (!b.pinned && b !== drag) { b.x += ux * over * (a.q / total); b.y += uy * over * (a.q / total); }
+        }
+      }
+    }
+    for (const n of ns) if (n.pinned) { n.x = 0; n.y = 0; }
+
+    alpha *= (1 - ALPHA_DECAY);
+    if (alpha < ALPHA_MIN && !drag) { running = false; if (el("autofit").checked) fit(false); }
+    dirty = true;
+  }
+
+  // ---- camera ------------------------------------------------------------
   const cv = el("c"), ctx = cv.getContext("2d");
   let W = 0, H = 0, DPR = 1;
   function resize() {
@@ -227,140 +411,119 @@
     W = cv.clientWidth || 900; H = cv.clientHeight || 640;
     cv.width = W * DPR; cv.height = H * DPR;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    dirty = true; fit(true);
   }
-  new ResizeObserver(resize).observe(cv); resize();
+  const view = { x:0, y:0, k:1, tk:1, tx:0, ty:0 };
+  let now = SPAN, playing = false, hover = null, focus = null, pan = null;
+  let minW = 0;
 
-  const view = { x: 0, y: 0, k: 1 };
-  let now = SPAN, playing = false, hover = null, focus = null, drag = null, pan = null;
-  let minW = 0, ring = 230;
-
-  const visN = () => nodes.filter(n => n.created_at <= now);
-  const visE = () => edges.filter(e => e.created_at <= now && e.weight >= minW
-    && byId.get(e.source).created_at <= now && byId.get(e.target).created_at <= now);
-
-  function step() {
-    const ns = visN(), es = visE();
-    const pinned = el("pinHubs").checked, clustered = el("cluster").checked;
-    // Density must stay constant as the graph grows, or the last day is just
-    // the first day's layout with four times as much crammed into it. Lengths
-    // scale with sqrt(n); repulsion with its square, so forces stay comparable.
-    const S = Math.sqrt(Math.max(ns.length, 26) / 26);
-    const REST = 58 * S, REPULSE = 1750 * S * S;
-    ring = 210 * S;
-
-    for (const n of ns) { n.fx = 0; n.fy = 0; }
-    for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
-      const a = ns[i], b = ns[j];
-      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
-      if (d2 < 1) { d2 = 1; dx = rnd() - .5; dy = rnd() - .5; }
-      if (d2 > 600000) continue;
-      const d = Math.sqrt(d2), f = REPULSE / d2;
-      a.fx += dx / d * f; a.fy += dy / d * f; b.fx -= dx / d * f; b.fy -= dy / d * f;
-    }
-    for (const e of es) {
-      const a = byId.get(e.source), b = byId.get(e.target);
-      const hubEdge = a.hub || b.hub;
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
-      // Hub edges pull weakly or the routing hubs drag everything into one
-      // blob — the same reason find_related() will not traverse through a hub.
-      const k = (hubEdge ? .0014 : .0072) * (.5 + e.weight);
-      const f = (d - REST) * k;
-      a.fx += dx / d * f; a.fy += dy / d * f; b.fx -= dx / d * f; b.fy -= dy / d * f;
-    }
-    for (const n of ns) {
-      if (n.hub && pinned) {
-        if (n.id === DATA.root_id) { n.x = 0; n.y = 0; n.vx = n.vy = 0; continue; }
-        const s = slotOf(n.id);
-        if (s.i >= 0) {
-          n.x = Math.cos(s.a) * ring; n.y = Math.sin(s.a) * ring; n.vx = n.vy = 0; continue;
-        }
-      }
-      if (n === drag) continue;
-      if (clustered && n.domain && !n.hub) {
-        const h = byId.get(n.domain);
-        if (h) { n.fx += (h.x - n.x) * .0075; n.fy += (h.y - n.y) * .0075; }
-      } else { n.fx -= n.x * .0026; n.fy -= n.y * .0026; }
-      n.vx = (n.vx + n.fx) * .86; n.vy = (n.vy + n.fy) * .86;
-      n.x += Math.max(-16, Math.min(16, n.vx));
-      n.y += Math.max(-16, Math.min(16, n.vy));
-    }
-  }
-
-  const radius = n => 3 + Math.sqrt(Math.max(n.relevance_score, 0)) * 2.4 + (n.hub ? 3 : 0);
-
-  function fitView(instant) {
+  function fit(instant) {
     const ns = visN(); if (!ns.length) return;
     let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
     for (const n of ns) {
-      x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x);
-      y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y);
+      x0 = Math.min(x0, n.x - n.r); x1 = Math.max(x1, n.x + n.r);
+      y0 = Math.min(y0, n.y - n.r); y1 = Math.max(y1, n.y + n.r);
     }
-    const k = Math.max(.18, Math.min(1.5,
-      Math.min((W - 300) / Math.max(x1 - x0, 1), (H - 210) / Math.max(y1 - y0, 1))));
-    const tx = -((x0 + x1) / 2) * k, ty = -((y0 + y1) / 2) * k, e = instant ? 1 : .055;
-    view.k += (k - view.k) * e; view.x += (tx - view.x) * e; view.y += (ty - view.y) * e;
+    view.tk = Math.max(.1, Math.min(1.5,
+      Math.min((W - 300) / Math.max(x1 - x0, 1), (H - 190) / Math.max(y1 - y0, 1))));
+    view.tx = -((x0 + x1) / 2) * view.tk;
+    view.ty = -((y0 + y1) / 2) * view.tk;
+    if (instant) { view.k = view.tk; view.x = view.tx; view.y = view.ty; }
+    dirty = true;
   }
+  const toWorld = (sx, sy) => ({
+    x:(sx - W / 2 - view.x) / view.k, y:(sy - H / 2 - view.y) / view.k });
 
+  // ---- draw ------------------------------------------------------------
   function draw() {
     const ns = visN(), es = visE();
-    const hideHub = el("hideHubEdges").checked, labels = el("showLabels").checked;
+    const showLabels = el("labels").checked;
     const lit = focus || hover;
     const near = new Set();
     if (lit) {
       near.add(lit.id);
       for (const e of es) {
-        if (e.source === lit.id) near.add(e.target);
-        if (e.target === lit.id) near.add(e.source);
+        if (e.s === lit.id) near.add(e.t);
+        if (e.t === lit.id) near.add(e.s);
       }
     }
     ctx.clearRect(0, 0, W, H);
-    ctx.save(); ctx.translate(W / 2 + view.x, H / 2 + view.y); ctx.scale(view.k, view.k);
+    ctx.save();
+    ctx.translate(W / 2 + view.x, H / 2 + view.y);
+    ctx.scale(view.k, view.k);
 
     let drawn = 0;
+    ctx.lineCap = "round";
     for (const e of es) {
-      const a = byId.get(e.source), b = byId.get(e.target), hubEdge = a.hub || b.hub;
-      if (hubEdge && hideHub) continue;
-      const on = lit && (e.source === lit.id || e.target === lit.id);
+      const a = byId.get(e.s), b = byId.get(e.t), hubEdge = a.hub || b.hub;
+      const on = lit && (e.s === lit.id || e.t === lit.id);
       if (focus && !on) continue;
-      ctx.strokeStyle = on ? css("--accent") : (hubEdge ? css("--edge-hub") : css("--edge"));
-      ctx.globalAlpha = hover && !focus && !on ? .15 : 1;
-      ctx.lineWidth = Math.min(3.2, .4 + e.weight * 1.25) * (on ? 2 : 1);
+      ctx.strokeStyle = on ? css("--edge-lit")
+        : e.rel === "part_of" ? css("--edge-part")
+        : hubEdge ? css("--edge-hub") : css("--edge");
+      ctx.globalAlpha = (hover && !focus && !on) ? .12 : 1;
+      ctx.lineWidth = (0.8 + 2.2 * e.w / MAXW) * (on ? 2.1 : 1) / view.k;
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       drawn++;
     }
     ctx.globalAlpha = 1;
-    for (const n of ns) {
-      if (focus && !near.has(n.id)) continue;
-      ctx.globalAlpha = (!focus && hover && !near.has(n.id)) ? .16 : 1;
-      ctx.fillStyle = colourOf(n.node_type);
-      ctx.beginPath(); ctx.arc(n.x, n.y, radius(n), 0, 6.2832); ctx.fill();
-      if (n === lit) { ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.8; ctx.stroke(); }
-    }
-    ctx.globalAlpha = 1; ctx.restore();
 
-    // Labels in screen space, strongest first, skipped on collision. Drawing
-    // every strong label is what turns a full graph into soup; an overlapping
-    // label is worse than no label.
-    if (labels) {
-      const cands = ns
-        .filter(n => (n.hub || n.relevance_score >= DATA.label_threshold)
-                  && (!focus || near.has(n.id)))
+    // glow pass then body pass, hubs last so their rings sit on top
+    const order = ns.slice().sort((p, q) => (p.hub ? 1 : 0) - (q.hub ? 1 : 0));
+    for (const n of order) {
+      const dim = lit && !near.has(n.id);
+      const col = colourOf(n.cat);
+      const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 2.7);
+      g.addColorStop(0, col); g.addColorStop(1, "transparent");
+      ctx.globalAlpha = dim ? .04 : (n.hub ? .26 : .20);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r * 2.7, 0, 6.2832); ctx.fill();
+    }
+    for (const n of order) {
+      const dim = lit && !near.has(n.id);
+      ctx.globalAlpha = dim ? .16 : 1;
+      ctx.fillStyle = colourOf(n.cat);
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.2832); ctx.fill();
+      if (n.cat === "domain") {
+        ctx.globalAlpha = dim ? .16 : .55;
+        ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.2 / view.k;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 3 / view.k, 0, 6.2832); ctx.stroke();
+      }
+      if (n === lit) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = css("--ink"); ctx.lineWidth = 2 / view.k;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 4 / view.k, 0, 6.2832); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // labels — screen space, strongest first, dropped on overlap
+    if (showLabels) {
+      // hubs always; a node you are pointing at and its neighbours; everything
+      // else only once you have really zoomed in — keeps the settled view clean
+      const zoomWide = view.k >= 1.7;
+      const cand = ns.filter(n =>
+        n.hub || (lit && near.has(n.id)) ||
+        (!focus && zoomWide && n.relevance_score >= DATA.label_threshold))
         .sort((a, b) => (b.hub ? 1e6 : b.relevance_score) - (a.hub ? 1e6 : a.relevance_score));
       const placed = []; ctx.textAlign = "center";
-      for (const n of cands) {
-        if (placed.length >= 42) break;
+      for (const n of cand) {
+        if (placed.length >= 46) break;
         const sx = W / 2 + view.x + n.x * view.k;
-        const sy = H / 2 + view.y + n.y * view.k - radius(n) * view.k - 6;
-        if (sx < 70 || sx > W - 70 || sy < 26 || sy > H - 92) continue;
-        ctx.font = (n.hub ? "600 11.5px " : "500 10.5px ") + LABEL_FONT;
-        const txt = n.label.length > 24 ? n.label.slice(0, 23) + "…" : n.label;
+        const sy = H / 2 + view.y + n.y * view.k - n.r * view.k - 6;
+        if (sx < 66 || sx > W - 66 || sy < 24 || sy > H - 88) continue;
+        ctx.font = (n.hub ? "600 11px " : "500 10px ") + LABEL_FONT;
+        const txt = n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label;
         const w = ctx.measureText(txt).width;
-        const r = { x: sx - w / 2 - 3, y: sy - 11, w: w + 6, h: 15 };
-        if (placed.some(p => !(r.x + r.w < p.x || p.x + p.w < r.x
-                            || r.y + r.h < p.y || p.y + p.h < r.y))) continue;
-        placed.push(r);
-        ctx.fillStyle = css("--halo"); ctx.fillRect(r.x, r.y, r.w, r.h);
-        ctx.fillStyle = css("--ink"); ctx.globalAlpha = n.hub ? 1 : .9;
+        const box = { x:sx - w / 2 - 4, y:sy - 10, w:w + 8, h:14 };
+        if (placed.some(p => !(box.x + box.w < p.x || p.x + p.w < box.x ||
+                               box.y + box.h < p.y || p.y + p.h < box.y))) continue;
+        placed.push(box);
+        ctx.fillStyle = css("--halo");
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+        ctx.fillStyle = n.hub ? css("--ink") : css("--muted");
+        ctx.globalAlpha = n.hub ? 1 : .92;
         ctx.fillText(txt, sx, sy); ctx.globalAlpha = 1;
       }
     }
@@ -370,92 +533,121 @@
     el("sS").textContent = ns.length
       ? (ns.reduce((s, n) => s + n.relevance_score, 0) / ns.length).toFixed(1) : "0.0";
     const counts = {};
-    ns.forEach(n => counts[n.node_type] = (counts[n.node_type] || 0) + 1);
-    TYPES.forEach(t => { const e = el("lg-" + t); if (e) e.textContent = counts[t] || 0; });
+    ns.forEach(n => counts[n.cat] = (counts[n.cat] || 0) + 1);
+    CATS.forEach(c => { const e = el("lg-" + c); if (e) e.textContent = counts[c] || 0; });
   }
 
-  const fmtAt = s => {
-    const d = new Date(Date.parse(DATA.t0) + s * 1000);
-    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-    return SPAN > 172800
-      ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + time
-      : time;
-  };
-
+  // ---- loop: step only while hot, draw only when something changed --------
   function frame() {
-    step();
-    if (el("autofit").checked) fitView(false);
-    draw();
+    if (running) { step(); step(); }
+    const glide = Math.abs(view.k - view.tk) > 1e-3 ||
+                  Math.abs(view.x - view.tx) > .3 || Math.abs(view.y - view.ty) > .3;
+    if (el("autofit").checked && glide) {
+      view.k += (view.tk - view.k) * .12;
+      view.x += (view.tx - view.x) * .12;
+      view.y += (view.ty - view.y) * .12;
+      dirty = true;
+    }
     if (playing) {
-      now += SPAN / 1000;
-      if (now >= SPAN) { now = SPAN; setPlaying(false); }
+      now = Math.min(SPAN, now + SPAN / 900);
       el("scrub").value = String(Math.round(now / SPAN * 1000));
       el("cd").textContent = fmtAt(now);
+      if (now >= SPAN) setPlaying(false);
+      reheat(.35); dirty = true;
     }
+    if (dirty) { dirty = false; draw(); }
     requestAnimationFrame(frame);
   }
 
+  // ---- time ------------------------------------------------------------
+  const fmtAt = s => {
+    const d = new Date(Date.parse(DATA.t0) + s * 1000);
+    const t = d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
+    return SPAN > 172800
+      ? d.toLocaleDateString(undefined, { month:"short", day:"numeric" }) + " " + t : t;
+  };
   function setPlaying(p) { playing = p; el("play").textContent = p ? "❚❚ PAUSE" : "▶ PLAY"; }
   el("play").addEventListener("click", () => {
     if (!playing && now >= SPAN) now = 0;
     setPlaying(!playing);
   });
   el("scrub").addEventListener("input", e => {
-    setPlaying(false); now = +e.target.value / 1000 * SPAN; el("cd").textContent = fmtAt(now);
+    setPlaying(false); now = +e.target.value / 1000 * SPAN;
+    el("cd").textContent = fmtAt(now); reheat(.5);
   });
   el("minw").addEventListener("input", e => {
-    minW = +e.target.value / 100 * Math.max(DATA.max_weight, 0.01);
-    el("minwv").textContent = minW.toFixed(1);
+    minW = +e.target.value / 100 * MAXW;
+    el("minwv").textContent = minW.toFixed(2); reheat(.4);
   });
+  el("cluster").addEventListener("change", () => reheat(.7));
+  el("labels").addEventListener("change", () => { dirty = true; });
+  el("autofit").addEventListener("change", () => { if (el("autofit").checked) fit(false); });
+  el("reheat").addEventListener("click", () => reheat(1));
+  el("fit").addEventListener("click", () => { el("autofit").checked = true; fit(false); });
 
-  function setFocus(n) {
-    focus = n; el("focusBar").classList.toggle("on", !!n);
-    if (n) el("focusName").textContent = n.label;
-  }
-  el("clearFocus").addEventListener("click", () => setFocus(null));
-
-  const at = ev => {
-    const r = cv.getBoundingClientRect();
-    return { x: (ev.clientX - r.left - W / 2 - view.x) / view.k,
-             y: (ev.clientY - r.top - H / 2 - view.y) / view.k };
-  };
-  const hit = p => {
+  // ---- pointer -------------------------------------------------------
+  const hit = (wx, wy) => {
     let best = null, bd = 1e9;
     for (const n of visN()) {
-      const d = Math.hypot(n.x - p.x, n.y - p.y);
-      if (d < radius(n) + 7 && d < bd) { bd = d; best = n; }
+      const d = Math.hypot(n.x - wx, n.y - wy);
+      if (d < n.r + 6 && d < bd) { bd = d; best = n; }
     }
     return best;
   };
   let moved = false;
   cv.addEventListener("mousemove", ev => {
-    const p = at(ev);
-    if (drag) { moved = true; drag.x = p.x; drag.y = p.y; drag.vx = drag.vy = 0; return; }
+    const r = cv.getBoundingClientRect();
+    const p = toWorld(ev.clientX - r.left, ev.clientY - r.top);
+    if (drag) {
+      moved = true; drag.x = p.x; drag.y = p.y; drag.vx = drag.vy = 0;
+      reheat(.4); return;
+    }
     if (pan) {
       moved = true; el("autofit").checked = false;
-      view.x = pan.vx + ev.clientX - pan.sx; view.y = pan.vy + ev.clientY - pan.sy; return;
+      view.x = pan.vx + ev.clientX - pan.sx; view.y = pan.vy + ev.clientY - pan.sy;
+      view.tx = view.x; view.ty = view.y; dirty = true; return;
     }
-    const h = hit(p);
-    if (h !== hover) { hover = h; showInspector(h || focus); }
+    const h = hit(p.x, p.y);
+    if (h !== hover) { hover = h; showInspect(h || focus); dirty = true; }
   });
   cv.addEventListener("mousedown", ev => {
-    const p = at(ev), h = hit(p); moved = false;
-    if (h) drag = h; else pan = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y };
+    const r = cv.getBoundingClientRect();
+    const p = toWorld(ev.clientX - r.left, ev.clientY - r.top);
+    const h = hit(p.x, p.y); moved = false;
+    if (h && !h.pinned) drag = h;
+    else if (h && h.pinned) drag = null;
+    else pan = { sx:ev.clientX, sy:ev.clientY, vx:view.x, vy:view.y };
     cv.classList.add("dragging");
   });
   addEventListener("mouseup", () => {
-    if (!moved) { const h = drag; setFocus(h && h !== focus ? h : null); }
+    if (!moved && drag) setFocus(drag !== focus ? drag : null);
     drag = null; pan = null; cv.classList.remove("dragging");
   });
+  cv.addEventListener("dblclick", () => { el("autofit").checked = true; fit(false); });
   cv.addEventListener("wheel", ev => {
     ev.preventDefault(); el("autofit").checked = false;
-    view.k = Math.max(.15, Math.min(3.2, view.k * (ev.deltaY < 0 ? 1.11 : .9)));
-  }, { passive: false });
+    const r = cv.getBoundingClientRect();
+    const mx = ev.clientX - r.left - W / 2, my = ev.clientY - r.top - H / 2;
+    const wx = (mx - view.x) / view.k, wy = (my - view.y) / view.k;
+    view.k = Math.max(.12, Math.min(3.6, view.k * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    view.x = mx - wx * view.k; view.y = my - wy * view.k;
+    view.tk = view.k; view.tx = view.x; view.ty = view.y; dirty = true;
+  }, { passive:false });
+  addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && focus) setFocus(null);
+    if (ev.key === "f") { el("autofit").checked = true; fit(false); }
+  });
 
-  function showInspector(n) {
+  function setFocus(n) { focus = n; showInspect(n || hover); dirty = true; }
+  function showInspect(n) {
     const box = el("inspect");
     if (!n) { box.classList.remove("on"); return; }
     box.classList.add("on");
+    const kindCol = colourOf(n.cat);
+    el("iKind").textContent =
+      n.cat === "root" ? "the person" : n.cat === "domain" ? "routing hub"
+        : n.cat.replace(/_/g, " ");
+    el("iKind").style.color = kindCol;
     el("iLbl").textContent = n.label;
     el("iId").textContent = n.id;
     el("iType").textContent = n.node_type;
@@ -463,21 +655,43 @@
     el("iScore").textContent = n.relevance_score.toFixed(2) + " / 10";
     el("iAcc").textContent = n.access_count;
     el("iDeg").textContent = n.deg;
-    el("iCre").textContent = fmtAt(n.created_at);
+    const ram = n.ram ? n.ram.toFixed(0) + " MiB" : "—";
+    const cpu = (n.cpu || n.cpu === 0) && n.cpu ? n.cpu.toFixed(0) + " %" : "—";
+    el("iRam").textContent = ram; el("iCpu").textContent = cpu;
+    el("iRamK").style.display = el("iRam").style.display = n.ram ? "" : "none";
+    el("iCpuK").style.display = el("iCpu").style.display = n.cpu ? "" : "none";
+    el("iCre").textContent = fmtAt(n.t);
     el("iBar").style.width = (Math.min(n.relevance_score, 10) / 10 * 100) + "%";
   }
 
-  el("legend").innerHTML = TYPES.map(t =>
-    `<div class="lg"><span class="dot" style="background:var(--t-${t})"></span>` +
-    `<span>${t.replace(/_/g, " ")}</span><span class="n" id="lg-${t}">0</span></div>`).join("");
+  // ---- chrome --------------------------------------------------------
+  el("legend").innerHTML = CATS.map(c => {
+    const nice = c === "root" ? "you" : c === "domain" ? "routing hub" : c.replace(/_/g, " ");
+    const sz = c === "root" ? 12 : c === "domain" ? 10 : 8;
+    return `<div class="lg" data-cat="${c}" style="color:var(--t-${c})">` +
+      `<span class="dot" style="width:${sz}px;height:${sz}px;background:var(--t-${c})"></span>` +
+      `<span style="color:var(--muted)">${nice}</span>` +
+      `<span class="n" id="lg-${c}">0</span></div>`;
+  }).join("");
+  el("legend").querySelectorAll(".lg").forEach(row => {
+    row.addEventListener("click", () => {
+      const c = row.dataset.cat;
+      if (hidden.has(c)) hidden.delete(c); else hidden.add(c);
+      row.classList.toggle("off", hidden.has(c));
+      reheat(.6);
+    });
+  });
 
   el("railSub").textContent = DATA.subtitle;
   el("ticks").innerHTML = DATA.ticks.map(t => `<span>${t}</span>`).join("");
   el("cd").textContent = fmtAt(SPAN);
   if (edges.length === 0 && nodes.length <= DATA.hub_ids.length) el("empty").classList.add("on");
 
-  for (let i = 0; i < 220; i++) step();
-  fitView(true);
+  new ResizeObserver(resize).observe(cv);
+  resize();
+  // settle most of the way offline, then let the last ~1.5 s play out on screen
+  for (let i = 0; i < 190; i++) step();
+  fit(true);
   frame();
 })();
 </script>

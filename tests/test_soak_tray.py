@@ -248,4 +248,91 @@ def test_raise_popup_never_lets_a_shell_interpret_the_summary_text() -> None:
     assert subprocess.list2cmdline  # sanity: real subprocess module in scope
 
 
+# ------------------------------------------------------------------- graph view
+
+
+def test_brave_command_prefers_a_native_brave_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tray.shutil, "which", lambda name: "/usr/bin/brave-browser" if "brave" in name else None
+    )
+    assert tray._brave_command() == ["/usr/bin/brave-browser"]
+
+
+def test_brave_command_is_none_when_brave_is_nowhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tray.shutil, "which", lambda _name: None)
+    assert tray._brave_command() is None
+
+
+def test_open_graph_view_renders_then_hands_the_file_to_brave(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The render step runs first (its own process, timed out), then the
+    resulting file:// URL -- never a bare path -- goes to Brave via a list
+    argv with no shell."""
+    html = tmp_path / "graph_view.html"
+    html.write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(tray, "GRAPH_HTML", html)
+    monkeypatch.setattr(tray.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(tray, "_brave_command", lambda: ["/usr/bin/brave-browser"])
+
+    calls: dict[str, object] = {}
+
+    def _run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        calls["render"] = argv
+        return subprocess.CompletedProcess(argv, 0)
+
+    def _popen(argv: list[str], **kwargs: object) -> None:
+        calls["open"] = argv
+
+    monkeypatch.setattr(tray.subprocess, "run", _run)
+    monkeypatch.setattr(tray.subprocess, "Popen", _popen)
+
+    assert tray.open_graph_view() is True
+    assert str(tray.GRAPH_RENDER) in calls["render"]
+    assert "--no-open" in calls["render"]
+    open_argv = calls["open"]
+    assert open_argv[0] == "/usr/bin/brave-browser"
+    assert open_argv[1].startswith("file://") and open_argv[1].endswith("graph_view.html")
+
+
+def test_open_graph_view_falls_back_to_xdg_open_without_brave(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    html = tmp_path / "graph_view.html"
+    html.write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(tray, "GRAPH_HTML", html)
+    monkeypatch.setattr(tray, "_brave_command", lambda: None)
+    monkeypatch.setattr(tray.shutil, "which", lambda name: "/usr/bin/xdg-open")
+    monkeypatch.setattr(
+        tray.subprocess, "run", lambda argv, **k: subprocess.CompletedProcess(argv, 0)
+    )
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(tray.subprocess, "Popen", lambda argv, **k: seen.setdefault("argv", argv))
+
+    assert tray.open_graph_view() is True
+    assert seen["argv"][0] == "xdg-open"
+
+
+def test_open_graph_view_reports_failure_when_the_render_step_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tray.subprocess, "run", lambda argv, **k: subprocess.CompletedProcess(argv, 1)
+    )
+    fired = False
+
+    def _fail(*_a: object, **_k: object) -> None:
+        nonlocal fired
+        fired = True
+
+    monkeypatch.setattr(tray.subprocess, "Popen", _fail)
+
+    assert tray.open_graph_view() is False
+    assert fired is False
+
+
 # gen-ref: 3299cab7

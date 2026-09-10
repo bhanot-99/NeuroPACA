@@ -74,7 +74,13 @@ ICON_COMPLETE = "emblem-default"
 ICON_DAEMON_DOWN = "dialog-warning"
 ICON_ERROR = "dialog-error"
 
-GRAPH_WINDOW = REPO / "scripts" / "neuropaca_graph_window.py"
+GRAPH_RENDER = REPO / "scripts" / "neuropaca_graph.py"
+GRAPH_HTML = REPO / "data" / "graph_view.html"
+
+# Brave, however this box happens to ship it (deb, then the two common stable
+# package names, then a Flatpak). xdg-open is the last resort -- it honours the
+# desktop's default browser, which may or may not be Brave.
+BRAVE_BINARIES = ("brave-browser", "brave", "brave-browser-stable")
 
 
 def _load_soak_state_module() -> Any:
@@ -134,19 +140,61 @@ def open_dashboard() -> bool:
     return True
 
 
-def open_graph_window() -> bool:
-    """Launch the native force-directed graph window.
+def _brave_command() -> list[str] | None:
+    """How to open a URL in Brave on this box, or None if Brave isn't found."""
+    for name in BRAVE_BINARIES:
+        found = shutil.which(name)
+        if found:
+            return [found]
+    if shutil.which("flatpak") and _flatpak_has("com.brave.Browser"):
+        return ["flatpak", "run", "com.brave.Browser"]
+    return None
 
-    `scripts/neuropaca_graph_window.py` draws `data/graph.json` with Cairo -- no
-    browser, no daemon coupling. It runs as its own process on purpose: the
-    viewer carries a physics loop and the tray must not inherit a crash from it.
-    The window takes its own single-instance lock, so clicking this again while
-    one is already open is a harmless no-op.
-    """
-    if not GRAPH_WINDOW.exists():
+
+def _flatpak_has(app_id: str) -> bool:
+    try:
+        out = subprocess.run(
+            ["flatpak", "info", app_id],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+        return out.returncode == 0
+    except (OSError, subprocess.SubprocessError):
         return False
+
+
+def open_graph_view() -> bool:
+    """Regenerate the self-contained HTML graph and open it in Brave.
+
+    `scripts/neuropaca_graph.py` reads `data/graph.json` (nothing else -- no
+    socket, no package import) and splices it into a zero-egress HTML page whose
+    force layout settles and then freezes. We render it fresh on every click so
+    the picture is current, then hand the file to Brave; `xdg-open` is the
+    fallback when Brave isn't installed under a name we know. Runs as its own
+    process -- the tray must not inherit a crash from the render step.
+    """
+    if not GRAPH_RENDER.exists():
+        return False
+    try:
+        done = subprocess.run(
+            [sys.executable, str(GRAPH_RENDER), "--no-open", "--out", str(GRAPH_HTML)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if done.returncode != 0 or not GRAPH_HTML.exists():
+        return False
+
+    opener = _brave_command()
+    if opener is None:
+        if not shutil.which("xdg-open"):
+            return False
+        opener = ["xdg-open"]
     subprocess.Popen(  # fixed argv, no shell
-        [sys.executable, str(GRAPH_WINDOW)],
+        [*opener, GRAPH_HTML.resolve().as_uri()],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -352,12 +400,12 @@ def _run_tray() -> None:
             self.menu.append(header)
             self.menu.append(Gtk.SeparatorMenuItem())
 
-            # The live graph view -- top of the menu because it is the thing you
-            # open this widget for. Also wired to a middle-click on the tray icon
-            # below (set_secondary_activate_target), so it is one click away
-            # without opening the menu at all.
+            # The graph view -- top of the menu because it is the thing you open
+            # this widget for. Rendered fresh and opened in Brave. Also wired to
+            # a middle-click on the tray icon below (set_secondary_activate_target),
+            # so it is one click away without opening the menu at all.
             graph_item = Gtk.MenuItem(label="Open graph view")
-            graph_item.connect("activate", lambda *_: open_graph_window())
+            graph_item.connect("activate", lambda *_: open_graph_view())
             self.menu.append(graph_item)
             self.menu.append(Gtk.SeparatorMenuItem())
 

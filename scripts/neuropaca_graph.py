@@ -21,11 +21,17 @@ ZERO EGRESS (rules.md §6)
     a JSON payload into it.
 
 WHAT IT SHOWS
-    Node colour is `node_type`, node size is `relevance_score`, edge thickness is
-    `weight` -- so a thick line is a pair the Hebbian update has reinforced many
-    times, which is the one thing a node/edge count cannot show you. Every node
-    and edge carries `created_at`, so the page can replay the window: drag the
-    scrubber and watch the graph build itself.
+    Every node is drawn in a colour *and* a size band set by its class -- the
+    person (`YOU`), the ten routing hubs, then apps / web apps / concepts /
+    insights / idle thoughts. Size within a class tracks `relevance_score` and
+    degree; edge thickness tracks `weight`. Every node and edge carries
+    `created_at`, so the page can replay the window: drag the scrubber and watch
+    the graph build itself.
+
+    The layout is a force simulation that COOLS AND STOPS -- it settles in a
+    couple of seconds and then the canvas stops repainting, so the picture holds
+    still. A collision force keeps nodes off each other. Dragging a node,
+    scrubbing time or toggling a filter re-heats it briefly.
 
 STALENESS
     `GraphMemory.save()` runs on the scheduler's interval (default 300 s), so the
@@ -141,6 +147,8 @@ def build_payload(graph: dict[str, Any]) -> dict[str, Any]:
             "score": round(float(n.get("relevance_score", 0.0)), 3),
             "access": int(n.get("access_count", 0)),
             "domain": domains.get(n["id"]),
+            "ram": round(float(n["ram_mb"]), 1) if n.get("ram_mb") else None,
+            "cpu": round(float(n["cpu_percent"]), 1) if n.get("cpu_percent") else None,
         }
         for n in nodes
     ]
