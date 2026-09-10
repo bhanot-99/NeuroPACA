@@ -34,8 +34,11 @@ and fine.
 
 SAFE TO RUN DURING A SOAK
 
-Imports nothing from `src/` (the venv's editable install *is* the running
-daemon), opens no socket, and only ever reads the graph file. A single-instance
+Imports nothing from the `neuropaca` package (the venv's editable install *is*
+the running daemon), opens no socket, and only ever reads the graph file. The
+one exception is by design: `src/neuropaca/core/labels.py` — pure stdlib, no
+package imports — is loaded *by file path*, so every caption here is rendered by
+the same code as the daemon's labels (B18). A single-instance
 lock keeps a double-click from stacking windows. Pure stdlib + PyGObject + Cairo
 -- runs under system python3, same split as scripts/soak_tray.py.
 """
@@ -76,55 +79,52 @@ DOMAIN_ORDER: tuple[str, ...] = (
 )
 HUB_RING = 260.0  # world-unit radius of the domain ring around YOU
 
-# B17 · readable node names. `label` on `app:`/`webapp:` nodes is the canonical
-# slug after the identity pass; everything here just title-cases it nicely.
-_PRETTY_WORDS: dict[str, str] = {
-    "vscode": "VS Code",
-    "code": "VS Code",
-    "cosmicterm": "Cosmic Term",
-    "cosmic-term": "Cosmic Term",
-    "cosmicfiles": "Cosmic Files",
-    "cosmic-files": "Cosmic Files",
-    "cosmicmonitor": "Cosmic Monitor",
-    "cosmic-comp": "Cosmic Comp",
-    "github": "GitHub",
-    "gitlab": "GitLab",
-    "youtube": "YouTube",
-    "chatgpt": "ChatGPT",
-    "whatsapp": "WhatsApp",
-    "linkedin": "LinkedIn",
-    "mental_models": "Mental Models",
-    "mental-models": "Mental Models",
-}
-_ACRONYMS: frozenset[str] = frozenset({"ai", "cli", "db", "ide", "mcp", "os", "vs", "ui", "ux"})
+
+def _load_labels() -> Any:
+    """B18 · the daemon's one renderer, loaded by path (see module docstring)."""
+    import importlib.util
+
+    name = "_neuropaca_labels"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, REPO / "src" / "neuropaca" / "core" / "labels.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses resolve their module by name
+    spec.loader.exec_module(module)
+    return module
 
 
-def _titlecase(slug: str) -> str:
-    key = slug.strip().lower().replace("_", "-")
-    if key in _PRETTY_WORDS:
-        return _PRETTY_WORDS[key]
-    words = [w for w in key.replace("-", " ").split() if w]
-    return " ".join(w.upper() if w in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
+labels = _load_labels()
 
 
-def pretty_label(node_id: str, node: dict[str, Any]) -> str:
-    """A human name for any node — used for every drawn label and the panel."""
-    if node_id == ROOT_ID:
-        return "You"
-    label = str(node.get("label") or "").strip()
-    if node_id.startswith(DOMAIN_PREFIX):
-        return _titlecase(node_id[len(DOMAIN_PREFIX) :])
-    if node_id.startswith(("app:", "webapp:")):
-        return _titlecase(label or node_id.split(":", 1)[1])
-    if node_id.startswith(("insight:", "idle:")):
-        first = label.splitlines()[0].strip() if label else ""
-        if first:
-            return first if len(first) <= 44 else first[:43] + "…"
-        return "Idle thought" if node_id.startswith("idle:") else "Insight"
-    if node_id.startswith("ephemeral:"):
-        parts = node_id.split(":")
-        return _titlecase(parts[1]) if len(parts) > 2 else "Note"
-    return label or node_id
+def pretty_label(
+    node_id: str,
+    node: dict[str, Any],
+    nodes: dict[str, dict[str, Any]] | None = None,
+    mode: str = "full",
+) -> str:
+    """A human name for any node — `labels.display`, over the graph file's
+    dicts. `nodes` (the whole graph) lets a spec'd node name its refs."""
+    pool = nodes or {}
+
+    def lookup(ref: str) -> tuple[str, Any] | None:
+        raw = pool.get(ref)
+        if raw is None:
+            return None
+        return str(raw.get("label") or ""), labels.LabelSpec.from_record(raw.get("spec"))
+
+    spec = labels.LabelSpec.from_record(node.get("spec"))
+    return str(
+        labels.display(node_id, str(node.get("label") or ""), spec, labels.ref_namer(lookup), mode)
+    )
+
+
+def is_fact(node: dict[str, Any]) -> bool:
+    """A generated node (B18) — its `spec` is what it is about."""
+    return labels.LabelSpec.from_record(node.get("spec")) is not None
 
 
 # Node-type fill colours -- lifted verbatim from graph_view_template.html's dark
@@ -163,6 +163,21 @@ class GraphData:
         self.domain_of: dict[str, str] = {}
         self.mtime: float = 0.0
         self.error: str | None = None
+        self._captions: dict[str, str] = {}
+        self._captions_key: tuple[float, int] = (-1.0, -1)
+
+    def captions(self) -> dict[str, str]:
+        """Short, on-screen-distinct caption per node (B18), cached per file
+        version. Only captions that still collide get a time hint appended."""
+        key = (self.mtime, len(self.nodes))
+        if key != self._captions_key:
+            short = {
+                nid: pretty_label(nid, n, self.nodes, "short") for nid, n in self.nodes.items()
+            }
+            hints = {nid: str(n.get("created_at") or "")[11:16] for nid, n in self.nodes.items()}
+            self._captions = labels.disambiguate(short, hints)
+            self._captions_key = key
+        return self._captions
 
     def reload(self, path: Path) -> bool:
         """Re-read `path`. Returns True if the content changed (or first load)."""
@@ -532,7 +547,7 @@ def _run(graph_path: Path) -> int:
                     Pango,
                     px,
                     py + r + 3,
-                    pretty_label(node_id, data.nodes[node_id]),
+                    data.captions().get(node_id, node_id),
                     bold=data.is_hub(node_id),
                     dim=dim,
                 )
@@ -617,7 +632,9 @@ def _run(graph_path: Path) -> int:
         for child in panel_box.get_children():
             panel_box.remove(child)
         node = data.nodes.get(node_id, {})
-        panel_box.pack_start(_row(pretty_label(node_id, node), bold=True), False, False, 0)
+        panel_box.pack_start(
+            _row(pretty_label(node_id, node, data.nodes), bold=True), False, False, 0
+        )
         panel_box.pack_start(_row(node_id, mono=True), False, False, 0)
         panel_box.pack_start(Gtk.Separator(), False, False, 4)
 
@@ -630,7 +647,13 @@ def _run(graph_path: Path) -> int:
 
         add(str(node.get("node_type", "—")), "type")
         add(num("relevance_score", "{:.2f}"), "relevance")
-        add(num("access_count"), "focused")
+        if is_fact(node):
+            # B18: a repeat reinforces the one node — this is how often it recurred
+            add(f"{int(node.get('access_count') or 0) + 1} times", "seen")
+            add(str(node.get("created_at") or "—").replace("T", " ")[:19], "first seen")
+            add(str(node.get("last_accessed") or "—").replace("T", " ")[:19], "last seen")
+        else:
+            add(num("access_count"), "focused")
         add(num("priority"), "priority")
         if node.get("ram_mb"):
             add(f"{float(node['ram_mb']):.0f} MiB", "RAM")
@@ -647,7 +670,9 @@ def _run(graph_path: Path) -> int:
         panel_box.pack_start(Gtk.Separator(), False, False, 4)
         panel_box.pack_start(_row(f"Connected to ({len(nbrs)})", bold=True), False, False, 0)
         for relation, other in nbrs:
-            other_name = pretty_label(other, data.nodes.get(other, {}))
+            other_name = data.captions().get(other) or pretty_label(
+                other, data.nodes.get(other, {}), data.nodes
+            )
             btn = Gtk.Button(label=f"{relation or 'related'} · {other_name}")
             btn.set_relief(Gtk.ReliefStyle.NONE)
             btn.get_child().set_xalign(0.0)

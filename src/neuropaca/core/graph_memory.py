@@ -30,8 +30,11 @@ import heapq
 import json
 import math
 import os
+import re
+import shutil
 import tempfile
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -40,6 +43,20 @@ import networkx as nx
 
 from neuropaca.core.enums import NodeType, RelationType
 from neuropaca.core.errors import GraphMemoryError
+from neuropaca.core.labels import (
+    DROP,
+    KIND_PREFIX,
+    LabelKind,
+    LabelSpec,
+    Mode,
+    display,
+    fact_id,
+    is_well_formed,
+    leaf_name,
+    parse_legacy,
+    ref_namer,
+    render,
+)
 from neuropaca.core.models import Edge, Node
 
 # v2 (B5): node records gain an optional `surfaced_at`.
@@ -51,7 +68,21 @@ from neuropaca.core.models import Edge, Node
 # browser tabs. A v3 file loads on v4 code unchanged; a v4 file is REFUSED by a
 # v3 reader (its `NodeType` enum has no `webapp` member) — the schema-version
 # gate below catches that cleanly before any node is parsed.
-_SCHEMA_VERSION = 4
+# v5 (B18): node records gain `spec` — the structured `LabelSpec` a generated
+# node (`insight:` / `idle:` / `ephemeral:`) is about; `label` becomes a render
+# cache for those. A v4 file is migrated on load (`_migrate_v4_facts_unsafe`):
+# the four legacy label templates are parsed back into specs, ids re-derived
+# from fingerprints, duplicates merged. A backup `<file>.pre-b18-backup` is
+# written first.
+_SCHEMA_VERSION = 5
+_FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
+# `labels.py` is stdlib-only (the graph window loads it by path), so the
+# kind -> NodeType half of the table lives here.
+_KIND_NODE_TYPE: dict[LabelKind, NodeType] = {
+    LabelKind.INSIGHT: NodeType.INSIGHT,
+    LabelKind.THOUGHT: NodeType.IDLE_THOUGHT,
+    LabelKind.PROBE: NodeType.CONCEPT,
+}
 
 # The oldest on-disk version this build can still read. v1/v2/v3 differ only by
 # added optional keys that `_deserialise` already tolerates when absent, so no
@@ -105,6 +136,12 @@ def _as_dt_opt(value: Any) -> datetime | None:
     return _as_dt(value)
 
 
+def _as_spec(value: Any) -> LabelSpec | None:
+    if value is None or isinstance(value, LabelSpec):
+        return value
+    return LabelSpec.from_record(value)
+
+
 class GraphMemory:
     """CRUD, traversal, scoring, consolidation, and atomic persistence for the graph."""
 
@@ -116,6 +153,7 @@ class GraphMemory:
         self._lock = asyncio.Lock()
         self._dirty = False
         self._last_save: datetime | None = None
+        self._ref_name = ref_namer(self._lookup)  # B18 · names refs inside labels
 
     # ------------------------------------------------------------------ singleton
     @classmethod
@@ -166,6 +204,28 @@ class GraphMemory:
         Use this, not `add_node()`, for any entity a module touches repeatedly."""
         async with self._lock:
             return self._upsert_node_unsafe(node_id, node_type, attributes or {})
+
+    async def upsert_fact(self, spec: LabelSpec) -> tuple[Node, bool]:
+        """B18 · the one write path for every generated node (L4 insight, L6
+        thought, L8 probe). The id is `fact_id(spec)`, so the same fact is the
+        same node — across restarts too, with no side index. A repeat is
+        *reinforced* (`access_count`, `last_accessed`, latest `value`); a new
+        fact is created and edged `RELATED_TO` each ref that exists. One lock
+        cycle. Returns `(node, created)`."""
+        async with self._lock:
+            return self._upsert_fact_unsafe(spec)
+
+    def find_fact(self, spec: LabelSpec) -> Node | None:
+        """The stored node for this fact, or None. A pure id lookup."""
+        return self.get_node(fact_id(spec))
+
+    def display_name(self, node_id: str, mode: Mode = "full") -> str:
+        """B18 · the readable name of any node, rendered now from its spec (so
+        it reflects every rename) or, for a leaf, from its label."""
+        if node_id not in self._graph:
+            return leaf_name(node_id, "")
+        data = self._graph.nodes[node_id]
+        return display(node_id, str(data.get("label", "")), data.get("spec"), self._ref_name, mode)
 
     async def add_edge(
         self,
@@ -429,6 +489,26 @@ class GraphMemory:
                         merged += 1
                 await asyncio.sleep(0)
 
+        # (3) B18 · heal fact refs. A spec naming `app:brave-browser` now names
+        # `app:brave`; its fingerprint (and so its id) moves with it, and two
+        # facts that became one are merged. Labels re-render from the new names.
+        def remap(ref: str) -> str:
+            for prefix in ("app:", "webapp:"):
+                if ref.startswith(prefix):
+                    bare = ref[len(prefix) :]
+                    return f"{prefix}{resolve(bare) or bare}"
+            return ref
+
+        async with self._lock:
+            pending = self._refresh_facts_unsafe(remap)
+        for survivor, victim in pending:
+            async with self._lock:
+                if self._merge_nodes_unsafe(survivor, victim):
+                    merged += 1
+            await asyncio.sleep(0)
+        async with self._lock:
+            self._rerender_labels_unsafe()
+
         return merged, dropped
 
     async def link_orphan_nodes(self) -> int:
@@ -510,7 +590,11 @@ class GraphMemory:
         return [self._node_from_attrs(n, self._graph.nodes[n]) for n in visited if n in self._graph]
 
     def top_nodes_by_score(
-        self, limit: int, *, exclude_types: frozenset[NodeType] | None = None
+        self,
+        limit: int,
+        *,
+        exclude_types: frozenset[NodeType] | None = None,
+        exclude_prefixes: tuple[str, ...] = (),
     ) -> list[Node]:
         """The `limit` highest-`relevance_score` non-hub nodes, best first.
 
@@ -530,7 +614,9 @@ class GraphMemory:
             (
                 (float(data.get("relevance_score", 0.0)), node_id)
                 for node_id, data in self._graph.nodes(data=True)
-                if node_id not in HUB_NODE_IDS and NodeType(data["node_type"]) not in excluded
+                if node_id not in HUB_NODE_IDS
+                and NodeType(data["node_type"]) not in excluded
+                and not node_id.startswith(exclude_prefixes)
             ),
             key=lambda pair: (pair[0], pair[1]),
         )
@@ -591,6 +677,25 @@ class GraphMemory:
                 payload = await asyncio.to_thread(self._read_payload)
             except (OSError, ValueError) as exc:
                 raise GraphMemoryError(f"cannot load graph {self._path}: {exc}") from exc
+        # Only a pre-v5 file that actually holds generated nodes without a spec
+        # has anything to migrate — an old graph of apps and files does not, and
+        # must not leave a backup file behind (e.g. next to a test fixture).
+        needs_fact_migration = (
+            isinstance(payload, dict)
+            and isinstance(payload.get("schema_version", 1), int)
+            and payload.get("schema_version", 1) < 5
+            and any(
+                isinstance(raw, dict)
+                and str(raw.get("id", "")).startswith(_FACT_PREFIXES)
+                and raw.get("spec") is None
+                for raw in payload.get("nodes", ())
+            )
+        )
+        if needs_fact_migration:
+            # B18 · keep the pre-migration file once — the migration rewrites ids.
+            backup = self._path.with_name(self._path.name + ".pre-b18-backup")
+            if not await asyncio.to_thread(backup.exists):
+                await asyncio.to_thread(shutil.copy2, self._path, backup)
 
         async with self._lock:
             if payload is not None:
@@ -613,6 +718,9 @@ class GraphMemory:
             if self._graph.number_of_nodes() == 0:
                 self._seed_hubs_unsafe()
             self._dirty = False
+            if needs_fact_migration:
+                self._migrate_v4_facts_unsafe()
+                self._dirty = True  # persist the migrated form on the next tick
         # Move the whole graph into GC's permanent generation: it is long-lived
         # and large (10k+ node/edge attr dicts), and without this every gen-2
         # collection triggered by unrelated churn — notably save()'s transient
@@ -704,6 +812,7 @@ class GraphMemory:
         surfaced = _as_dt_opt(data.get("surfaced_at"))
         first_seen = _as_dt_opt(data.get("first_seen_at"))
         last_seen = _as_dt_opt(data.get("last_seen_at"))
+        spec = data.get("spec")
         return {
             "id": node_id,
             "node_type": str(data["node_type"]),
@@ -718,6 +827,7 @@ class GraphMemory:
             "cpu_percent": float(data.get("cpu_percent", 0.0)),
             "first_seen_at": first_seen.isoformat() if first_seen is not None else None,
             "last_seen_at": last_seen.isoformat() if last_seen is not None else None,
+            "spec": spec.to_record() if isinstance(spec, LabelSpec) else None,
         }
 
     @staticmethod
@@ -780,10 +890,126 @@ class GraphMemory:
             cpu_percent=float(attributes.get("cpu_percent", 0.0)),
             first_seen_at=_as_dt_opt(attributes.get("first_seen_at")),
             last_seen_at=_as_dt_opt(attributes.get("last_seen_at")),
+            spec=_as_spec(attributes.get("spec")),
         )
         self._graph.add_node(node_id, **self._node_to_attrs(node))
         self._dirty = True
         return node
+
+    # ------------------------------------------------------------ B18 · facts
+    def _lookup(self, ref: str) -> tuple[str, LabelSpec | None] | None:
+        """`labels.Lookup` over the live graph (sync read, no lock needed for
+        a single dict get — same as `get_node`)."""
+        if ref not in self._graph:
+            return None
+        data = self._graph.nodes[ref]
+        spec = data.get("spec")
+        return str(data.get("label", "")), spec if isinstance(spec, LabelSpec) else None
+
+    def _upsert_fact_unsafe(self, spec: LabelSpec) -> tuple[Node, bool]:
+        node_id = fact_id(spec)
+        if node_id in self._graph:
+            data = self._graph.nodes[node_id]
+            data["spec"] = spec  # the latest value (pressure, confidence) wins
+            data["access_count"] = int(data.get("access_count", 0)) + 1
+            data["last_accessed"] = _utcnow()
+            data["label"] = render(spec, self._ref_name)
+            self._dirty = True
+            return self._node_from_attrs(node_id, data), False
+        node = self._add_node_unsafe(
+            node_id,
+            _KIND_NODE_TYPE[spec.kind],
+            {"label": render(spec, self._ref_name), "spec": spec},
+        )
+        for ref in dict.fromkeys(spec.refs):
+            if ref in self._graph and ref != node_id:
+                self._add_edge_unsafe(node_id, ref, RelationType.RELATED_TO, 0.0)
+        return node, True
+
+    def _refresh_facts_unsafe(
+        self, remap: Callable[[str], str] | None = None
+    ) -> list[tuple[str, str]]:
+        """Re-establish the invariant `node id == fact_id(spec)` after refs moved
+        (`remap`) or on migrated nodes. A fact whose new id is free is renamed in
+        place; one whose new id is taken is returned as `(survivor, victim)` for
+        the caller to merge (one lock cycle each). A fact left malformed — a
+        relational thought whose two refs became one app — is deleted."""
+        pending: list[tuple[str, str]] = []
+        for node_id in list(self._graph.nodes):
+            if node_id not in self._graph:
+                continue
+            data = self._graph.nodes[node_id]
+            spec = data.get("spec")
+            if not isinstance(spec, LabelSpec):
+                continue
+            if remap is not None:
+                refs = tuple(dict.fromkeys(remap(r) for r in spec.refs))
+                if refs != spec.refs:
+                    spec = replace(spec, refs=refs)
+                    data["spec"] = spec
+                    self._dirty = True
+            if not is_well_formed(spec):
+                self._graph.remove_node(node_id)
+                self._dirty = True
+                continue
+            want = fact_id(spec)
+            if want == node_id:
+                continue
+            if want in self._graph:
+                pending.append((want, node_id))
+            else:
+                nx.relabel_nodes(self._graph, {node_id: want}, copy=False)
+            self._dirty = True
+        return pending
+
+    def _rerender_labels_unsafe(self) -> None:
+        """Refresh every fact's `label` cache from its spec and current names."""
+        for _node_id, data in self._graph.nodes(data=True):
+            spec = data.get("spec")
+            if isinstance(spec, LabelSpec):
+                data["label"] = render(spec, self._ref_name)
+
+    _LEGACY_NAME_RE: ClassVar[re.Pattern[str]] = re.compile(r"[\w.\-]+")
+
+    def _migrate_v4_facts_unsafe(self) -> tuple[int, int]:
+        """Schema v4 -> v5 (B18). Parse each pre-B18 generated label back into a
+        spec, drop the thoughts that quoted other labels (issue 4), re-derive ids
+        from fingerprints, merge what collides, re-render. Refs are still raw
+        here (`app:brave-browser`); `canonicalise_app_nodes` heals them right
+        after load. Returns `(parsed, dropped)`."""
+        by_name: dict[str, str] = {}
+        for node_id, data in self._graph.nodes(data=True):
+            if node_id.startswith(("app:", "webapp:")):
+                bare = node_id.split(":", 1)[1]
+                label = str(data.get("label", ""))
+                for key in (bare, label, leaf_name(node_id, label)):
+                    by_name.setdefault(key.casefold(), node_id)
+                    by_name.setdefault(re.sub(r"[\s_]+", "-", key.casefold()), node_id)
+
+        def ref_for_name(name: str) -> str | None:
+            key = name.casefold()
+            hit = by_name.get(key) or by_name.get(re.sub(r"[\s_]+", "-", key))
+            if hit is not None:
+                return hit
+            # an app name the graph no longer holds (pre-B17) — resolved later
+            return f"app:{name}" if self._LEGACY_NAME_RE.fullmatch(name) else None
+
+        parsed = dropped = 0
+        for node_id in list(self._graph.nodes):
+            data = self._graph.nodes[node_id]
+            if data.get("spec") is not None or not node_id.startswith(_FACT_PREFIXES):
+                continue
+            spec = parse_legacy(node_id, str(data.get("label", "")), ref_for_name)
+            if spec == DROP:
+                self._graph.remove_node(node_id)
+                dropped += 1
+            elif isinstance(spec, LabelSpec):
+                data["spec"] = spec
+                parsed += 1
+        for survivor, victim in self._refresh_facts_unsafe():
+            self._merge_nodes_unsafe(survivor, victim)
+        self._rerender_labels_unsafe()
+        return parsed, dropped
 
     def _add_edge_unsafe(
         self, source_id: str, target_id: str, relation: RelationType, weight: float
@@ -928,8 +1154,8 @@ class GraphMemory:
         best: dict[tuple[str, str], tuple[datetime, str]] = {}
         members: dict[tuple[str, str], list[str]] = {}
         for node_id, data in self._graph.nodes(data=True):
-            if node_id in HUB_NODE_IDS:
-                continue
+            if node_id in HUB_NODE_IDS or data.get("spec") is not None:
+                continue  # B18: a fact is unique by id already — never merge on text
             key = (str(data.get("node_type", "")), str(data.get("label", "")).strip().casefold())
             created = _as_dt(data.get("created_at", _utcnow()))
             members.setdefault(key, []).append(node_id)
@@ -1133,6 +1359,7 @@ class GraphMemory:
                 cpu_percent=float(raw.get("cpu_percent", 0.0)),
                 first_seen_at=_as_dt_opt(raw.get("first_seen_at")),
                 last_seen_at=_as_dt_opt(raw.get("last_seen_at")),
+                spec=LabelSpec.from_record(raw.get("spec")),  # absent before v5
             )
             graph.add_node(node.id, **self._node_to_attrs(node))
         for raw in payload.get("edges", []):
@@ -1161,6 +1388,7 @@ class GraphMemory:
             "cpu_percent": node.cpu_percent,
             "first_seen_at": node.first_seen_at,
             "last_seen_at": node.last_seen_at,
+            "spec": node.spec,
         }
 
     @staticmethod
@@ -1179,6 +1407,7 @@ class GraphMemory:
             cpu_percent=float(data.get("cpu_percent", 0.0)),
             first_seen_at=_as_dt_opt(data.get("first_seen_at")),
             last_seen_at=_as_dt_opt(data.get("last_seen_at")),
+            spec=_as_spec(data.get("spec")),
         )
 
     @staticmethod

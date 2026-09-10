@@ -90,10 +90,13 @@ class Config:
     bitnet_max_tokens: int = 256
     # B4 · Learning (L4, D-11). model_context_tokens = llama.cpp n_ctx (the
     # extractive prompt is ~200 tokens, output <= 48 — 2048 is generous and keeps
-    # the KV-cache small). adaptation_buffer_size bounds BitNetPlasticity's
-    # (Signal, Insight) deque + the Jaccard-novelty comparison set.
+    # the KV-cache small).
     model_context_tokens: int = 2048
-    adaptation_buffer_size: int = 64
+    # B18 · L4's repeat gate. An insight fact (category/signal about a node)
+    # reinforced within this window makes a new model call for the same
+    # candidates pointless — skipped before inference. The check reads the graph,
+    # so it survives restarts (the in-memory Jaccard buffer it replaces did not).
+    insight_refractory_minutes: int = 360
     # T7 · Hebbian co-occurrence ("fire together, wire together", D-11). The
     # correlator wires activity nodes to `domain:` hubs, never to each other, so
     # `reinforce_cooccurrence` had no peer edges to strengthen and every weight
@@ -285,7 +288,7 @@ class Config:
             "snapshot_buffer_size",
             "correlation_window_seconds",
             "model_context_tokens",
-            "adaptation_buffer_size",
+            "insight_refractory_minutes",
             "interactive_model_context_tokens",
             "dmn_cycle_wall_clock_seconds",
             "dmn_max_inferences_per_cycle",

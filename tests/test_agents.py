@@ -108,9 +108,7 @@ async def _settle(bus: EventBus, *tasks) -> None:
 async def test_spawn_node_never_exceeds_the_ephemeral_cap(tmp_path) -> None:
     agents, _bus, _graph = await _supervisor(tmp_path, max_ephemeral_nodes=5)
 
-    created = [
-        await agents.spawn_node(f"n{i}", trigger_node="app:code", facet="probe") for i in range(20)
-    ]
+    created = [await agents.spawn_node(f"probe/n{i}", trigger_node="app:code") for i in range(20)]
 
     assert sum(1 for c in created if c is not None) == 5
     assert created[5] is None, "the 6th spawn is refused, not raised"
@@ -124,7 +122,7 @@ async def test_the_cap_holds_under_a_concurrent_burst(tmp_path) -> None:
     agents, _bus, _graph = await _supervisor(tmp_path, max_ephemeral_nodes=7)
 
     results = await asyncio.gather(
-        *(agents.spawn_node(f"n{i}", trigger_node="app:code") for i in range(20))
+        *(agents.spawn_node(f"probe/n{i}", trigger_node="app:code") for i in range(20))
     )
 
     assert sum(1 for r in results if r is not None) == 7
@@ -136,7 +134,7 @@ async def test_a_spawned_node_is_a_concept_edged_to_its_trigger(tmp_path) -> Non
     """No new NodeType and no schema bump (D-16): a CONCEPT marked by id prefix."""
     agents, _bus, graph = await _supervisor(tmp_path)
 
-    node_id = await agents.spawn_node("why is code hot", trigger_node="app:code", facet="summary")
+    node_id = await agents.spawn_node("summary/L3.high_load", trigger_node="app:code", value=4.0)
 
     assert node_id is not None
     assert node_id.startswith(EPHEMERAL_PREFIX)
@@ -177,7 +175,7 @@ async def test_apoptosis_reaps_past_the_ttl_and_spares_everything_else(tmp_path)
     old_id = await agents.spawn_node("old", trigger_node="app:code")
     fresh_id = await agents.spawn_node("fresh", trigger_node="app:code")
     assert old_id and fresh_id
-    await graph.update_node(old_id, {"created_at": clock.now() - timedelta(days=15)})
+    await graph.update_node(old_id, {"last_accessed": clock.now() - timedelta(days=15)})
 
     reaped = await agents.apoptosis()
 
@@ -194,7 +192,7 @@ async def test_apoptosis_leaves_no_dangling_edges(tmp_path) -> None:
 
     node_id = await agents.spawn_node("doomed", trigger_node="app:code")
     assert node_id
-    await graph.update_node(node_id, {"created_at": clock.now() - timedelta(days=30)})
+    await graph.update_node(node_id, {"last_accessed": clock.now() - timedelta(days=30)})
     assert graph.get_edges("app:code"), "precondition: the trigger carries the agent's edge"
     edges_before = graph.edge_count
 
@@ -228,7 +226,7 @@ async def test_apoptosis_runs_on_boot(tmp_path) -> None:
     agents, _bus, graph = await _supervisor(tmp_path, clock=clock)
     node_id = await agents.spawn_node("stale", trigger_node="app:code")
     assert node_id
-    await graph.update_node(node_id, {"created_at": clock.now() - timedelta(days=99)})
+    await graph.update_node(node_id, {"last_accessed": clock.now() - timedelta(days=99)})
     await agents.stop()
 
     restarted = AgentSupervisor(EventBus.get_instance(), _config(tmp_path), graph, clock=clock)

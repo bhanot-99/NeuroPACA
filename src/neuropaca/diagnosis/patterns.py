@@ -454,10 +454,11 @@ class DistractionPattern(BasePattern):
     classification path; re-emitting it would overwrite the key and reset any
     Hebbian `weight` (`_add_edge_unsafe` keys on `(source, target, relation)`).
 
-    Known ceiling (D-19, §4): on a small graph L4's Jaccard-novelty gate (> 0.8)
-    drops every distraction signal after the first — the same handful of apps
-    recur. B13-B widens the app vocabulary; the ceiling is asserted intentional
-    in the tests."""
+    Known ceiling (D-19, §4; B18): once every app a distraction could cite
+    already carries a fresh distraction insight, L4's repeat gate skips the
+    model — the same handful of apps recurring is a known fact, reinforced, not
+    re-asked. B13-B widens the app vocabulary; the ceiling is asserted
+    intentional in the tests."""
 
     signal_type: ClassVar[SignalType] = SignalType.DISTRACTION
     collectors: ClassVar[tuple[str, ...]] = ("activity",)

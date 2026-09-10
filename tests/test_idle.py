@@ -81,28 +81,28 @@ def test_proactive_grammar_rejects_non_aliases() -> None:
 
 
 def test_parse_proactive_renders_a_relational_question() -> None:
-    a2i = {"n1": "app:esbuild", "n2": "file:/api"}
-    a2l = {"n1": "esbuild-service", "n2": "~/src/api"}
+    """B18: the parser keeps only the template *key* and node ids; the words are
+    rendered by `core/labels.py` (here over bare ids — before storage)."""
+    a2i = {"n1": "app:esbuild", "n2": "app:api-server"}
     ins = parse_proactive(
-        '{"subject": "n1", "object": "n2", "query_template": "how_does_x_affect_y"}', a2i, a2l
+        '{"subject": "n1", "object": "n2", "query_template": "how_does_x_affect_y"}', a2i
     )
     assert ins is not None
     assert ins.category == "proactive"
-    assert ins.detail == "How does esbuild-service affect ~/src/api?"
-    assert ins.cited_node_ids == ("app:esbuild", "file:/api")
-    assert ins.summary == ins.detail  # summary is the question, not a template
+    assert ins.template == "how_does_x_affect_y"
+    assert ins.cited_node_ids == ("app:esbuild", "app:api-server")
+    assert ins.summary == "How does Esbuild affect Api Server?"
     assert ins.traces_to_evidence()  # grounded by construction (D-13)
     assert ins.confidence >= 0.75  # clears the L9 surfacing gate
 
 
 def test_parse_proactive_single_subject_template_drops_a_spurious_object() -> None:
     a2i = {"n1": "app:code", "n2": "app:brave"}
-    a2l = {"n1": "VS Code", "n2": "Brave"}
     ins = parse_proactive(
-        '{"subject": "n1", "object": "n2", "query_template": "what_changed_in_x"}', a2i, a2l
+        '{"subject": "n1", "object": "n2", "query_template": "what_changed_in_x"}', a2i
     )
     assert ins is not None
-    assert ins.detail == "What changed in VS Code recently?"
+    assert ins.summary == "What changed in VS Code recently?"
     assert ins.cited_node_ids == ("app:code",)
 
 
@@ -119,8 +119,7 @@ def test_parse_proactive_single_subject_template_drops_a_spurious_object() -> No
 )
 def test_parse_proactive_hard_gate_discards_bad_output(raw: str) -> None:
     a2i = {"n1": "app:code"}
-    a2l = {"n1": "VS Code"}
-    assert parse_proactive(raw, a2i, a2l) is None
+    assert parse_proactive(raw, a2i) is None
 
 
 def test_every_template_renders_without_a_keyerror() -> None:
@@ -392,7 +391,8 @@ def _thought(node_id: str, text: str) -> Insight:
         confidence=0.8,
         snapshot_count=0,
         node_id=node_id,
-        detail=text,
+        template="how_does_x_affect_y",
+        label=text,  # B18: what the graph rendered on store
     )
 
 

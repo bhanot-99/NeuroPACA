@@ -159,7 +159,7 @@ async def test_store_insight_with_50_citations_stays_off_the_loop(tmp_path: Path
     await asyncio.sleep(0.1)
 
     t0 = time.perf_counter()
-    stored = await module._store_insight(insight, signal)
+    stored, _created = await module._store_insight(insight, signal)
     wall_ms = (time.perf_counter() - t0) * 1000.0
     await asyncio.sleep(0.05)
 

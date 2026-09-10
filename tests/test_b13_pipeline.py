@@ -276,10 +276,10 @@ async def test_a_distraction_signal_now_produces_an_insight(tmp_path: Path) -> N
         await bus.stop()
 
 
-async def test_novelty_gate_shuts_down_repeat_distraction_on_a_small_graph(tmp_path: Path) -> None:
+async def test_repeat_gate_shuts_down_repeat_distraction_on_a_small_graph(tmp_path: Path) -> None:
     """The documented B13-A ceiling: same handful of apps recurring -> L4's
-    Jaccard-novelty gate (> 0.8) drops every distraction after the first. B13-B's
-    wider app vocabulary is what lifts this."""
+    repeat gate (B18) finds the fact already stored and drops every distraction
+    after the first. B13-B's wider app vocabulary is what lifts this."""
     mod, bus, _gm = await _plasticity(tmp_path)
     try:
         for _ in range(5):

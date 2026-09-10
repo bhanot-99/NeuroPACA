@@ -36,12 +36,42 @@ def test_pretty_label_apps_use_the_canonical_slug() -> None:
     assert gw.pretty_label("webapp:google-gemini", {"label": "google-gemini"}) == "Google Gemini"
 
 
-def test_pretty_label_insight_uses_first_line() -> None:
+def test_pretty_label_legacy_insight_uses_first_line() -> None:
+    """A node with no spec (unparsed legacy text) renders its label's first line."""
     assert gw.pretty_label("insight:abc", {"label": "You focus best mid-morning\nmore"}).startswith(
         "You focus best"
     )
-    assert gw.pretty_label("insight:abc", {}) == "Insight"
-    assert gw.pretty_label("ephemeral:summary:x", {}) == "Summary"
+    assert gw.pretty_label("insight:abc", {}) == "insight:abc"
+
+
+def test_pretty_label_renders_the_spec_with_current_ref_names() -> None:
+    """B18 issue 3: two probes on different apps no longer both read "Learning"."""
+    nodes = {"app:brave": {"label": "brave"}, "app:code": {"label": "code"}}
+
+    def probe(ref: str) -> dict:
+        return {"spec": {"kind": "probe", "refs": [ref], "facet": "source/learning"}}
+
+    assert gw.pretty_label("ephemeral:1", probe("app:brave"), nodes, "short") == (
+        "Brave · via learning"
+    )
+    assert gw.pretty_label("ephemeral:2", probe("app:code"), nodes, "short") == (
+        "VS Code · via learning"
+    )
+
+
+def test_captions_disambiguate_only_real_collisions() -> None:
+    data = gw.GraphData()
+    spec = {"kind": "probe", "refs": ["app:brave"], "facet": "summary/L4.anomaly"}
+    data.nodes = {
+        "app:brave": {"label": "brave"},
+        "ephemeral:a": {"spec": {**spec, "value": 1.43}, "created_at": "2026-09-10T10:05:00"},
+        "ephemeral:b": {"spec": {**spec, "value": 1.44}, "created_at": "2026-09-10T11:30:00"},
+    }
+    data.mtime = 1.0
+    caps = data.captions()
+    assert caps["app:brave"] == "Brave"
+    assert caps["ephemeral:a"] != caps["ephemeral:b"]
+    assert caps["ephemeral:a"].endswith("10:05")
 
 
 # ----------------------------------------------------------------- hub geometry

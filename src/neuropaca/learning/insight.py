@@ -6,11 +6,14 @@
 An insight is **extractive**, not generated. The B0 spike proved BitNet b1.58
 2B4T cannot write a grounded sentence over graph context (`problems.md` 1.13);
 so L4 asks the model for exactly two enum-constrained fields — *which* cited node
-is salient and *what category* the episode is — and builds the human-readable
-line from a template. Nothing here is free text from the model.
+is salient and *what category* the episode is. L6 likewise picks a question
+*template key* and its subject/object nodes. Nothing here is free text from the
+model.
 
-`INSIGHT_GENERATED` carries an `Insight`; `BitNetPlasticity` also writes an
-`INSIGHT` graph node (`insight:<uuid>`) edged `RELATED_TO` to every cited node.
+B18: an insight's words are not stored on it either. `spec` says what it is
+about (by node id) and `summary` is `labels.render(spec)` — the same renderer
+the graph, the window and the terminal use. `label` is filled on store with the
+graph's rendering (real names of the cited nodes).
 """
 
 from __future__ import annotations
@@ -19,12 +22,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from neuropaca.core.enums import SignalType
+from neuropaca.core.labels import LabelKind, LabelSpec, leaf_name, render
 
 # The full closed set an insight's category may take. `routine` / `anomaly` /
 # `distraction` are the D-11 L4 grammar's `insight_category` enum; `proactive`
 # (D-13) is L6's — an idle-thought follow-up question, not a signal category, so
 # it never appears in the L4 grammar, only on an `Insight` the DMN builds.
 INSIGHT_CATEGORIES: tuple[str, ...] = ("routine", "anomaly", "distraction", "proactive")
+L4_CATEGORIES: tuple[str, ...] = INSIGHT_CATEGORIES[:3]
 
 
 def _utcnow() -> datetime:
@@ -33,10 +38,9 @@ def _utcnow() -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class Insight:
-    """One extractive observation about a correlated signal.
+    """One extractive observation about a correlated signal (L4) or one open
+    question about two live nodes (L6, `category == "proactive"`).
 
-    `cited_node_ids` is a tuple for forward-compatibility, but the D-11 grammar
-    emits a single `cited_node_id`, so it currently holds exactly one id.
     `snapshot_count` is `len(signal.source_snapshots)` — the B4 exit criterion
     is "every stored insight traces to >= 1 snapshot and >= 1 node".
     """
@@ -46,10 +50,11 @@ class Insight:
     source_signal: SignalType
     confidence: float
     snapshot_count: int
-    node_id: str = ""  # the `insight:<uuid>` / `idle:<uuid>` graph node id, filled on store
-    # B6 (D-13): the rendered idle-thought question, e.g. "How does X affect Y?".
-    # Empty for L4 insights, whose `summary` stays a category template.
-    detail: str = ""
+    node_id: str = ""  # the `insight:<fp>` / `idle:<fp>` graph node id, filled on store
+    # L6 (D-13): the `THOUGHT_TEMPLATES` key the model chose. Empty for L4.
+    template: str = ""
+    # B18: the graph's rendering of `spec`, filled on store. Empty before.
+    label: str = ""
     created_at: datetime = field(default_factory=_utcnow)
 
     def __post_init__(self) -> None:
@@ -57,14 +62,22 @@ class Insight:
             raise ValueError(f"unknown insight category: {self.category!r}")
 
     @property
+    def spec(self) -> LabelSpec:
+        """What this insight is about — its identity in the graph (B18)."""
+        if self.category == "proactive":
+            return LabelSpec(LabelKind.THOUGHT, self.cited_node_ids, self.template)
+        return LabelSpec(
+            LabelKind.INSIGHT,
+            self.cited_node_ids,
+            f"{self.category}/{self.source_signal}",
+            self.confidence,
+        )
+
+    @property
     def summary(self) -> str:
-        """The human-readable line. For an L6 proactive thought this is the
-        extractively-assembled question (`detail`); for an L4 insight it is a
-        category template — no model free text in either case (D-11, D-13)."""
-        if self.detail:
-            return self.detail
-        cited = self.cited_node_ids[0] if self.cited_node_ids else "?"
-        return f"{self.category}: {self.source_signal} implicates {cited}"
+        """The human-readable line: the stored rendering, or — before storage —
+        the same template over the cited ids' leaf names."""
+        return self.label or render(self.spec, lambda ref: leaf_name(ref, ""))
 
     def traces_to_evidence(self) -> bool:
         """Every stored insight must reach real evidence. An L4 insight needs a

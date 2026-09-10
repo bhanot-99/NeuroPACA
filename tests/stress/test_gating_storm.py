@@ -9,9 +9,11 @@ overlapping `related_node_ids`, plus a mock runtime that reports `is_busy` on a
 fixed cadence, and proves:
 
 - **> 50 % dropped**, from a genuine mix of all three gates — `confidence < 0.7`,
-  `is_busy`, Jaccard novelty `> 0.8`.
-- the `adaptation_buffer` deque clamps at `maxlen == 64` — `len` never exceeds
-  it however many insights are generated (no unbounded growth).
+  `is_busy`, and the B18 repeat gate (a fact already known is never re-asked).
+- growth is bounded by *facts*, not by a buffer: the storm can only ever produce
+  one insight node per (category, signal, cited node) — here at most one per
+  pool node — however many signals arrive. (B18 removed the in-memory Jaccard
+  deque this used to check; the graph itself is now the novelty memory.)
 - every signal is accounted for: `generated + dropped == 1000`, and the
   per-reason counters sum to `dropped`.
 """
@@ -36,7 +38,6 @@ from neuropaca.sensing.snapshot import MetricSnapshot
 pytestmark = pytest.mark.stress
 
 _N = 1_000
-_BUFFER_MAX = 64
 _SEED = 20260901
 _SNAP = MetricSnapshot(collector_name="system", timestamp=datetime(2026, 1, 1, tzinfo=UTC), data={})
 _NODE_POOL = [f"file:/proj/mod{i}.py" for i in range(12)]  # small pool -> heavy overlap
@@ -104,7 +105,6 @@ async def test_gating_sheds_most_of_a_1000_signal_storm(tmp_path) -> None:
     )
     await module.initialize()
     await module.start()
-    assert module._buffer.maxlen == _BUFFER_MAX
 
     rng = random.Random(_SEED)
     for sig in _signals(rng):
@@ -128,13 +128,12 @@ async def test_gating_sheds_most_of_a_1000_signal_storm(tmp_path) -> None:
     # a real mix of all three gates fired
     assert module._drops["confidence"] > 0, module._drops
     assert module._drops["busy"] > 0, module._drops
-    assert module._drops["novelty"] > 0, module._drops
+    assert module._drops["repeat"] > 0, module._drops
 
-    # the buffer is mathematically clamped — no unbounded growth
-    assert len(module._buffer) <= _BUFFER_MAX
-    assert module._buffer.maxlen == _BUFFER_MAX
-    if module._generated > _BUFFER_MAX:
-        assert len(module._buffer) == _BUFFER_MAX
+    # growth is bounded by distinct facts — one anomaly insight per pool node
+    insight_nodes = [n for n in graph.node_ids if n.startswith("insight:")]
+    assert len(insight_nodes) == module._generated
+    assert len(insight_nodes) <= len(_NODE_POOL)
 
     await module.stop()
     await bus.stop()

@@ -235,7 +235,9 @@ class PressureAccumulator(BaseModule):
                 self.add_pressure(
                     node_id,
                     _INSIGHT_WEIGHT * insight.confidence,
-                    f"L4 {insight.category}: {insight.summary}",
+                    # B18: a reason names the cause, never another node's text
+                    # (copying `insight.summary` here nested labels in labels).
+                    f"L4 {insight.category} ({insight.source_signal})",
                     source=SOURCE_LEARNING,
                     confidence=insight.confidence,
                 )

@@ -139,10 +139,7 @@ async def _main() -> int:
 
     # --- 1. the hard cap on spawn_node -------------------------------------
     t0 = time.perf_counter()
-    created = [
-        await agents.spawn_node(f"probe {i}", trigger_node=_NODE, facet="probe")
-        for i in range(_BURST)
-    ]
+    created = [await agents.spawn_node(f"probe/{i}", trigger_node=_NODE) for i in range(_BURST)]
     burst_ms = (time.perf_counter() - t0) * 1000
     granted = sum(1 for c in created if c is not None)
     live = agents._count_ephemeral()
@@ -158,7 +155,7 @@ async def _main() -> int:
     for node_id in agents._ephemeral_ids():
         await graph.delete_node(node_id)
     concurrent = await asyncio.gather(
-        *(agents.spawn_node(f"race {i}", trigger_node=_NODE) for i in range(_BURST))
+        *(agents.spawn_node(f"race/{i}", trigger_node=_NODE) for i in range(_BURST))
     )
     granted_concurrent = sum(1 for c in concurrent if c is not None)
     print(f"   concurrent {_BURST} simultaneous spawns -> {granted_concurrent} granted")

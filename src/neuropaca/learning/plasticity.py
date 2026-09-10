@@ -11,12 +11,15 @@ insight is stored as an `INSIGHT` node edged to its cited node, published on
 
 Gate (drop, in order):
   1. `signal.confidence < 0.7`
-  2. no `related_node_ids` — nothing to attribute
+  2. no `related_node_ids`, or none survives in the graph — nothing to attribute
   3. `BitNetRuntime.is_busy` — optional work yields to whatever holds the model
-  4. Jaccard(this signal's node set, any buffered signal's) > 0.8 — not novel
+  4. repeat (B18) — every candidate the model could cite already has an insight
+     for this signal type reinforced within `insight_refractory_minutes`; any
+     answer would be a repeat. Read from the graph, so it survives restarts.
   5. model can't load / backend unavailable
-  6. no cited candidate node survives in the graph
-  7. the model abstains or the output fails the validation gate (`rules.md §4.1`)
+  6. the model abstains or the output fails the validation gate (`rules.md §4.1`)
+  7. repeat (B18) — the answer is a fact already stored: it is reinforced, not
+     re-created, and not re-published (L5/L9 must not double-count it)
 
 The single `infer_async` is the only heavy call and it runs in `BitNetRuntime`'s
 dedicated executor, never on the loop.
@@ -25,21 +28,20 @@ dedicated executor, never on the loop.
 from __future__ import annotations
 
 import logging
-from collections import deque
 from dataclasses import replace
-from datetime import datetime
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EventType, NodeType, RelationType
+from neuropaca.core.enums import EventType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
+from neuropaca.core.labels import LabelKind, LabelSpec
 from neuropaca.core.models import Event, Node, system_error_event
 from neuropaca.diagnosis.signal import Signal
-from neuropaca.learning.insight import Insight
+from neuropaca.learning.insight import L4_CATEGORIES, Insight
 from neuropaca.learning.prompts import (
     INSIGHT_MAX_TOKENS,
     alias_nodes,
@@ -51,7 +53,6 @@ from neuropaca.learning.prompts import (
 _log = logging.getLogger(__name__)
 
 _CONFIDENCE_GATE = 0.7
-_NOVELTY_GATE = 0.8  # Jaccard above this -> too similar to a recent signal
 _CONTEXT_K = 5  # top-K cited candidates offered to the model
 
 
@@ -66,7 +67,6 @@ class BitNetPlasticity(BaseModule):
         super().__init__("learning", event_bus, config)
         self._graph = graph_memory
         self._runtime = bitnet_runtime
-        self._buffer: deque[tuple[Signal, Insight]] = deque(maxlen=config.adaptation_buffer_size)
         self._generated = 0
         self._dropped = 0
         # per-reason drop counters (observability — sum == _dropped)
@@ -74,7 +74,7 @@ class BitNetPlasticity(BaseModule):
             "confidence": 0,
             "no_nodes": 0,
             "busy": 0,
-            "novelty": 0,
+            "repeat": 0,
             "model": 0,
             "abstain": 0,
         }
@@ -139,8 +139,13 @@ class BitNetPlasticity(BaseModule):
         if self._runtime.is_busy:
             self._drop("busy")
             return
-        if self._too_similar(signal):
-            self._drop("novelty")
+        # distilled context — top-K cited candidates that still exist
+        nodes = self._context_nodes(signal)
+        if not nodes:
+            self._drop("no_nodes")
+            return
+        if self._already_known(signal, nodes):
+            self._drop("repeat")
             return
 
         # (5) lazy load — offloaded to the inference executor (rules.md §1)
@@ -159,18 +164,13 @@ class BitNetPlasticity(BaseModule):
                 )
                 return
 
-        # (6) distilled context — top-K cited candidates that still exist
-        nodes = self._context_nodes(signal)
-        if not nodes:
-            self._drop("no_nodes")
-            return
         aliased = alias_nodes(nodes)
         aliases = [alias for alias, _ in aliased]
         alias_to_id = {alias: node.id for alias, node in aliased}
         prompt = build_insight_prompt(signal.signal_type, signal.confidence, aliased)
         grammar = build_insight_grammar(aliases)  # pure string work, before the lock
 
-        # (7) one greedy, grammar-constrained call
+        # one greedy, grammar-constrained call
         raw = await self._runtime.infer_async(prompt, INSIGHT_MAX_TOKENS, 0.0, grammar)
         insight = parse_insight(
             raw,
@@ -183,8 +183,10 @@ class BitNetPlasticity(BaseModule):
             self._drop("abstain")
             return
 
-        stored = await self._store_insight(insight, signal)
-        self._buffer.append((signal, stored))
+        stored, created = await self._store_insight(insight, signal)
+        if not created:
+            self._drop("repeat")
+            return
         self.event_bus.publish(
             Event(
                 event_type=EventType.INSIGHT_GENERATED,
@@ -196,33 +198,41 @@ class BitNetPlasticity(BaseModule):
         self._last_at = stored.created_at
 
     # --------------------------------------------------------------- helpers
-    def _too_similar(self, signal: Signal) -> bool:
-        current = set(signal.related_node_ids)
-        for past_signal, _ in self._buffer:
-            past = set(past_signal.related_node_ids)
-            union = current | past
-            if union and len(current & past) / len(union) > _NOVELTY_GATE:
-                return True
-        return False
+    def _already_known(self, signal: Signal, nodes: list[Node]) -> bool:
+        """B18 pre-inference repeat gate. True only when *every* candidate the
+        model could cite already carries an insight (any L4 category) for this
+        signal type, reinforced within the refractory window — then any answer
+        would be a stored fact, so the model call is skipped. Pure id lookups."""
+        cutoff = datetime.now(UTC) - timedelta(minutes=self.config.insight_refractory_minutes)
+        for node in nodes:
+            fresh = False
+            for category in L4_CATEGORIES:
+                spec = LabelSpec(LabelKind.INSIGHT, (node.id,), f"{category}/{signal.signal_type}")
+                known = self._graph.find_fact(spec)
+                if known is not None and known.last_accessed >= cutoff:
+                    fresh = True
+                    break
+            if not fresh:
+                return False
+        return True
 
     def _context_nodes(self, signal: Signal) -> list[Node]:
         found = [n for n in (self._graph.get_node(nid) for nid in signal.related_node_ids) if n]
         found.sort(key=lambda n: n.relevance_score, reverse=True)
         return found[:_CONTEXT_K]
 
-    async def _store_insight(self, insight: Insight, signal: Signal) -> Insight:
-        """Write the `INSIGHT` node + its `RELATED_TO` edges, then the Hebbian
-        co-occurrence update for the whole episode (cited nodes + the signal's
-        other related nodes) in one `_lock` cycle (Architecture.md §6, D-11).
+    async def _store_insight(self, insight: Insight, signal: Signal) -> tuple[Insight, bool]:
+        """Upsert the insight *fact* (B18 — node + `RELATED_TO` edges on create,
+        reinforcement on a repeat), then the Hebbian co-occurrence update for the
+        whole episode (cited nodes + the signal's other related nodes) in one
+        `_lock` cycle (Architecture.md §6, D-11). A repeat still wires: the
+        episode genuinely co-occurred again. Returns `(stored, created)`.
 
         A model-confirmed episode is stronger evidence of a real association
         than a bare focus co-activation, so it uses `wire_cooccurrence` (which
         also *creates* the pair edge the correlator never builds — T7) with the
         `hebbian_insight_multiplier` applied to the delta."""
-        node_id = f"insight:{uuid4().hex[:12]}"
-        await self._graph.upsert_node(node_id, NodeType.INSIGHT, {"label": insight.summary})
-        for cited_id in insight.cited_node_ids:
-            await self._graph.add_edge(node_id, cited_id, RelationType.RELATED_TO)
+        node, created = await self._graph.upsert_fact(insight.spec)
         episode = [*insight.cited_node_ids, *signal.related_node_ids]
         # the insight pipeline already bounds this set (cited <= _CONTEXT_K, the
         # signal's related ids are a pattern's own NodeSpecs) — reinforce all of
@@ -234,7 +244,7 @@ class BitNetPlasticity(BaseModule):
             max_episode=len(episode) or 1,
             max_new_edges=len(episode) or 1,
         )
-        return replace(insight, node_id=node_id)
+        return replace(insight, node_id=node.id, label=node.label), created
 
 
 # gen-ref: 7235dbfe
