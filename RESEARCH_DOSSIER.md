@@ -7,7 +7,7 @@
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Version** | v8 |
 | **Dossier date** | 2026-09-10 |
-| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. |
 | **Code size** | 13,254 lines of source · 12,609 lines of tests · 603 collected tests (580 default) · 102 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
@@ -119,7 +119,7 @@ The "neuromorphic" name is earned by four concrete mechanisms, not by vibes:
 
 | Brain concept | NeuroPACA mechanism | Where |
 | --- | --- | --- |
-| **Hebbian learning** ("fire together, wire together") | An `app:`/`webapp:` edge is *created* on co-activation and its weight grows by `hebbian_delta` on each recurrence; the B6 idle sweep decays it, so weight reads as a recency-weighted affinity (T7) | `GraphMemory.wire_cooccurrence` / `decay_cooccurrence_edges`; driven from `SignalCorrelator.on_app_switch` |
+| **Hebbian learning** ("fire together, wire together") | An `app:`/`webapp:` edge is *created* on co-activation (T7). Since V-1 each focus switch wires the new focus to each recently active app only (star, not clique), credit falls with the time gap, the weight steps `w += rate·(1 − w)` so it stays in [0, 1), and an unused weight halves every 72 h of uptime | `GraphMemory.wire_coactivation` / `wire_cooccurrence` / `decay_cooccurrence_edges`; driven from `SignalCorrelator.on_app_switch` |
 | **Default Mode Network** (the brain's idle-time replay) | When CPU < 5 %, the DMN replays top-K nodes, consolidates duplicates, re-links orphans, generates "idle thoughts" | `idle/dmn.py` |
 | **Apoptosis** (programmed cell death) | Ephemeral diagnostic nodes are reaped after 14 days of no activity | `agents/supervisor.py` |
 | **Structural plasticity** | The graph spawns and kills sub-clusters at runtime; the architecture reshapes itself around active work | `spawn_node()` / `kill_node()` |
@@ -297,7 +297,7 @@ survives as `neuropaca run` (`$!` / `$$` are now an internal L9→L7 wire enum).
 | **2** | **A single usage score reused for retention, replay, and ranking** | Retrieval systems rank by semantic similarity; caches evict by LRU; nobody has unified all three under one behaviourally-derived score and measured whether that unification costs anything. |
 | **3** | **Corroboration-gated autonomy, measured** | "Require multiple signals before acting" is folklore. We turn it into a structural set test and show it is *impossible* — not merely unlikely — for one source to cross the high threshold, with 500 max-confidence spikes producing 167× the threshold and still firing only the low tier. |
 | **4** | **A CPU-only, zero-egress agent that is proven zero-egress** | Privacy claims are usually documentation. Here they are a CI job in a network namespace that fails the build if an outbound connection succeeds. |
-| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf and misdiagnosed **five** times, a `chat` feature built over two phases then withdrawn, one real app landing as 2–3 graph nodes because two sensors named it differently, and a Hebbian rule whose "wire together" half was never built so every edge weight sat at zero for the life of the project until T7 (2026-09-10) — a green integration test that pre-wired its own fixture hid it. Negative results with numbers attached are rare and reusable. |
+| **5** | **A published record of failure** | The Ollama dead-end, the coherence collapse at 2B, three soaks that measured nothing, a leak-slope statistic that lied, a Wayland sensor that was silently deaf and misdiagnosed **five** times, a `chat` feature built over two phases then withdrawn, one real app landing as 2–3 graph nodes because two sensors named it differently, and a Hebbian rule whose "wire together" half was never built so every edge weight sat at zero for the life of the project until T7 (2026-09-10) — a green integration test that pre-wired its own fixture hid it — and then, the same day, a T7 rule that learned only inside a 6-node clique because it wired every recent pair on every switch and decayed per CPU-idle spell instead of per unit of time (V-1). Negative results with numbers attached are rare and reusable. |
 
 ### 5.2 What makes the results credible
 
@@ -579,6 +579,7 @@ flowchart LR
     B15 --> B16["B16 ✅<br/>Wayland sensor fix<br/>(round two)"]
     B16 --> B17["B17 ✅<br/>canonical app identity<br/>+ structured graph view"]
     B17 --> T7["T7 ✅<br/>Hebbian wire-together"]
+    T7 --> V1["V-1 ✅<br/>Hebbian rule rework"]
     B17 --> B18["B18 ✅<br/>one labeling system"]
     B18 -.->|re-run| B9
     B9 -.-> D1["D1 ⏸<br/>model pruning"]
@@ -620,6 +621,7 @@ flowchart LR
 | **B16** | B15's fix was **half of one** — it strong-ref'd the child cosmic proxy but not its parent `ext_foreign_toplevel_handle_v1`, and keyed the cache by the dead parent's `id()`; the sensor still deafened itself within 180 s and its liveness watchdog was doing 100 % of the work (soak: 54/65 gaps at exactly 180 s) | Strong-ref **both** proxies keyed by a monotonic int; reachable `_drop`; `finished` binding; a real "events arriving" health state (`window~`); watchdog re-scoped to fire only for a *never-delivered* subscription (the proxy fix exposed the old one as a false-positive generator). `--leak`/`--hold` probe + daemon A/B confirm; 587 tests green |
 | **B17** | One real app was **2–3 `app:` nodes** — the focus sensor keys by Wayland `app_id` (`app:com.system76.CosmicFiles`), the B13 census by process name (`app:cosmic-files`), `upsert_node` de-dups by exact id; the behavioural edges on one, the RAM/CPU on the other. B13 §7 deferred the "round-2 name map". Also `app:MainThread` (a thread name `psutil` reported as a process). | `AppIdentity.resolve()` (alias table + minimal normaliser) canonicalises every `app:` id at one correlator chokepoint; `canonicalise_app_nodes()` folds a pre-B17 graph once at boot. Graph window: readable names, the 11 hubs pinned on a fixed ring, a click-to-open node detail panel. Real soak graph 63 → 57 nodes; 643 tests green |
 | **T7** | Every Hebbian edge weight was `0.0` — "wire together" was never built | `wire_cooccurrence` (create-or-bump), a co-activation window on focus switches, decay in the idle sweep (§16.1) |
+| **V-1** | T7's learning stayed inside a **6-node clique**: 11 of 84 edges weighted, all among 6 nodes; unmapped apps never took part, every switch re-wired all recent pairs, decay ticked per CPU-idle spell, `PART_OF` edges collected weight | Star-shaped `wire_coactivation` with time-proximity credit; saturating `w += rate·(1 − w)`; decay by uptime half-life (72 h); `PART_OF` pairs skipped and healed; unmapped focused apps join; a 30 s per-pair refractory. Simulation: 6 → 8 apps, weight range 0.03–0.26 → 0.02–0.98; storm loop lag held at `main`'s level; 719 tests (§21.8) |
 | **B18** | Generated labels were frozen text: stale after renames, duplicated after restarts, drawn as lookalikes, and copied into each other | Every generated node stores a `LabelSpec` (what it is about, by id); one renderer; the node id is the fact fingerprint (schema v5); graph-backed repeat gate replaces the in-memory Jaccard buffer. Real graph 89 → 60 nodes live; 699 tests green |
 
 ---
@@ -703,7 +705,7 @@ The 11-hour window was **accepted with the gap recorded** (open problem **T3**),
 | --- | --- |
 | Executor isolation | A 10-second blocking mock inference during a 10,000-event L3 storm → loop lag **~1.6 ms**, **0 drops**. Invariant 3 holds under load. |
 | Gating storm | 1,000 signals → **> 50 % shed** by the confidence + `is_busy` + Jaccard mix; buffer clamps at 64; per-reason drop counters added |
-| Hebbian reinforcement | `wire_cooccurrence` + a 50-citation insight → creates the peer edge the correlator never built, then **+delta on existing edges**, one lock, **~1.4 ms** (T7). A co-activation window in `on_app_switch` drives it model-free on every focus switch; the B6 idle sweep decays it. |
+| Hebbian reinforcement | `wire_cooccurrence` + a 50-citation insight → creates the peer edge the correlator never built, then **+delta on existing edges**, one lock, **~1.4 ms** (T7). A co-activation window in `on_app_switch` drives it model-free on every focus switch; the B6 idle sweep decays it. **V-1** replaced the update: star-shaped (focus ↔ each recent peer), `w += rate·(1 − w)` bounded in [0, 1), decay by a 72 h uptime half-life; 20k-switch storm max loop lag 16–24 ms (= `main`) after a hot-path fix (§21.8). |
 | Real-model soak | **RSS 1477 MiB dead flat over 1215 cycles**, 1 insight generated |
 
 ### 11.6 B5 — interface
@@ -1228,6 +1230,7 @@ for this one sensor took five tries.
 | **T3** | The B2 24-hour soak ran only 11 h — the machine slept. Partial-window numbers all pass. Residual risk (a leak slower than ~0.1 MiB/h, or late onset) is low. | 🟡 Open; **subsumed by the B9 7-day soak**. |
 | **T6** | `scripts/soak_state.py`'s `rss_trend()` reported a huge, misleading leak slope right after a daemon restart — `(last − first) / span` over the longest daemon life, so a one-time warm-up step divided by a short window extrapolated absurdly. Observed live 2026-09-04: RSS jumped 43 → 1476 MiB in one 60 s sample, then sat flat for 3+ hours, and the tool reported **`+5600.7 MiB/day`** in the popup and tray widget. | 🟢 **Mitigated 2026-09-08** (B15 harness rebuild). `warm_rss_slope()` fits the slope only over samples of the longest daemon life **after RSS crosses 500 MiB** (the GGUF has mapped in), so the startup jump is outside the window; `assess` grades on that warm slope. The raw `rss_trend()` figure is kept and shown for context — a genuine post-warm-up leak still moves it. |
 | **T7** | Every Hebbian edge `weight` in the ~22 h soak graph is `0.0` — co-occurrence reinforcement is not accumulating on the graph. `reinforce_cooccurrence` is exercised in unit tests (§8, "+0.01 on existing edges only, ~1.4 ms"), so the mechanism works; either the daemon path that would call it on real signals is not wired, or the weights are being reset by an edge re-add elsewhere. Found in the B17 graph review. | 🟢 **Diagnosed + fixed 2026-09-10** (full chapter: §21.6). **Root cause: "wire together" was never built.** `reinforce_cooccurrence` only strengthens *existing* edges; nothing ever *created* an edge between two co-occurring nodes — the correlator wires activity nodes to `domain:` hubs, never to each other, and the episode handed to the reinforcer is sibling `app:` nodes with no edge among them, so every bump was a no-op. Aggravators: `_add_edge_unsafe` re-add reset `weight`→0.0 (latent, masked); reinforcement was gated behind the ~5/day model-only insight path. The tests passed because they pre-wire the cited nodes — exactly what production never did. Fix: upsert-safe `_add_edge_unsafe`; new `GraphMemory.wire_cooccurrence()` (create-or-bump); a co-activation time-window in `correlator.on_app_switch` drives it model-free on every focus switch; `decay_cooccurrence_edges()` in the B6 idle sweep makes weight a recency-weighted affinity; 7 `Config` knobs. Closes on a ≥ 24 h soak showing a stable non-zero weight distribution. |
+| **V-1** | T7's learning was confined to a **6-node clique** — 11 of 84 live edges weighted (0.01–0.37), all among `{brave, cosmic-term, cosmic-files, obsidian, google-gemini, youtube}`; every other edge `0.0`. | 🟢 **Diagnosed + fixed 2026-09-10** (full chapter: §21.8; merged `c6ca7ea`, daemon restarted on it). Five causes: unmapped focused apps never co-activated; every switch re-wired *all* pairs in the window (a clique by construction); decay was a fixed factor per CPU-idle spell, so a pair used once was pruned within ~9 idle spells; `wire_cooccurrence` bumped structural `PART_OF` edges (never decayed); additive, unbounded weights. Fix: star-shaped `wire_coactivation` with time-proximity credit; saturating update; uptime half-life; `PART_OF` skipped + healed; unmapped apps join (`focus_exclude_app_ids` drops dialogs); 30 s per-pair refractory. Closes on a soak showing the mesh reach beyond the old 6 apps with a spread of weights. |
 
 ### 16.2 Methodological limitations — stated, not hidden
 
@@ -1498,6 +1501,7 @@ flowchart LR
     B15 -->|soak: watchdog<br/>does all the work| B16["B16<br/>deaf sensor, round two"]
     B16 -->|graph review:<br/>1 app = 2–3 nodes| B17["B17<br/>one app, one node"]
     B17 -->|graph review:<br/>weights all 0.0| T7["T7<br/>Hebbian wire-together"]
+    T7 -->|graph review:<br/>learning only in a 6-node clique| V1["V-1<br/>Hebbian rule rework"]
     B17 -->|stale / duplicate /<br/>lookalike labels| B18["B18<br/>one labeling system"]
 ```
 
@@ -1509,6 +1513,7 @@ flowchart LR
 | **B16** `b16-wayland-subscription-stability` | The watchdog did 100 % of the work | The parent proxy was never held; caches keyed by a reused `id()`; `closed` never fired; health could not see silence | Hold both proxies by a monotonic int key; `window~` health; watchdog only for never-delivered | Live stream confirmed; 587 tests |
 | **B17** `b17-app-identity-canonicalization` | One app = 2–3 `app:` nodes | Two sensors name apps differently; thread names counted as apps; raw ids as labels | `AppIdentity.resolve()`; a one-time canonical pass; readable names + pinned hubs + detail panel | 63 → 57 nodes; 643 tests |
 | **T7** `t7-hebbian-weights-zero` | Every edge weight `0.0` | Nothing ever created an edge between co-used apps; an edge re-add reset its weight; reinforcement only on the rare model path | Upsert-safe edges; `wire_cooccurrence` (create-or-bump); a co-activation window on every focus switch; decay + prune | 673 + 10 tests; closes on a soak |
+| **V-1** `fix-v1-hebbian-clique` | Learning only inside a 6-node clique | Unmapped apps excluded; all-pairs wiring every switch; decay per idle spell; `PART_OF` edges bumped; unbounded weights | Star-shaped `wire_coactivation` + time-proximity credit; saturating update; uptime half-life; `PART_OF` skipped/healed; unmapped apps join; refractory | Sim 6 → 8 apps, range 0.03–0.26 → 0.02–0.98; 719 tests |
 | **B18** `feat/b18-unified-labels` | Stale, duplicate and lookalike labels | Label text frozen at creation; in-memory novelty buffer; labels copying labels | Store what a node is about (`LabelSpec`); render names on demand; id = fingerprint (schema v5) | 87 → 59 nodes on the real graph; 699 tests |
 
 ---
@@ -2800,6 +2805,7 @@ non-draggable labelled ring around "You", and the click panel.
 | **Branch** | `t7-hebbian-weights-zero` (off `main`, after B17) |
 | **Found** | 2026-09-10, B17 graph review (logged in §16.1) |
 | **Outcome** | Merged (PR #26, `2ace615`); 673 + 10 integration tests green, ruff + mypy clean. Closes on a ≥ 24 h soak showing a stable non-zero weight distribution. |
+| **Superseded in part** | By **V-1** (§21.8), the same day: the all-pairs window (4C), the additive `+delta` / `base` update, the per-idle-cycle `hebbian_decay_factor` (4D) and `_bump_or_create_edge_unsafe` are replaced. 4A (upsert-safe edges) and 4B's create-when-absent idea stand. |
 
 **In plain words.** The graph is supposed to learn which apps you use together
 — "fire together, wire together" — by strengthening the line between them. After
@@ -3262,6 +3268,294 @@ three more.
   B7 positive control should be re-run; a refractory window can hide a real
   recurrence (it still reinforces the count; only the model call and a new node
   are skipped).
+
+---
+
+### 21.8 V-1 · Hebbian learning only ever fired inside a 6-node clique
+
+| | |
+| --- | --- |
+| **Branch** | `fix-v1-hebbian-clique` (off `main`, after the graph-view commit `190f03f`) |
+| **Found** | 2026-09-10, whole-graph review against the secretary vision (`VISION.md`, defect **V-1**, rated *big*) |
+| **Outcome** | Merged to local `main` (`c6ca7ea`; commits `dace2e2` rule, `dbcf90f` mypy, `5a9cc73` hot path). Full suite **719 passed** (unit + integration + stress), ruff + format + mypy clean. Daemon restarted on it 2026-09-10 23:39 IST; graph backed up to `data/graph.json.pre-v1-backup`. Closes on a soak (Step 7). |
+
+**In plain words.** T7 taught the graph to draw a line between apps you use
+together. A day later, only six apps had any lines with strength, and those six
+were all joined to each other. Everything else stayed at zero. The rule had
+three flaws: it ignored any app not in the domain map; on every switch it
+re-strengthened *every* pair of recently used apps, whatever you actually
+switched to — which builds exactly such a clique; and it faded lines each time
+the CPU went quiet rather than as time passed, so a pair you used once was gone
+within a few quiet moments. We rebuilt the rule so the new app links only to
+the apps you just came from, closer in time counts more, strength stays between
+0 and 1, and an unused line halves every three days.
+
+#### Step 1 · What we saw
+
+The live graph (`data/graph.json`, 2026-09-10 ~22:50, ~31 h of soak on the T7
+build):
+
+```
+nodes 70 · edges 84 · relations {related_to: 65, part_of: 19}
+weighted edges: 11 of 84  (range 0.01 - 0.37)
+  0.366 app:brave ~ app:cosmic-term        0.058 app:cosmic-files ~ app:cosmic-term
+  0.219 app:cosmic-files ~ app:brave       0.043 webapp:youtube ~ app:cosmic-term
+  0.164 app:obsidian ~ app:cosmic-term     0.043 webapp:youtube ~ app:cosmic-files
+  0.150 app:brave ~ app:obsidian           0.043 webapp:youtube ~ app:obsidian
+  0.089 app:cosmic-files ~ app:obsidian    0.040 webapp:youtube --part_of--> app:brave   <- structural edge
+                                           0.010 webapp:hianime --part_of--> app:brave   <- structural edge
+every weighted edge created 2026-09-10 07:31 or later
+```
+
+- **Only a handful of apps ever learned.** 17 `app:` nodes — `claude`,
+  `python3`, `pytest`, `morgen`, `zenity`, `sublime-text`, … — had one edge, to
+  `YOU`, and weight 0.0.
+- **The clique shape was visible:** `webapp:youtube`, focused once, got an
+  identical 0.043 to each of `cosmic-term`, `cosmic-files` and `obsidian` at
+  the same moment.
+- **Two structural `PART_OF` edges carried Hebbian weight**, which the decay
+  sweep (only `RELATED_TO`) would never touch.
+- **Nothing from the previous day survived.** Web apps used on 2026-09-09
+  (`google-gemini`, `github`, `crunchyroll`, `ielts-online-tests`) had no
+  association edge at all.
+- **The input signal is sparse:** ~445 focus switches in ~31 h of soak (~14/h).
+
+#### Step 2 · Why it happened
+
+- **2.1 · Unmapped apps never co-activated.** `on_app_switch` fed the
+  co-activation window only `elif app_domain:` — an app `app_map` has no domain
+  for got no node from a focus event and never entered the window. The mesh
+  could only ever contain the ~30 mapped app ids plus web apps.
+- **2.2 · All-pairs wiring is a clique by construction.** Each switch called
+  `wire_cooccurrence([focus, *warm])`, which walks **every unordered pair** of
+  that list. With four warm apps, all six of their mutual pairs were re-bumped
+  on every switch *whatever the new focus was*. The recently used set became
+  fully connected and was reinforced as a block; a newcomer joined it with the
+  same weight to every member.
+- **2.3 · Decay counted idle spells, not time.** `decay_cooccurrence_edges`
+  ran in the DMN reminiscence step at a fixed ×0.9. The DMN runs once per
+  `IDLE_DETECTED`, and that is edge-triggered on CPU dropping below the idle
+  threshold — tens of times a day, more on a light-use day. A new edge
+  (0.05) fell under the 0.02 floor after ~9 idle spells
+  (0.05 × 0.9⁹ ≈ 0.019) and was pruned. So decay speed was set by how often
+  the CPU went quiet: yesterday's once-used pairs were created and then
+  deleted overnight, and only pairs re-bumped constantly survived.
+- **2.4 · The wrong edges took the weight.** `wire_cooccurrence` first bumped
+  *any* existing edge between two episode members and then `continue`d. A tab
+  and its own browser are joined by `webapp --PART_OF--> app:brave`, so that
+  structural edge got the weight and no association was learned. `PART_OF`
+  weight never decays — a slow leak into structure.
+- **2.5 · No fixed scale.** `w += 0.01` per recurrence with no ceiling: the
+  number means "how many switches since the last few idle spells", not an
+  affinity, and it compresses near the floor (top 0.37 against a 0.05 base).
+
+**Root cause, in one sentence:** the T7 rule treated a focus switch as an
+episode where every recent app co-occurred with every other, and paced
+forgetting by CPU idleness — so it learned one block of always-open apps and
+forgot everything else.
+
+**Why the tests never caught it:** every T7 window test used two or three apps
+and checked that a pair *was* wired. None checked that an unrelated pair was
+*not* re-wired, none ran more than a couple of decay sweeps, and all used apps
+from `app_map`.
+
+#### Step 3 · How we fixed it — the approach
+
+- **A · Star, not clique.** New `GraphMemory.wire_coactivation(focus_id,
+  [(peer, strength)], *, rate)`: only `focus ↔ peer` pairs are stepped, never
+  `peer ↔ peer`. One lock cycle, O(peers). `wire_cooccurrence` stays for the L4
+  insight path, where the cited nodes really did co-occur as one episode.
+- **B · Time-proximity credit.** `strength = 1 − gap / window`: the app you
+  came straight from gets full credit; one last used near the edge of the
+  300 s window gets little. The previous focus counts as active *up to the
+  switch*, not from when it was first focused — so sitting in Obsidian for four
+  minutes and then switching still links strongly.
+- **C · Saturating update.** `w ← w + rate · (1 − w)`, rate `hebbian_delta` =
+  0.1. Weights stay in [0, 1) however often a pair recurs, and each use closes
+  a fixed fraction of the remaining gap — diminishing returns, a fixed scale.
+- **D · Decay by uptime.** The DMN computes `factor = 0.5 ^ (elapsed /
+  half-life)` from the time since its last sweep (`hebbian_half_life_hours` =
+  72). Twenty sweeps in a minute decay nothing; three days of uptime halve an
+  unused weight. Downtime is not counted — a laptop that is off is not "not
+  using" your apps.
+- **E · Structure never carries Hebbian weight.** A pair already linked by
+  `PART_OF` (a tab and its browser) is skipped. The non-activity bump in
+  `wire_cooccurrence` touches `RELATED_TO` only. The decay sweep resets any
+  weight on a non-`RELATED_TO` edge, so an existing graph heals itself.
+- **F · Every focused app takes part.** An unmapped focused app now gets an
+  `app:` node (canonical id, B17) and joins the window. `focus_exclude_app_ids`
+  (`zenity`, the `xdg-desktop-portal-*` family) keeps dialogs out, and an
+  excluded window does not break the chain between the apps around it.
+- **G · Real gaps, not clock artefacts.** The window runs on `CLOCK_BOOTTIME`
+  (keeps counting through suspend; `time.monotonic()` does not), and a focus
+  held more than 2 h is not assumed "in use until now" — the app left open
+  overnight does not wire to the first app of the morning.
+- **H · Refractory, and a cheap hot path** (added after the stress test,
+  Step 5): a pair stepped within `coactivation_refractory_seconds` (30 s) is
+  not stepped again, so an alt-tab flurry counts as one co-use and takes no
+  lock. The canonical app id is memoised per raw id, and a new
+  `GraphMemory.has_node` replaces building a `Node` just to test existence.
+- **I · Config.**
+
+  | Key | Default | Meaning |
+  | --- | --- | --- |
+  | `hebbian_delta` | **0.1** (was 0.01) | learning rate: fraction of the gap to 1.0 closed per full-credit co-use |
+  | `hebbian_insight_multiplier` | 3.0 | the L4 insight path steps this much harder (capped at 1.0) |
+  | `coactivation_window_seconds` | 300 | an app last active within this counts; credit falls linearly to 0 |
+  | `coactivation_max_nodes` | 16 | deque cap |
+  | `coactivation_refractory_seconds` | 30 | **new** — no re-step of a pair within this; 0 disables |
+  | `hebbian_half_life_hours` | 72 | **new** — replaces `hebbian_decay_factor` |
+  | `hebbian_floor` | 0.02 | prune below this; now validated `< hebbian_delta` |
+  | `focus_exclude_app_ids` | dialogs / portals | **new** |
+  | ~~`hebbian_base`~~, ~~`hebbian_decay_factor`~~ | — | **removed** (a new edge is one step from 0) |
+
+#### Step 4 · What was built
+
+| Area | Before (T7) | After (V-1) |
+| --- | --- | --- |
+| Focus-switch wiring | all pairs of `[focus, *warm]` | `wire_coactivation`: focus ↔ each warm peer |
+| Credit | equal for everything in the window | `1 − gap/window`; previous focus = active until the switch (2 h cap) |
+| Update | `w += 0.01`, new edge at 0.05, unbounded | `w += 0.1·credit·(1 − w)`, in [0, 1) |
+| Decay | ×0.9 per DMN cycle (per CPU-idle spell) | ×0.5 per 72 h of uptime, applied at each sweep |
+| `PART_OF` | bumped, never decayed | skipped; stray weight reset by the sweep |
+| Unmapped apps | no node from focus, never learned | node + co-activation; dialogs excluded |
+| Clock | `time.monotonic()` (stops in suspend) | `CLOCK_BOOTTIME` |
+| Alt-tab flurry | every switch a bump | one step per pair per 30 s |
+
+```
+EDIT  src/neuropaca/core/graph_memory.py      _hebbian_step; wire_coactivation; wire_cooccurrence
+                                              (PART_OF skip, RELATED_TO-only bump, saturating);
+                                              _association_step_unsafe (replaces
+                                              _bump_or_create_edge_unsafe); decay heals stray
+                                              weight; has_node
+EDIT  src/neuropaca/core/config.py            -2 keys, +3 keys, validation (rate range, floor < rate)
+EDIT  src/neuropaca/diagnosis/correlator.py   unmapped apps join; star + credit; BOOTTIME clock;
+                                              dwell cap; refractory; memoised _canon_app_id
+EDIT  src/neuropaca/idle/dmn.py               uptime-based decay factor
+EDIT  src/neuropaca/learning/plasticity.py    new wire_cooccurrence signature
+EDIT  tests/test_cooccurrence_window.py       rewritten: star, credit, saturation, overnight,
+                                              unmapped, excluded dialog, tab/browser, refractory
+EDIT  tests/test_graph_memory.py              wire_coactivation, PART_OF skip, heal
+EDIT  tests/test_idle.py                      decay follows elapsed time, not cycle count
+EDIT  tests/test_core_foundation.py           3 validation cases
+EDIT  tests/integration/test_hebbian_plasticity.py   saturating values
+```
+
+No schema change, no new dependency, no systemd change.
+
+#### Step 5 · How we proved it
+
+**Tests.** Full suite `pytest -m ""` **719 passed**, 3 skipped (pre-existing);
+ruff, format and mypy clean. Across 9 full runs after the final commit, 8 were
+green; one run had a single failure that did not reproduce in the next eight
+and was not captured by name (recorded in Step 7). `main` in the same
+conditions: 704 passed, 3/3 runs.
+
+| # | Check | Test | Result |
+| --- | --- | --- | --- |
+| 1 | star: a switch to C wires C↔A and C↔B, leaves A↔B untouched | `test_switch_wires_star_not_clique` | ✅ |
+| 2 | credit: a peer 10 s back gets `rate·(1 − 10/300)` | same | ✅ |
+| 3 | saturation: 200 alternations → 0.99 < w < 1.0 | `test_weight_saturates_below_one` | ✅ |
+| 4 | outside the window (400 s gap) → no edge; the adjacent app still wired | `test_app_last_active_outside_window_does_not_wire` | ✅ |
+| 5 | a focus left for 10 h does not wire to the morning's app | `test_focus_left_overnight_does_not_wire_the_morning` | ✅ |
+| 6 | an unmapped app gets a node and wires | `test_unmapped_app_joins_the_mesh` | ✅ |
+| 7 | an excluded dialog gets no node and does not break the chain | `test_excluded_dialog_neither_joins_nor_breaks_the_chain` | ✅ |
+| 8 | a tab never wires to its own browser; `PART_OF` stays 0.0 | `test_tab_never_wires_to_its_own_browser`, `test_wire_cooccurrence_skips_a_tab_and_its_own_browser` | ✅ |
+| 9 | ten flips in 10 s = one step; the next after 30 s steps again | `test_alt_tab_flurry_counts_once_per_refractory` | ✅ |
+| 10 | 20 sweeps with no time passing decay nothing; 72 h in two sweeps halves 0.8 → 0.4 | `test_hebbian_decay_follows_elapsed_time_not_cycle_count` | ✅ |
+| 11 | the sweep resets stray `PART_OF` weight | `test_decay_heals_stray_weight_on_structural_edges` | ✅ |
+| 12 | config rejects `hebbian_delta` > 1, half-life 0, floor ≥ rate | `test_config_validation_rejects_bad_values` | ✅ |
+
+**Simulation — old rule against new, same trace.** A synthetic 3-day trace
+(724 switches; four core apps picked at random every 20–300 s for 10 h a day;
+`gemini` 3, `github` 4, `morgen` 2, `sublime` 1 visits a day, the last two
+unmapped; 63 idle spells):
+
+| Rule | Association edges | Apps reached | Weight min / median / max |
+| --- | --- | --- | --- |
+| T7 (old) | 15 | 6 | 0.027 / 0.065 / 0.261 |
+| V-1 (new) | 26 | **8** | 0.022 / 0.375 / 0.979 |
+
+Learning-rate sweep on the same trace:
+
+| `hebbian_delta` | Edges / apps | Median | Core pairs | Best non-core pair |
+| --- | --- | --- | --- | --- |
+| 0.02 | 2 / 3 | 0.020 | pruned | none |
+| 0.03 | 22 / 8 | 0.141 | 0.87–0.88 | 0.34 |
+| 0.05 | 25 / 8 | 0.210 | 0.93–0.94 | 0.49 |
+| **0.1** | 26 / 8 | 0.375 | 0.97–0.98 | 0.73 |
+
+At 0.02 one co-use (≤ 0.02) sits at the prune floor, so every new pair dies at
+the next sweep — the reason config now enforces `hebbian_floor < hebbian_delta`.
+0.1 was kept: coverage matches 0.03–0.05, rare pairs reach meaningful weight
+sooner, and real use is sparser than this trace (~14 vs ~24 switches/h), so
+there is more headroom than the core-pair band suggests. The core pairs bunch
+near the top only because the trace picks core apps uniformly — they really are
+equally associated there.
+
+**Stress — a regression found and fixed.** The 20 000-switch storm
+(`tests/stress/test_activity_storm.py`, 50 ms loop-lag limit) failed on the
+first V-1 commit. Measured by running a copy with the limit at 0, six runs
+each:
+
+| Build | Max loop lag (ms) |
+| --- | --- |
+| `main` | 14–23 |
+| V-1, first commit | 30–57 (two runs over the limit) |
+| V-1 + refractory only | 31–57 — no change |
+| V-1 + memoised id + `has_node` | **16–24** |
+
+The storm alternates two *unmapped* apps, which under T7 did nothing and under
+V-1 take part. The refractory alone did not help; a profile (2 000 switches,
+0.18 ms/switch) showed half the new cost was the app-id normaliser (regex) run
+three times per switch plus a `get_node` building a `Node` just to test
+existence. The graph writes themselves cost ~0.02 s in total. Memoising the id
+and a membership check brought lag back to `main`'s band.
+
+**On the real graph.** The final code run on a copy of the live graph, a
+healing sweep, then seven real app ids switched 10 s apart:
+
+```
+nodes 70 -> 70 · edges 84 -> 89
+stray PART_OF weight: youtube->brave 0.04, hianime->brave 0.01  ->  none left
+all weights in [0, 1): True        zenity: no node created
+new  -> 0.184  app:morgen ~ app:cosmic-term          (Morgen: unmapped, was YOU-only)
+new  -> 0.100  app:morgen ~ webapp:github
+new  -> 0.100  app:obsidian ~ app:morgen
+new  -> 0.181  webapp:github ~ app:cosmic-term
+0.164 -> 0.239 app:obsidian ~ app:cosmic-term        (existing weight kept, one step;
+                                                      the repeat 10 s later held off by the refractory)
+```
+
+#### Step 6 · What we rejected
+
+| # | Alternative | Why rejected |
+| --- | --- | --- |
+| 6.1 | Only retune the constants (smaller decay, larger delta) | leaves the clique (2.2) and the idle-coupled clock (2.3); a better number on a broken rule |
+| 6.2 | Keep additive, cap at 1.0 (`min(1, w + δ)`) | a hard wall: frequent pairs pin at exactly 1.0 and stop separating; no diminishing returns |
+| 6.3 | An exponential proximity kernel `exp(−gap/τ)` | an extra constant; linear is zero at the window edge by definition and easy to explain |
+| 6.4 | Clear the window on `IDLE_DETECTED` ("a break ends a session") | idle here is CPU < threshold, which also fires while you read; it would drop genuine reading → terminal pairs. The 2 h dwell cap + `CLOCK_BOOTTIME` handle the real case (walking away / suspend) |
+| 6.5 | A new `CO_OCCURS_WITH` relation to separate association from structure | still the cleaner long-term model (T7 5.5); here the rule "Hebbian weight lives only on `RELATED_TO` between activity nodes, never on `PART_OF`" gets the separation with no enum or serialisation change |
+| 6.6 | A persisted per-edge "last stepped" time for the refractory | `GraphMemory` drops ad-hoc attributes on save; a bounded in-memory map is enough — a restart at worst allows one extra step |
+| 6.7 | Wire census-only apps (`claude`, `pytest` running inside the terminal) | they are never the focused window, so there is no co-use signal; process co-presence is noise (the daemon itself is always running). Belongs to V-3c / V-12 |
+| 6.8 | Rate 0.02 / 0.03 / 0.05 | Step 5 sweep: 0.02 prunes everything; 0.03–0.05 reach the same apps with less signal for rare pairs |
+
+#### Step 7 · What is left
+
+- **Soak confirmation.** V-1 closes on a live run showing association edges
+  beyond the old six apps, weights spread across [0, 1) rather than one band,
+  and `PART_OF` edges at 0.0. The daemon has run the V-1 build since
+  2026-09-10 23:39 IST (new soak session opened on restart).
+- **`focus_exclude_app_ids` names are unverified** against what the COSMIC
+  toplevel protocol actually reports for portal and dialog windows.
+- **V-3a interplay.** An unmapped app focused with nothing warm is briefly
+  degree 0, so `link_orphan_nodes` gives it a permanent `→ YOU` edge — more of
+  the hub-and-spoke tangle V-3a describes, until V-3a removes stale `YOU` edges.
+- **One unreproduced test failure** across nine full runs (not captured by
+  name); watch CI for a timing-sensitive test near its limit.
+- **Relevance score.** More association edges raise `connectivity` for the
+  apps that gain them — expected to help V-2 (the score barely discriminates),
+  not yet measured.
 
 ---
 
