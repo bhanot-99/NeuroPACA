@@ -85,6 +85,14 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _is_cooccurrence_node(node_id: str) -> bool:
+    """Node ids eligible for a *new* Hebbian co-occurrence edge (T7). Existing
+    edges between any node types are still reinforced — this gate only keeps
+    edge *creation* to app/web-app affinity so the mesh does not fill with
+    `file:` / `concept:` noise."""
+    return node_id.startswith(("app:", "webapp:"))
+
+
 def _as_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -196,6 +204,84 @@ class GraphMemory:
                 for b in unique[i + 1 :]:
                     bumped += self._reinforce_edge_unsafe(a, b, delta)
             return bumped
+
+    async def wire_cooccurrence(
+        self,
+        node_ids: Sequence[str],
+        *,
+        delta: float,
+        base: float,
+        max_episode: int = 8,
+        max_new_edges: int = 12,
+    ) -> tuple[int, int]:
+        """Hebbian "fire together, wire together" for one co-occurrence episode
+        (T7). For every unordered pair of `node_ids`:
+
+        - an edge that already exists between them (either direction, any
+          parallel relation) gains `delta` — identical to
+          `reinforce_cooccurrence`;
+        - otherwise, when **both** ends are activity nodes (`app:` / `webapp:`),
+          one `RELATED_TO` edge is created at `weight = base`.
+
+        This builds the peer co-occurrence mesh the correlator never makes — it
+        wires activity nodes to `domain:` hubs, never to each other, so
+        `reinforce_cooccurrence` alone had nothing to bump. `node_ids` is taken
+        most-relevant-first and truncated to `max_episode`; no more than
+        `max_new_edges` edges are created per call. Ids absent from the graph
+        are skipped. **One `_lock` cycle** — O(max_episode^2) small dict ops.
+        Returns `(created, bumped)`.
+        """
+        unique = list(dict.fromkeys(node_ids))[:max_episode]
+        created = bumped = 0
+        async with self._lock:
+            present = [n for n in unique if n in self._graph]
+            for i, a in enumerate(present):
+                for b in present[i + 1 :]:
+                    hit = self._reinforce_edge_unsafe(a, b, delta)
+                    if hit:
+                        bumped += hit
+                        continue
+                    if (
+                        created < max_new_edges
+                        and _is_cooccurrence_node(a)
+                        and _is_cooccurrence_node(b)
+                    ):
+                        self._bump_or_create_edge_unsafe(
+                            a, b, RelationType.RELATED_TO, delta=delta, base=base
+                        )
+                        created += 1
+        return created, bumped
+
+    async def decay_cooccurrence_edges(self, factor: float, floor: float) -> int:
+        """ "Use it or lose it" for the Hebbian mesh (T7, B6 idle sweep). Every
+        `RELATED_TO` edge with `weight > 0` is multiplied by `factor` (< 1); an
+        edge that then sits below `floor` is removed — unless it is the last
+        edge on either endpoint (never re-orphan a node; `link_orphan_nodes`
+        would only re-add a `-> YOU` edge right after). One `_lock` cycle.
+        Returns edges pruned.
+        """
+        async with self._lock:
+            faded: list[tuple[str, str, Any]] = []
+            touched = False
+            for u, v, key, data in self._graph.edges(keys=True, data=True):
+                if RelationType(key) is not RelationType.RELATED_TO:
+                    continue
+                weight = float(data.get("weight", 0.0))
+                if weight <= 0.0:
+                    continue
+                data["weight"] = round(weight * factor, 6)
+                touched = True
+                if data["weight"] < floor:
+                    faded.append((u, v, key))
+            pruned = 0
+            for u, v, key in faded:
+                if int(self._graph.degree(u)) <= 1 or int(self._graph.degree(v)) <= 1:
+                    continue
+                self._graph.remove_edge(u, v, key)
+                pruned += 1
+            if touched:
+                self._dirty = True
+            return pruned
 
     async def delete_node(self, node_id: str) -> None:
         async with self._lock:
@@ -702,10 +788,22 @@ class GraphMemory:
     def _add_edge_unsafe(
         self, source_id: str, target_id: str, relation: RelationType, weight: float
     ) -> Edge:
+        rel = RelationType(relation)
+        # Upsert, never overwrite (T7). networkx `add_edge` on an existing
+        # `(u, v, key)` merges the kwargs into the live edge dict — so a plain
+        # re-add of an edge a pattern re-asserts every fire (or the APP_SWITCH
+        # path re-classifies after a restart) would reset its accumulated
+        # Hebbian `weight` to 0.0 and bump `created_at`. Re-adding an existing
+        # edge is therefore a no-op that returns it unchanged; only a genuinely
+        # new edge is written.
+        if self._graph.has_edge(source_id, target_id, rel):
+            return self._edge_from_attrs(
+                source_id, target_id, rel, self._graph.edges[source_id, target_id, rel]
+            )
         edge = Edge(
             source_id=source_id,
             target_id=target_id,
-            relation=RelationType(relation),
+            relation=rel,
             weight=float(weight),
             created_at=_utcnow(),
         )
@@ -718,6 +816,25 @@ class GraphMemory:
         )
         self._dirty = True
         return edge
+
+    def _bump_or_create_edge_unsafe(
+        self, source_id: str, target_id: str, relation: RelationType, *, delta: float, base: float
+    ) -> str:
+        """Hebbian create-or-strengthen for one directed `(source, relation,
+        target)` (T7). If the edge exists, `weight += delta` and return
+        ``"bumped"``; else create it at `weight = base` and return
+        ``"created"``. Both nodes must already exist (caller's job)."""
+        rel = RelationType(relation)
+        if self._graph.has_edge(source_id, target_id, rel):
+            data = self._graph.edges[source_id, target_id, rel]
+            data["weight"] = float(data.get("weight", 0.0)) + delta
+            self._dirty = True
+            return "bumped"
+        self._graph.add_edge(
+            source_id, target_id, key=rel, weight=float(base), created_at=_utcnow()
+        )
+        self._dirty = True
+        return "created"
 
     # `first_seen_at` joins the protected set: like `created_at`, it is write-once
     # — the census refreshes `ram_mb` / `cpu_percent` / `last_seen_at` on every

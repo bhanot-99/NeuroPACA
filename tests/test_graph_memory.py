@@ -329,6 +329,138 @@ async def test_canonicalise_never_touches_hubs(tmp_path) -> None:
         assert gm.get_node(hub) is not None
 
 
+# ------------------------------------------------------- T7 · Hebbian plasticity
+
+
+async def test_add_edge_never_resets_an_existing_edges_weight(tmp_path) -> None:
+    """A pattern re-asserting an edge it already owns, or the APP_SWITCH path
+    re-classifying after a restart, must not zero the accumulated weight (T7)."""
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:zed", NodeType.APP, {"label": "Zed"})
+    await gm.add_edge("app:zed", "domain:engineering", RelationType.PART_OF)
+    await gm.reinforce_edge("app:zed", "domain:engineering", 0.35)
+    created_at = next(
+        e for e in gm.get_edges("app:zed") if e.target_id == "domain:engineering"
+    ).created_at
+
+    await gm.add_edge("app:zed", "domain:engineering", RelationType.PART_OF)  # re-assert
+
+    edge = next(e for e in gm.get_edges("app:zed") if e.target_id == "domain:engineering")
+    assert edge.weight == pytest.approx(0.35)
+    assert edge.created_at == created_at
+
+
+async def test_wire_cooccurrence_creates_then_strengthens_activity_pairs(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    apps = ["app:zed", "app:brave", "webapp:github"]
+    for nid in apps:
+        await gm.add_node(nid, NodeType.APP if nid.startswith("app:") else NodeType.WEBAPP, None)
+
+    created, bumped = await gm.wire_cooccurrence(apps, delta=0.01, base=0.05)
+    assert (created, bumped) == (3, 0)  # C(3,2)
+    for i, a in enumerate(apps):
+        for b in apps[i + 1 :]:
+            w = next(e for e in gm.get_edges(a) if e.target_id == b).weight
+            assert w == pytest.approx(0.05)
+
+    created2, bumped2 = await gm.wire_cooccurrence(apps, delta=0.01, base=0.05)
+    assert (created2, bumped2) == (0, 3)
+    assert next(e for e in gm.get_edges("app:zed") if e.target_id == "app:brave").weight == (
+        pytest.approx(0.06)
+    )
+
+
+async def test_wire_cooccurrence_caps_episode_size(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    apps = [f"app:a{i}" for i in range(10)]
+    for nid in apps:
+        await gm.add_node(nid, NodeType.APP, None)
+
+    created, _ = await gm.wire_cooccurrence(apps, delta=0.01, base=0.05, max_episode=4)
+    assert created == 6  # only the first 4 ids -> C(4,2)
+
+
+async def test_wire_cooccurrence_caps_new_edges_per_call(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    apps = [f"app:b{i}" for i in range(8)]
+    for nid in apps:
+        await gm.add_node(nid, NodeType.APP, None)
+
+    created, _ = await gm.wire_cooccurrence(
+        apps, delta=0.01, base=0.05, max_episode=8, max_new_edges=5
+    )
+    assert created == 5  # C(8,2) == 28 possible, capped at 5
+
+
+async def test_wire_cooccurrence_only_creates_between_activity_nodes(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:zed", NodeType.APP, None)
+    await gm.add_node("file:/x.py", NodeType.FILE, None)
+    await gm.add_node("concept:flow", NodeType.CONCEPT, None)
+
+    created, bumped = await gm.wire_cooccurrence(
+        ["app:zed", "file:/x.py", "concept:flow"], delta=0.01, base=0.05
+    )
+    assert (created, bumped) == (0, 0)
+    assert gm.get_edges("app:zed") == []
+
+    # an existing edge to a non-activity node is still strengthened
+    await gm.add_edge("app:zed", "file:/x.py", RelationType.RELATED_TO, weight=0.1)
+    _, bumped2 = await gm.wire_cooccurrence(["app:zed", "file:/x.py"], delta=0.01, base=0.05)
+    assert bumped2 == 1
+
+
+async def test_wire_cooccurrence_skips_absent_ids(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:zed", NodeType.APP, None)
+    created, bumped = await gm.wire_cooccurrence(["app:zed", "app:ghost"], delta=0.01, base=0.05)
+    assert (created, bumped) == (0, 0)
+
+
+async def test_decay_cooccurrence_edges_fades_and_prunes(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    for nid in ("app:a", "app:b", "app:c", "app:d"):
+        await gm.add_node(nid, NodeType.APP, None)
+    # a<->b strong, c<->d weak; every node also pinned to a hub so a prune of the
+    # weak edge does not leave c or d an orphan
+    await gm.add_edge("app:a", "app:b", RelationType.RELATED_TO, weight=0.50)
+    await gm.add_edge("app:c", "app:d", RelationType.RELATED_TO, weight=0.03)
+    for nid in ("app:a", "app:b", "app:c", "app:d"):
+        await gm.add_edge(nid, "domain:engineering", RelationType.PART_OF)
+
+    pruned = await gm.decay_cooccurrence_edges(0.9, 0.02)
+    assert pruned == 0
+    assert next(e for e in gm.get_edges("app:a") if e.target_id == "app:b").weight == (
+        pytest.approx(0.45)
+    )
+    # 0.03 -> 0.027, still above the floor
+    pruned = await gm.decay_cooccurrence_edges(0.5, 0.02)  # 0.027 -> 0.0135 < floor
+    assert pruned == 1
+    assert not any(e.target_id == "app:d" for e in gm.get_edges("app:c"))
+
+
+async def test_decay_cooccurrence_never_reorphans_a_node(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("app:a", NodeType.APP, None)
+    await gm.add_node("app:b", NodeType.APP, None)
+    await gm.add_edge("app:a", "app:b", RelationType.RELATED_TO, weight=0.03)  # their only edge
+
+    pruned = await gm.decay_cooccurrence_edges(0.1, 0.02)  # 0.003 < floor
+    assert pruned == 0  # would orphan both a and b
+    assert gm.get_edges("app:a")  # edge kept
+
+
+async def test_decay_cooccurrence_leaves_structural_related_to_alone(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    await gm.add_node("insight:x", NodeType.INSIGHT, None)
+    await gm.add_node("app:a", NodeType.APP, None)
+    await gm.add_edge("insight:x", "app:a", RelationType.RELATED_TO)  # weight 0.0
+
+    await gm.decay_cooccurrence_edges(0.9, 0.02)
+    edge = next(e for e in gm.get_edges("insight:x") if e.target_id == "app:a")
+    assert edge.weight == pytest.approx(0.0)  # untouched — only weight > 0 decays
+
+
 async def test_link_orphan_nodes_links_every_orphan_and_is_idempotent(tmp_path) -> None:
     gm = await _loaded_graph(tmp_path)
     for i in range(25):

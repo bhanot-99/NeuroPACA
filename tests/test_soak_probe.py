@@ -12,8 +12,11 @@ system. These tests pin the parse against the real shapes the daemon emits.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 _MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "soak_probe.py"
 _spec = importlib.util.spec_from_file_location("soak_probe", _MODULE_PATH)
@@ -145,6 +148,41 @@ def test_an_unreachable_daemon_produces_a_row_saying_so_not_an_exception() -> No
 
 def test_fetch_health_returns_none_when_there_is_no_socket(tmp_path: Path) -> None:
     assert probe.fetch_health(str(tmp_path / "absent.sock")) is None
+
+
+def test_hebbian_weight_stats_reads_the_co_occurrence_distribution(tmp_path: Path) -> None:
+    """T7: the soak needs `weight_nonzero_fraction` climbing off zero and a
+    `max_cooccurrence_weight` above `hebbian_base` as proof the wiring fires."""
+
+    def edge(source: str, target: str, relation: str, weight: float) -> dict[str, object]:
+        return {"source": source, "target": target, "relation": relation, "weight": weight}
+
+    graph = tmp_path / "graph.json"
+    graph.write_text(
+        json.dumps(
+            {
+                "edges": [
+                    edge("app:a", "app:b", "related_to", 0.18),
+                    edge("app:a", "app:c", "related_to", 0.0),
+                    edge("app:a", "domain:x", "part_of", 0.0),
+                    edge("app:b", "app:c", "related_to", 0.06),
+                ]
+            }
+        )
+    )
+    stats = probe.hebbian_weight_stats(str(graph))
+    assert stats["graph_edges_total"] == 4
+    assert stats["weight_nonzero_fraction"] == pytest.approx(0.5)
+    assert stats["max_cooccurrence_weight"] == pytest.approx(0.18)  # related_to only
+    assert stats["mean_nonzero_weight"] == pytest.approx(0.12)
+
+
+def test_hebbian_weight_stats_is_best_effort(tmp_path: Path) -> None:
+    assert probe.hebbian_weight_stats(None) == {}
+    assert probe.hebbian_weight_stats(str(tmp_path / "gone.json")) == {}
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert probe.hebbian_weight_stats(str(bad)) == {}
 
 
 # gen-ref: f9a9663e

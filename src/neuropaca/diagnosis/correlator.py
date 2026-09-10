@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from collections import deque
 from collections.abc import Sequence
 from datetime import datetime
@@ -81,6 +82,16 @@ class SignalCorrelator(BaseModule):
         self._signals_emitted = 0
         self._errors = 0
         self._last_signal_at: datetime | None = None
+        # T7 · Hebbian co-activation. A rolling set of the most recently focused
+        # `app:` / `webapp:` node ids with a monotonic timestamp; every switch
+        # wires the new focus to whatever is still inside
+        # `coactivation_window_seconds` so apps used in the same work session
+        # accrue weight on the edge between them ("fire together, wire together").
+        self._coactive: deque[tuple[str, float]] = deque(maxlen=config.coactivation_max_nodes)
+        self._coactivation_window = float(config.coactivation_window_seconds)
+        self._hebbian_delta = float(config.hebbian_delta)
+        self._hebbian_base = float(config.hebbian_base)
+        self._hebbian_wired = 0
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
@@ -106,7 +117,8 @@ class SignalCorrelator(BaseModule):
             ok=self.is_running,
             detail=(
                 f"{len(self._patterns)} patterns · {self._app_map.rule_count} app-rules · "
-                f"{self._signals_emitted} signals · {self._errors} errors"
+                f"{self._signals_emitted} signals · {self._hebbian_wired} hebbian · "
+                f"{self._errors} errors"
             ),
             last_event_at=self._last_signal_at,
         )
@@ -148,6 +160,14 @@ class SignalCorrelator(BaseModule):
                 await self._classify_into_graph(app_id, app_domain)
             if webapp is not None:
                 await self._classify_webapp_into_graph(webapp, app_id, webapp_domain)
+
+            # T7 · Hebbian co-activation — the focused node is the tab if we
+            # identified one, else the app. Both nodes now exist (the
+            # `_classify_*` calls above upsert them).
+            if webapp is not None:
+                await self._reinforce_coactivation(f"webapp:{webapp}")
+            elif app_domain:
+                await self._reinforce_coactivation(self._canon_app_id(app_id)[0])
 
             # The focus's domain is the web-app's when we identified one, else the
             # browser's own (`brave -> habits`). This is what FocusSessionPattern
@@ -228,6 +248,35 @@ class SignalCorrelator(BaseModule):
             if domain_id:
                 await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
             self._known_webapps.add(webapp)
+
+    async def _reinforce_coactivation(self, focus_id: str) -> None:
+        """T7 · "fire together, wire together". Wire `focus_id` to every
+        `app:` / `webapp:` node focused within the last
+        `coactivation_window_seconds`, then record this focus. `wire_cooccurrence`
+        creates the pair edge on first co-activation and strengthens it on each
+        recurrence; the B6 idle sweep decays it. Bounded by the deque's
+        `maxlen`, so the pair work is O(coactivation_max_nodes)."""
+        now = time.monotonic()
+        warm = [
+            nid
+            for nid, ts in self._coactive
+            if nid != focus_id and now - ts <= self._coactivation_window
+        ]
+        if warm:
+            created, bumped = await self._graph.wire_cooccurrence(
+                [focus_id, *warm],
+                delta=self._hebbian_delta,
+                base=self._hebbian_base,
+                max_episode=(self._coactive.maxlen or 16) + 1,
+            )
+            self._hebbian_wired += created + bumped
+        # drop any stale copy of this id, then push it as the newest entry. A
+        # deque with `maxlen` evicts from the left on a right append, so the
+        # newest focus (rightmost) always survives and the oldest is forgotten.
+        kept = [(nid, ts) for nid, ts in self._coactive if nid != focus_id]
+        self._coactive.clear()
+        self._coactive.extend(kept)
+        self._coactive.append((focus_id, now))
 
     # --------------------------------------------------------------- helpers
     def _max_samples(self, collector: str) -> int:

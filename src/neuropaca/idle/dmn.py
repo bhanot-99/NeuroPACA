@@ -173,10 +173,16 @@ class DefaultModeNetwork(BaseModule):
 
     async def _reminiscence(self) -> str:
         merged = await self._graph.consolidate()
+        # T7 · "use it or lose it" — decay the Hebbian co-occurrence mesh and
+        # drop edges that faded below the floor, *before* linking orphans (a node
+        # left edgeless by a prune is re-attached to YOU on the next line).
+        faded = await self._graph.decay_cooccurrence_edges(
+            self.config.hebbian_decay_factor, self.config.hebbian_floor
+        )
         linked = await self._graph.link_orphan_nodes()
         ttl = timedelta(hours=self.config.dmn_idle_thought_ttl_hours)
         pruned = await self._graph.prune_stale_nodes(ttl)
-        return f"merged {merged} · linked {linked} · pruned {pruned}"
+        return f"merged {merged} · faded {faded} · linked {linked} · pruned {pruned}"
 
     async def _imagination(self) -> int:
         """Returns the count made *this cycle* (for the summary line). The running

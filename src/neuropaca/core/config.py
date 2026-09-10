@@ -94,6 +94,31 @@ class Config:
     # (Signal, Insight) deque + the Jaccard-novelty comparison set.
     model_context_tokens: int = 2048
     adaptation_buffer_size: int = 64
+    # T7 · Hebbian co-occurrence ("fire together, wire together", D-11). The
+    # correlator wires activity nodes to `domain:` hubs, never to each other, so
+    # `reinforce_cooccurrence` had no peer edges to strengthen and every weight
+    # sat at 0.0. `wire_cooccurrence` now *creates* an `app:`/`webapp:` affinity
+    # edge on co-activation and strengthens it on each recurrence; the B6 idle
+    # sweep decays and prunes it so weight reads as a recency-weighted affinity.
+    #   - hebbian_delta — added to a co-occurrence edge each time the pair recurs.
+    #   - hebbian_base — initial weight of a newly wired co-occurrence edge.
+    #   - hebbian_insight_multiplier — a model-confirmed episode (L4 insight)
+    #     bumps this many times harder than a bare focus co-activation.
+    #   - coactivation_window_seconds — two focus events within this span count
+    #     as co-active and get their pair edge reinforced.
+    #   - coactivation_max_nodes — cap on the correlator's co-activation deque
+    #     (bounds the O(k^2) pair work per switch).
+    #   - hebbian_decay_factor — per idle-cycle multiplier on co-occurrence
+    #     weights (< 1.0 — "use it or lose it").
+    #   - hebbian_floor — a decayed co-occurrence edge below this is pruned
+    #     (unless it is an endpoint's last edge — never re-orphan a node).
+    hebbian_delta: float = 0.01
+    hebbian_base: float = 0.05
+    hebbian_insight_multiplier: float = 3.0
+    coactivation_window_seconds: float = 300.0
+    coactivation_max_nodes: int = 16
+    hebbian_decay_factor: float = 0.9
+    hebbian_floor: float = 0.02
     # B5 · dual-model routing (D-12), re-scoped in B12. The always-on loop
     # (L4/L6) uses the BitNet 2B4T model; the interactive model — a larger
     # Qwen2.5-3B-Instruct Q4 GGUF — is now used only by `neuropaca tell <path>
@@ -266,6 +291,8 @@ class Config:
             "dmn_max_inferences_per_cycle",
             "dmn_idle_thought_ttl_hours",
             "dmn_top_k",
+            "coactivation_window_seconds",
+            "coactivation_max_nodes",
             "pressure_decay_half_life_seconds",
             "pressure_decay_interval_seconds",
             "quarantine_ttl_hours",
@@ -314,6 +341,21 @@ class Config:
             errs.append(
                 f"explain_temperature must be in [0.0, 1.0], got {self.explain_temperature}"
             )
+
+        if self.hebbian_delta <= 0:
+            errs.append(f"hebbian_delta must be > 0, got {self.hebbian_delta}")
+        if self.hebbian_base <= 0:
+            errs.append(f"hebbian_base must be > 0, got {self.hebbian_base}")
+        if self.hebbian_insight_multiplier < 1.0:
+            errs.append(
+                f"hebbian_insight_multiplier must be >= 1.0, got {self.hebbian_insight_multiplier}"
+            )
+        if not 0.0 < self.hebbian_decay_factor < 1.0:
+            errs.append(
+                f"hebbian_decay_factor must be in (0.0, 1.0), got {self.hebbian_decay_factor}"
+            )
+        if self.hebbian_floor <= 0:
+            errs.append(f"hebbian_floor must be > 0, got {self.hebbian_floor}")
 
         for key, val in self.poll_intervals.items():
             if val <= 0:
