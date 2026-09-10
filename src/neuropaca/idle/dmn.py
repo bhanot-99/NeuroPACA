@@ -32,16 +32,16 @@ import contextlib
 import logging
 from dataclasses import replace
 from datetime import datetime, timedelta
-from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EventType, NodeType, RelationType
+from neuropaca.core.enums import EventType, NodeType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
+from neuropaca.core.labels import KIND_PREFIX, LabelKind
 from neuropaca.core.models import Event, Node, system_error_event
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
@@ -55,6 +55,7 @@ from neuropaca.learning.prompts import (
 _log = logging.getLogger(__name__)
 
 _EXCLUDED_SEED_TYPES = frozenset({NodeType.INSIGHT, NodeType.IDLE_THOUGHT})
+EPHEMERAL_PREFIX = KIND_PREFIX[LabelKind.PROBE]
 
 
 class DefaultModeNetwork(BaseModule):
@@ -198,38 +199,41 @@ class DefaultModeNetwork(BaseModule):
         if not self._runtime.is_loaded and not await self._runtime.load_model_async():
             return 0
 
-        seen: set[str] = set()
         made = 0
         for rotation in range(min(budget, len(seeds))):
             if self._runtime.is_busy:
                 break
-            if await self._one_thought(seeds, rotation, seen) is not None:
+            if await self._one_thought(seeds, rotation) is not None:
                 made += 1
         return made
 
     def _top_nodes(self, k: int) -> list[Node]:
         """Top-K non-hub, non-thought nodes by `relevance_score`. A sync read —
-        bounded dict work, inside the cycle's wall-clock budget."""
-        return self._graph.top_nodes_by_score(k, exclude_types=_EXCLUDED_SEED_TYPES)
+        bounded dict work, inside the cycle's wall-clock budget. B18: L8's
+        `ephemeral:` probes are the system's own bookkeeping, not things the user
+        touched — seeding on them produced questions about probe text."""
+        return self._graph.top_nodes_by_score(
+            k, exclude_types=_EXCLUDED_SEED_TYPES, exclude_prefixes=(EPHEMERAL_PREFIX,)
+        )
 
-    async def _one_thought(
-        self, seeds: list[Node], rotation: int, seen: set[str]
-    ) -> Insight | None:
+    async def _one_thought(self, seeds: list[Node], rotation: int) -> Insight | None:
         ordered = seeds[rotation:] + seeds[:rotation]
         aliased = alias_nodes(ordered)
         aliases = [a for a, _ in aliased]
         alias_to_id = {a: n.id for a, n in aliased}
-        alias_to_label = {a: n.label for a, n in aliased}
         grammar = build_proactive_grammar(aliases)  # pure string work, before the lock
         prompt = build_proactive_prompt(aliased)
 
         raw = await self._runtime.infer_async(prompt, PROACTIVE_MAX_TOKENS, 0.0, grammar)
-        insight = parse_proactive(raw, alias_to_id, alias_to_label)
-        if insight is None or insight.detail in seen:
+        insight = parse_proactive(raw, alias_to_id)
+        if insight is None:
             return None
-        seen.add(insight.detail)
-
-        stored = await self._store_thought(insight)
+        # B18: the thought is a fact; asking the same open question again —
+        # this cycle or a week of restarts later — reinforces it, never repeats it.
+        node, created = await self._graph.upsert_fact(insight.spec)
+        if not created:
+            return None
+        stored = replace(insight, node_id=node.id, label=node.label)
         self._thoughts += 1
         self.event_bus.publish(
             Event(
@@ -240,13 +244,6 @@ class DefaultModeNetwork(BaseModule):
         )
         self._last_at = stored.created_at
         return stored
-
-    async def _store_thought(self, insight: Insight) -> Insight:
-        node_id = f"idle:{uuid4().hex[:12]}"
-        await self._graph.upsert_node(node_id, NodeType.IDLE_THOUGHT, {"label": insight.detail})
-        for cited_id in insight.cited_node_ids:
-            await self._graph.add_edge(node_id, cited_id, RelationType.RELATED_TO)
-        return replace(insight, node_id=node_id)
 
 
 # gen-ref: 52020876

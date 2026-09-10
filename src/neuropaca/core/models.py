@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from neuropaca.core.enums import EventType, NodeType, RelationType
+from neuropaca.core.labels import LabelSpec
 
 
 def _utcnow() -> datetime:
@@ -72,6 +73,10 @@ class Node:
     cpu_percent: float = 0.0
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
+    # B18 · what a generated node is ABOUT (schema v5). When set, `label` is only
+    # a cache of `labels.render(spec)`; the spec is the source of truth. None on
+    # leaf nodes (apps, files, hubs), whose label is their name.
+    spec: LabelSpec | None = None
 
 
 @dataclass(slots=True)

@@ -65,6 +65,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -73,10 +74,11 @@ from neuropaca.agents.payloads import AgentCompletedPayload, AgentSpawnedPayload
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EventType, NodeType, RelationType
+from neuropaca.core.enums import EventType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
+from neuropaca.core.labels import KIND_PREFIX, LabelKind, LabelSpec
 from neuropaca.core.models import Event, system_error_event
 from neuropaca.drive.pressure import PressureEntry
 
@@ -84,8 +86,18 @@ _log = logging.getLogger(__name__)
 
 #: The durable ephemerality marker. Node ids are persisted; ad-hoc node
 #: attributes are not (see the module docstring). Same convention as B6's
-#: `idle:<uuid>`.
-EPHEMERAL_PREFIX = "ephemeral:"
+#: `idle:` — both now come from the one table in `core/labels.py` (B18).
+EPHEMERAL_PREFIX = KIND_PREFIX[LabelKind.PROBE]
+
+_CAUSE_RE = re.compile(r"^(L\d+)\s+(\w+)")
+
+
+def _cause(reason: str) -> str:
+    """`"L4 anomaly (idle)"` -> `"L4.anomaly"`: the layer and cause of the
+    pressure, as a closed-vocabulary facet — never the free reason text."""
+    m = _CAUSE_RE.match(reason)
+    return f"{m[1]}.{m[2]}" if m else "other"
+
 
 #: Whatever a sub-cluster describes, it is a handful of nodes. This is the
 #: per-agent ceiling; `max_ephemeral_nodes` is the graph-wide one.
@@ -255,47 +267,51 @@ class AgentSupervisor(BaseModule):
         inferred, so nothing needs grounding — which is why this is the shape of
         agent B8 ships (D-16).
         """
-        facets: list[tuple[str, str]] = [
-            ("summary", f"pressure {entry.pressure:.2f} on {entry.node_id}: {entry.reason}")
+        facets: list[tuple[str, float | None]] = [
+            (f"summary/{_cause(entry.reason)}", entry.pressure)
         ]
-        facets += [(f"source-{s}", f"{s} corroborated {entry.node_id}") for s in entry.sources]
+        facets += [(f"source/{s}", None) for s in entry.sources]
 
         created = 0
-        for facet, label in facets[:_SUBCLUSTER_MAX]:
-            node_id = await self.spawn_node(label, trigger_node=entry.node_id, facet=facet)
+        for facet, value in facets[:_SUBCLUSTER_MAX]:
+            node_id = await self.spawn_node(facet, trigger_node=entry.node_id, value=value)
             if node_id is None:
                 break  # graph-wide cap reached — stop, do not spin
             created += 1
         return created
 
     # --------------------------------------------------- structural plasticity
-    async def spawn_node(self, label: str, *, trigger_node: str, facet: str = "node") -> str | None:
-        """Create one ephemeral node edged to `trigger_node`. Returns its id, or
-        `None` if the graph-wide cap is already reached.
+    async def spawn_node(
+        self, facet: str, *, trigger_node: str, value: float | None = None
+    ) -> str | None:
+        """Grow (or reinforce) one probe about `trigger_node`. Returns its id, or
+        `None` if it would be new and the graph-wide cap is already reached.
+
+        B18: a probe is a fact — `LabelSpec(PROBE, (trigger,), facet, value)` —
+        written through `upsert_fact`, so pressure on Brave twice refreshes the
+        one "Brave · pressure" probe instead of growing a second.
 
         The cap is checked **before** the mutation and under `_spawn_lock`, so two
-        concurrent agents cannot both see room and both take it. Returning `None`
-        rather than raising is deliberate: hitting the cap is a normal operating
-        state, not an error.
+        concurrent agents cannot both see room and both take it. A reinforcement
+        needs no room. Returning `None` rather than raising is deliberate: hitting
+        the cap is a normal operating state, not an error.
         """
+        spec = LabelSpec(LabelKind.PROBE, (trigger_node,), facet, value)
         async with self._spawn_lock:
-            if self._count_ephemeral() >= self.config.max_ephemeral_nodes:
+            if (
+                self._graph.find_fact(spec) is None
+                and self._count_ephemeral() >= self.config.max_ephemeral_nodes
+            ):
                 _log.info(
                     "L8 ephemeral cap reached (%d) — not spawning %r",
                     self.config.max_ephemeral_nodes,
                     facet,
                 )
                 return None
-
-            node_id = f"{EPHEMERAL_PREFIX}{facet}:{uuid4().hex[:12]}"
-            await self._graph.add_node(node_id, NodeType.CONCEPT, {"label": label})
-            self._nodes_created += 1
-
-        # The edge is taken outside the cap lock: the node already exists and is
-        # counted, so nothing else can over-allocate while this runs.
-        if self._graph.get_node(trigger_node) is not None:
-            await self._graph.add_edge(node_id, trigger_node, RelationType.RELATED_TO)
-        return node_id
+            node, created = await self._graph.upsert_fact(spec)
+            if created:
+                self._nodes_created += 1
+        return node.id
 
     async def kill_node(self, node_id: str) -> bool:
         """Delete one ephemeral node. Refuses anything that is not ephemeral —
@@ -312,7 +328,8 @@ class AgentSupervisor(BaseModule):
         return True
 
     async def apoptosis(self) -> int:
-        """Reap every ephemeral node older than `agent_idle_ttl_days`.
+        """Reap every ephemeral node untouched for `agent_idle_ttl_days` — keyed
+        on `last_accessed` (B18), so a probe that keeps being reinforced lives on.
 
         One lock cycle per deletion with a yield between, exactly like the DMN's
         graph jobs — a cancellation lands between two deletions, never inside one
@@ -322,7 +339,7 @@ class AgentSupervisor(BaseModule):
         reaped = 0
         for node_id in self._ephemeral_ids():
             node = self._graph.get_node(node_id)
-            if node is None or node.created_at > cutoff:
+            if node is None or node.last_accessed > cutoff:
                 continue
             if await self.kill_node(node_id):
                 reaped += 1

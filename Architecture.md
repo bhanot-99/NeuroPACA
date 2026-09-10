@@ -221,7 +221,7 @@ inference_backend           : str = "llama"    (B1 — "fake" in tests)
 correlation_window_seconds  : int = 1800       (B3 — L3 per-collector deque bound)
 app_map_path                : str = "data/app_map.default.toml"  (B2.5b — activity→domain rules)
 model_context_tokens        : int = 2048       (B4 — llama.cpp n_ctx)
-adaptation_buffer_size      : int = 64         (B4 — L4 (Signal, Insight) deque + novelty set)
+insight_refractory_minutes  : int = 360        (B18 — L4 repeat gate; replaced B4's adaptation_buffer_size deque)
 interactive_model_path      : str = ""         (B5 D-12 — Qwen GGUF; B12 — `tell --explain` only; empty => deterministic block only)
 interactive_model_context_tokens : int = 2048  (B5 — interactive model n_ctx; short prompt, keep it small for RAM)
 explain_temperature         : float = 0.3      (B12 — the one free-decode L9 call, rules.md §4.1)
@@ -449,11 +449,10 @@ BitNetPlasticity «Module»
   - event_bus        : EventBus
   - graph_memory     : GraphMemory
   - bitnet_runtime   : BitNetRuntime
-  - _buffer          : deque[Tuple[Signal, Insight]]  (maxlen = adaptation_buffer_size)
   + on_signal_event(event)      : None  «async»
   - _handle(signal)             : None  «async»  — gate -> lazy load -> infer -> store
-  - _too_similar(signal)        : bool         — Jaccard novelty vs _buffer
-  - _store_insight(insight, sig): Insight «async»  — INSIGHT node + edges + Hebbian, one lock
+  - _already_known(signal, K)   : bool         — B18 repeat gate: every candidate has a fresh fact
+  - _store_insight(insight, sig): (Insight, created) «async» — upsert_fact + Hebbian
 ```
 
 **Extractive, not generative (D-11).** The B0 spike proved BitNet b1.58 2B4T cannot write a grounded sentence over graph context (`problems.md` 1.13). L4 asks the model for exactly **two enum-constrained fields** against a GBNF grammar:
@@ -463,7 +462,7 @@ BitNetPlasticity «Module»
   "insight_category": "routine" | "anomaly" | "distraction" }
 ```
 
-The human-readable `Insight.summary` is a **template** filled from the cited node's label + the signal type — never model text. `null` cited node = discard.
+The human-readable `Insight.summary` is a **template** — never model text. Since B18 it is not stored either: an insight is a `LabelSpec(insight, refs=(cited,), facet="<category>/<signal>")` and its words are rendered on demand by `core/labels.py`, the one renderer every surface uses (see `LABELS_PLAN.md`). `null` cited node = discard.
 
 ### The L4 pipeline
 
@@ -475,24 +474,26 @@ flowchart TD
     G2 -->|no| DROP
     G2 -->|yes| G3{BitNetRuntime.is_busy?}
     G3 -->|yes| DROP
-    G3 -->|no| G4{"Jaccard vs any buffered<br/>signal's node set > 0.8?"}
-    G4 -->|too similar| DROP
-    G4 -->|novel| G5{model available?}
+    G3 -->|no| G4{"B18 repeat gate: every candidate<br/>already has a fresh insight fact<br/>for this signal? (graph lookup)"}
+    G4 -->|known| DROP
+    G4 -->|new| G5{model available?}
     G5 -->|no — self-disabled| DROP
     G5 -->|yes| LL["lazy load:<br/>load_model_async() on the dedicated<br/>executor (first gate-passing signal only)"]
     LL --> INF["one greedy, grammar-constrained call<br/>→ {cited_node_id, insight_category}"]
     INF --> P{parse OK & cited node<br/>still in graph & not null?}
     P -->|no / abstain| DROP
-    P -->|yes| ST["_store_insight:<br/>INSIGHT node insight:&lt;uuid12&gt;<br/>+ RELATED_TO edges to cited node<br/>+ Hebbian reinforce_cooccurrence(+0.01)<br/>— ONE lock cycle"]
-    ST --> PUB([publish INSIGHT_GENERATED])
+    P -->|yes| ST["_store_insight:<br/>upsert_fact → insight:&lt;fingerprint&gt;<br/>+ RELATED_TO edges to cited node<br/>+ Hebbian wire_cooccurrence"]
+    ST --> NEW{created?}
+    NEW -->|no — known fact, reinforced| DROP
+    NEW -->|yes| PUB([publish INSIGHT_GENERATED])
 ```
 
 | Concern | Rule |
 | --- | --- |
-| **Gate** (drop in order) | `confidence < 0.7`; no `related_node_ids`; `BitNetRuntime.is_busy`; **Jaccard(this signal's node set, any buffered signal's) > 0.8** (no embeddings); model unavailable; no cited candidate survives in the graph; the parse fails or abstains (`rules.md §4.1`). |
+| **Gate** (drop in order) | `confidence < 0.7`; no `related_node_ids` / none survives in the graph; `BitNetRuntime.is_busy`; **repeat (B18)** — every candidate already carries an insight for this signal reinforced within `insight_refractory_minutes` (a graph lookup, so it survives restarts); model unavailable; the parse fails or abstains (`rules.md §4.1`); **repeat** — the answer is a stored fact (reinforced, not re-published). |
 | **Lazy load** | `BitNetRuntime.load_model_async()` (dedicated executor) fires on the *first signal that clears the gate* — an idle session never pays the ~1.4 GB tax. The backend self-disables (logs, `is_loaded` stays False) if `llama-cpp-python` or the model file is absent; L4 then drops every signal. |
 | **Hebbian** | `_store_insight` calls `graph_memory.reinforce_cooccurrence(cited ∪ signal.related_node_ids, +0.01)` — one `_lock` cycle, bumps `weight` on **existing** edges only between every pair in the episode (both directions, all parallel relations), creates nothing. `recalculate_importance()` stays owned by the Scheduler. |
-| **`_buffer`** | A bounded `deque[(Signal, Insight)]` — the novelty-comparison set and a record for later analysis, **not** an inference queue or a training set. Model weight adaptation is deferred (`pruning.md`). |
+| **Novelty memory** | The graph itself (B18). The B4 in-memory `deque[(Signal, Insight)]` + Jaccard set was removed: it reset on every restart, so each restart re-generated the same insight. An insight's id is derived from its fingerprint, so a duplicate cannot be stored. Model weight adaptation is deferred (`pruning.md`). |
 
 ---
 

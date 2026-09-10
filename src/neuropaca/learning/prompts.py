@@ -28,6 +28,7 @@ from collections.abc import Sequence
 
 from neuropaca.core.context import build_aliased_context
 from neuropaca.core.enums import SignalType
+from neuropaca.core.labels import RELATIONAL_THOUGHTS, THOUGHT_TEMPLATES
 from neuropaca.core.models import Node
 from neuropaca.learning.insight import INSIGHT_CATEGORIES, Insight
 
@@ -282,17 +283,11 @@ def clean_explain_answer(raw: str) -> str | None:
 #    "query_template": "how_does_x_affect_y" | ...}
 # ============================================================================
 
-# Rendered question per template. `{x}` is the subject label, `{y}` the object's.
-PROACTIVE_TEMPLATES: dict[str, str] = {
-    "how_does_x_affect_y": "How does {x} affect {y}?",
-    "what_connects_x_and_y": "What connects {x} and {y}?",
-    "what_changed_in_x": "What changed in {x} recently?",
-    "why_is_x_active": "Why has {x} been active so often?",
-}
+# The closed template set and its rendering live in `core/labels.py` (B18): the
+# model picks a key, the one renderer turns it into words at display time.
+PROACTIVE_TEMPLATES: dict[str, str] = THOUGHT_TEMPLATES
 # Templates that are meaningless without a distinct object node.
-_PROACTIVE_NEEDS_OBJECT: frozenset[str] = frozenset(
-    {"how_does_x_affect_y", "what_connects_x_and_y"}
-)
+_PROACTIVE_NEEDS_OBJECT: frozenset[str] = RELATIONAL_THOUGHTS
 # An extractive recombination of two real nodes — high, fixed. L9 surfaces an
 # insight at confidence >= 0.75 (B5); a proactive thought clears that by design.
 _PROACTIVE_CONFIDENCE = 0.8
@@ -350,7 +345,6 @@ def build_proactive_prompt(aliased: Sequence[tuple[str, Node]]) -> str:
 def parse_proactive(
     raw: str,
     alias_to_id: dict[str, str],
-    alias_to_label: dict[str, str],
 ) -> Insight | None:
     """The hard validation gate for an idle thought (`rules.md §4.1` item 6):
 
@@ -361,7 +355,7 @@ def parse_proactive(
     5. a relational template (`_PROACTIVE_NEEDS_OBJECT`) requires a distinct
        object; a single-subject template ignores any object the model supplied.
 
-    Returns a `proactive` `Insight` whose `detail` is the rendered question, or
+    Returns a `proactive` `Insight` carrying the chosen `template` key, or
     `None` — the caller discards `None`, never stores a guess.
     """
     obj = _first_json_object(raw)
@@ -385,14 +379,9 @@ def parse_proactive(
     else:
         objct = None  # a single-subject question — drop a spurious object
 
-    x_label = alias_to_label.get(subject, subject)
     cited = [alias_to_id[subject]]
     if objct is not None:
-        y_label = alias_to_label.get(objct, objct)
         cited.append(alias_to_id[objct])
-    else:
-        y_label = ""
-    question = PROACTIVE_TEMPLATES[template].format(x=x_label, y=y_label)
 
     return Insight(
         category="proactive",
@@ -400,7 +389,7 @@ def parse_proactive(
         source_signal=SignalType.IDLE,
         confidence=_PROACTIVE_CONFIDENCE,
         snapshot_count=0,
-        detail=question,
+        template=template,
     )
 
 

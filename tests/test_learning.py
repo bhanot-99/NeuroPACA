@@ -44,8 +44,12 @@ def test_insight_rejects_unknown_category() -> None:
 
 
 def test_insight_summary_is_a_template_not_model_text() -> None:
+    """B18: the words come from the one renderer over the spec — never a raw id."""
     ins = Insight("anomaly", ("app:webpack",), SignalType.HIGH_LOAD, 0.9, 2)
-    assert ins.summary == "anomaly: high_load implicates app:webpack"
+    assert ins.summary == "Anomaly on Webpack (high load) · confidence 0.90"
+    assert "app:" not in ins.summary
+    assert ins.spec.facet == "anomaly/high_load"
+    assert ins.spec.refs == ("app:webpack",)
     assert ins.traces_to_evidence() is True
     assert Insight("routine", (), SignalType.IDLE, 0.9, 0).traces_to_evidence() is False
 
@@ -200,13 +204,14 @@ async def test_is_busy_is_gated(tmp_path) -> None:
     await bus.stop()
 
 
-async def test_repeated_signal_is_dropped_by_jaccard_novelty(tmp_path) -> None:
+async def test_repeated_signal_is_dropped_by_the_repeat_gate(tmp_path) -> None:
     module, bus, _gm = await _wired(tmp_path)
     for _ in range(3):
-        await module.on_signal_event(_event(_signal()))  # identical node set -> Jaccard 1.0
+        await module.on_signal_event(_event(_signal()))  # same fact -> known after the first
         await bus.join()
     assert module._generated == 1
     assert module._dropped == 2
+    assert module._drops["repeat"] == 2
     await module.stop()
     await bus.stop()
 

@@ -39,6 +39,8 @@ import re
 import tomllib
 from pathlib import Path
 
+from neuropaca.core.labels import pretty_slug
+
 __all__ = ["AppIdentity"]
 
 _log = logging.getLogger(__name__)
@@ -166,35 +168,8 @@ class AppIdentity:
     def pretty(self, canonical: str) -> str:
         """A human label for a canonical slug — `cosmic-files` -> "Cosmic Files".
         Title-cases word by word, keeps known acronyms upper."""
-        if not canonical:
-            return ""
-        words = [w for w in re.split(r"[-\s]+", canonical) if w]
-        out: list[str] = []
-        for w in words:
-            if w in _ACRONYMS:
-                out.append(w.upper())
-            elif w in _PRETTY_WORDS:
-                out.append(_PRETTY_WORDS[w])
-            else:
-                out.append(w[:1].upper() + w[1:])
-        return " ".join(out)
-
-
-_ACRONYMS: frozenset[str] = frozenset({"ide", "cli", "vs", "db", "ai", "mcp", "os"})
-_PRETTY_WORDS: dict[str, str] = {
-    "vscode": "VS Code",
-    "code": "VS Code",
-    "cosmicterm": "Cosmic Term",
-    "cosmicfiles": "Cosmic Files",
-    "cosmicmonitor": "Cosmic Monitor",
-    "cosmiccomp": "Cosmic Comp",
-    "github": "GitHub",
-    "gitlab": "GitLab",
-    "youtube": "YouTube",
-    "chatgpt": "ChatGPT",
-    "whatsapp": "WhatsApp",
-    "linkedin": "LinkedIn",
-}
+        # B18: one name-tidier for the whole system (core/labels.py).
+        return pretty_slug(canonical) if canonical else ""
 
 
 # gen-ref: b17-app-identity

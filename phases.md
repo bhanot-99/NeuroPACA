@@ -556,6 +556,50 @@ non-zero weight distribution that decay keeps bounded.
 
 ---
 
+## B18 · One labeling system — labels are rendered, never stored
+
+**Branch `feat/b18-unified-labels`. Design + research + rejected alternatives:
+`LABELS_PLAN.md`.**
+
+Three graph-window symptoms had one root cause: every generated node (L4
+insight, L6 thought, L8 probe) had a sentence baked into `label` at creation.
+(1) After B17 merged `brave-browser` into `brave`, the old text stayed. (2) The
+L4 novelty gate lived in an in-memory deque, so each restart re-generated the
+same insight. (3) The window could only read ids, so every probe drew as
+"Summary" / "Learning". (4, found in analysis) labels copied other labels — the
+pressure reason embedded `insight.summary`, and the DMN seeded on probes and
+quoted their text.
+
+Built:
+- `core/labels.py` (stdlib-only): `LabelSpec(kind, refs, facet, value)`,
+  `fingerprint` → `fact_id` (the node id *is* the fingerprint — no side index),
+  one `render` table (short/full), `leaf_name`/`pretty_slug` (the one name
+  tidier; `AppIdentity.pretty` delegates), `ref_namer`, `disambiguate`,
+  `parse_legacy`.
+- `Node.spec`, **graph schema v5**; v4 files migrate on load (legacy labels
+  parsed back into specs, label-quoting thoughts dropped, ids re-derived,
+  collisions merged, backup `graph.json.pre-b18-backup`).
+- `GraphMemory.upsert_fact` / `find_fact` / `display_name`; label is a render
+  cache. `canonicalise_app_nodes` heals spec refs, re-derives ids, merges facts
+  a rename unites, re-renders. `consolidate` no longer merges facts on text.
+- L4: Jaccard deque + `adaptation_buffer_size` **removed**; graph-backed repeat
+  gate (`insight_refractory_minutes`, before inference) + publish only on
+  create. L6: thoughts are facts (template key + refs), probes excluded from
+  seeds. L8: probes are facts (`summary/L#.cause`, `source/<layer>`),
+  reinforced not re-spawned; apoptosis on `last_accessed`. L5: reason names a
+  cause, never another node's text.
+- Graph window: loads `labels.py` by path (still imports nothing from the
+  package), per-file-version caption cache with disambiguation, panel shows
+  "seen N times" / first / last seen for facts.
+
+**Measured on a copy of the real `data/graph.json`** (2026-09-10): 90 → 58 nodes,
+101 → 59 edges, generated 55 → 23; 0 facts without spec, 0 labels with raw ids,
+0 dangling refs, 0 duplicate facts, 0 caption collisions (58/58 distinct under
+system python); second load is a no-op. Not built (plan §6, optional): the Qwen
+app-alias adjudicator — its ablation needs a hand-labelled alias set first.
+
+---
+
 ## Deferred — after the rest of the project
 
 ### D1 · Personal model pruning
