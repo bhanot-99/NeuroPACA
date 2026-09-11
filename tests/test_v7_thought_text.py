@@ -159,8 +159,8 @@ async def test_a_rename_heals_the_label_but_not_the_record(tmp_path) -> None:
 # ========================================================== 4 · compatibility
 
 
-def test_the_schema_version_says_a_v7_file_is_a_v7_file() -> None:
-    assert graph_schema_version() == 7
+def test_the_schema_version_is_at_least_v7() -> None:
+    assert graph_schema_version() >= 7  # v7 introduced `spec.text`
 
 
 async def test_a_v6_graph_loads_with_no_text(tmp_path) -> None:
@@ -187,7 +187,7 @@ async def test_a_v6_graph_loads_with_no_text(tmp_path) -> None:
     node = gm.get_node(fact_id(_SPEC))
     assert node is not None and node.spec.text is None
     await gm.save()
-    assert json.loads(path.read_text())["schema_version"] == 7
+    assert json.loads(path.read_text())["schema_version"] == graph_schema_version()
 
 
 def test_a_malformed_text_field_does_not_break_the_tolerant_reader() -> None:

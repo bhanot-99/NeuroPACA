@@ -113,6 +113,8 @@ def _heavy_app_specs(
                 attributes=(
                     ("ram_mb", _rfloat(row, "rss_mb")),
                     ("cpu_percent", _rfloat(row, "cpu_percent")),
+                    # V-9 · when this pair was measured, independent of sightings
+                    ("resources_at", now.isoformat()),
                     ("first_seen_at", first_seen.isoformat()),
                     ("last_seen_at", now.isoformat()),
                 ),
