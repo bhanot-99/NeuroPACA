@@ -98,3 +98,14 @@ def _keep_the_log_sink_out_of_the_repo(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 # gen-ref: 32c85003
+
+
+@pytest.fixture(autouse=True)
+def _no_real_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """V-12 · L9 now hands live notifications to `notify-send`. No test may pop
+    a real popup on the developer's screen (or depend on a desktop existing), so
+    every test sees no `notify-send`. The tests of `desktop.notify` itself pass
+    an explicit stand-in binary and still run the real subprocess path."""
+    from neuropaca.interface import desktop
+
+    monkeypatch.setattr(desktop, "notify_send_path", lambda: None)

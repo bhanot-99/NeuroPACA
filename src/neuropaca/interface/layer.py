@@ -53,6 +53,7 @@ from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.logging import redact
 from neuropaca.core.models import Event, system_error_event
+from neuropaca.interface import desktop
 from neuropaca.interface.message import Message
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
@@ -79,6 +80,10 @@ _SURFACEABLE_NODE_PREFIXES = ("insight:", "idle:")
 # length of a human decision. `$!` (run) / `$$` (run + state backup) are the
 # internal wire enum L7 dispatches on; the user types `run` / `run --backup`.
 _MAX_PENDING_NOTIFICATIONS = 50
+# V-12 · at most one desktop popup per this many seconds, and one in flight.
+# Anything over the rate still lands in the terminal queue — the popup is a
+# nudge, `neuropaca notifications` and the audit log are the record.
+_DESKTOP_MIN_GAP_SECONDS = 30.0
 # Surface-once bookkeeping is the only state here that outlives the node it
 # describes: an INSIGHT / IDLE_THOUGHT is pruned at its 48 h TTL, but its id had
 # to stay remembered or the same thought could be surfaced twice. Remembering
@@ -123,6 +128,12 @@ class InterfaceLayer(BaseModule):
         self._health_waiters: list[asyncio.Future[dict[str, Any] | None]] = []
         self._pending_insights: list[Insight] = []
         self._pending_notifications: list[dict[str, Any]] = []
+        # V-12 · desktop delivery state
+        self._desktop_task: asyncio.Task[None] | None = None
+        self._desktop_last_at = float("-inf")
+        self._desktop_sent = 0
+        self._desktop_failed = 0
+        self._desktop_skipped = 0
         self._pending_confirmations: dict[str, dict[str, Any]] = {}
         # dict, not set: insertion-ordered, so trimming drops the oldest ids.
         self._surfaced_ids: dict[str, None] = {}
@@ -182,6 +193,11 @@ class InterfaceLayer(BaseModule):
         self.event_bus.unsubscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
         self.event_bus.unsubscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
+        desktop_task, self._desktop_task = self._desktop_task, None
+        if desktop_task is not None and not desktop_task.done():
+            desktop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await desktop_task
         self.event_bus.unsubscribe(
             EventType.ACTION_CONFIRMATION_REQUEST, self.on_confirmation_request
         )
@@ -268,6 +284,41 @@ class InterfaceLayer(BaseModule):
             )
         )
 
+    def _deliver_to_desktop(self, text: str, node_ids: list[str]) -> None:
+        """V-12 · schedule one desktop popup. Never blocks the handler, never
+        raises: the spawn runs as its own task. Rate-limited and one-in-flight,
+        so a burst of intents cannot flood the screen — the excess is still in
+        the terminal queue."""
+        if not self.config.notify_desktop:
+            return
+        now = self._clock.monotonic()
+        busy = self._desktop_task is not None and not self._desktop_task.done()
+        if busy or now - self._desktop_last_at < _DESKTOP_MIN_GAP_SECONDS:
+            self._desktop_skipped += 1
+            return
+        self._desktop_last_at = now
+        self._desktop_task = asyncio.create_task(self._send_desktop(self._readable(text, node_ids)))
+
+    def _readable(self, text: str, node_ids: list[str]) -> str:
+        """Put real names where L7 wrote node ids. A popup reading
+        `app:brave is under corroborated pressure` is exactly the raw-id label
+        B18 removed from the graph; the ids are in the intent, so name them."""
+        for node_id in sorted(set(node_ids), key=len, reverse=True):
+            if node_id and self._graph.has_node(node_id):
+                text = text.replace(node_id, self._graph.display_name(node_id))
+        return text
+
+    async def _send_desktop(self, body: str) -> None:
+        try:
+            ok = await desktop.notify(desktop.APP_NAME, body)
+        except Exception:  # a delivery failure is logged, never raised (rules.md §2)
+            _log.exception("desktop notification failed")
+            ok = False
+        if ok:
+            self._desktop_sent += 1
+        else:
+            self._desktop_failed += 1
+
     async def on_action_triggered(self, event: Event) -> None:
         """L7 finished an attempt. Two jobs:
 
@@ -299,6 +350,10 @@ class InterfaceLayer(BaseModule):
                 # Bounded: an undrained queue must not grow without limit. The
                 # audit log is the complete record; this is only the tail.
                 del self._pending_notifications[:-_MAX_PENDING_NOTIFICATIONS]
+            # V-12 · a live intent also reaches the desktop. Never a dry-run one:
+            # "would have told you" on screen is an effect, and dry-run causes none.
+            if not bool(event.payload.get("dry_run")):
+                self._deliver_to_desktop(text, [str(n) for n in intent.get("node_ids", [])])
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._errors += 1
             _log.exception("interface on_action_triggered failed")
