@@ -94,7 +94,26 @@
   .btn:hover{border-color:var(--accent);color:var(--accent)}
   .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-  #inspect{top:16px;right:16px;width:250px;padding:14px 15px 15px;display:none}
+  #inspect{top:16px;right:16px;width:min(340px,calc(100vw - 32px));padding:14px 15px 15px;
+            display:none;max-height:calc(100vh - 120px);overflow-y:auto;z-index:5}
+  #inspect .close{position:absolute;top:8px;right:9px;background:none;border:0;
+            color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 5px}
+  #inspect .close:hover{color:var(--accent)}
+  #inspect .about{margin:10px 0 12px;padding:10px 11px;border-radius:8px;
+            background:rgba(120,150,210,.08);border:1px solid var(--panel-bd)}
+  #inspect .about p{margin:0;font-size:12.5px;line-height:1.5}
+  #inspect .sec{font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+            text-transform:uppercase;color:var(--faint);margin:12px 0 6px}
+  #inspect .about .sec{margin-top:0}
+  .conns{list-style:none;margin:0;padding:0;font-size:11.5px}
+  .conns li{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:5px 0;
+            border-top:1px solid var(--panel-bd)}
+  .conns button{all:unset;cursor:pointer;color:var(--fg,#e6ebf5);word-break:break-word}
+  .conns button:hover{color:var(--accent);text-decoration:underline}
+  .conns .rel{color:var(--muted);font-family:var(--mono);font-size:10px;text-align:right}
+  .conns .wbar{grid-column:1 / -1;height:2px;background:rgba(150,170,205,.14);border-radius:1px}
+  .conns .wbar i{display:block;height:100%;background:var(--accent)}
+  .conns .more{color:var(--faint);font-size:10.5px;border-top:1px solid var(--panel-bd);padding-top:5px}
   #inspect.on{display:block}
   #inspect .kind{font-family:var(--mono);font-size:9px;letter-spacing:.13em;
                  text-transform:uppercase;margin:0 0 5px}
@@ -133,7 +152,7 @@
   #empty.on{display:grid}
   #empty p{max-width:42ch;color:var(--muted);font-size:13px}
   #empty b{display:block;color:var(--ink);font-size:16px;font-weight:600;margin-bottom:8px}
-  @media (max-width:880px){#rail{width:196px}#inspect{display:none!important}
+  @media (max-width:880px){#rail{width:196px}
     .ticks{margin:8px 20px 0 20px}#hint{display:none}}
 </style>
 </head>
@@ -172,20 +191,17 @@
   </div>
 </div>
 
-<div class="panel" id="inspect">
+<div class="panel" id="inspect" role="dialog" aria-label="Node details">
+  <button class="close" id="iClose" aria-label="Close details">×</button>
   <p class="kind" id="iKind"></p>
   <p class="lbl" id="iLbl"></p><p class="id" id="iId"></p>
-  <dl>
-    <dt>type</dt><dd id="iType"></dd>
-    <dt>domain</dt><dd id="iDom"></dd>
-    <dt>relevance</dt><dd id="iScore"></dd>
-    <dt>focused</dt><dd id="iAcc"></dd>
-    <dt>connections</dt><dd id="iDeg"></dd>
-    <dt id="iRamK">RAM</dt><dd id="iRam"></dd>
-    <dt id="iCpuK">CPU</dt><dd id="iCpu"></dd>
-    <dt>first seen</dt><dd id="iCre"></dd>
-  </dl>
+  <div class="about"><p class="sec">What the AI is learning here</p><p id="iAbout"></p></div>
+  <p class="sec">Numbers</p>
+  <dl id="iNums"></dl>
   <div class="bar"><i id="iBar"></i></div>
+  <div id="iSpecWrap"><p class="sec">What it is about</p><dl id="iSpec"></dl></div>
+  <p class="sec">Connections <span id="iConnN"></span></p>
+  <ul class="conns" id="iConns"></ul>
 </div>
 
 <div class="panel" id="time">
@@ -198,7 +214,7 @@
   <div class="ticks" id="ticks"></div>
 </div>
 
-<div id="hint">drag a node · scroll to zoom · click to isolate · double-click to fit</div>
+<div id="hint">click a node for details · drag to move · scroll to zoom · double-click to fit</div>
 
 <script>
 (() => {
@@ -224,7 +240,7 @@
   const nodes = DATA.nodes.map(n => ({
     id:n.id, node_type:n.node_type, label:n.label || n.id, cat:classOf(n),
     t:n.t, relevance_score:n.score, access_count:n.access, domain:n.domain,
-    ram:n.ram, cpu:n.cpu, hub:HUBS.has(n.id) || n.id === ROOT,
+    ram:n.ram, cpu:n.cpu, hub:HUBS.has(n.id) || n.id === ROOT, raw:n,
     x:0, y:0, vx:0, vy:0, deg:0,
   }));
   const byId = new Map(nodes.map(n => [n.id, n]));
@@ -594,7 +610,7 @@
     }
     return best;
   };
-  let moved = false;
+  let moved = false, down = null;
   cv.addEventListener("mousemove", ev => {
     const r = cv.getBoundingClientRect();
     const p = toWorld(ev.clientX - r.left, ev.clientY - r.top);
@@ -608,19 +624,20 @@
       view.tx = view.x; view.ty = view.y; dirty = true; return;
     }
     const h = hit(p.x, p.y);
-    if (h !== hover) { hover = h; showInspect(h || focus); dirty = true; }
+    if (h !== hover) { hover = h; dirty = true; }
   });
   cv.addEventListener("mousedown", ev => {
     const r = cv.getBoundingClientRect();
     const p = toWorld(ev.clientX - r.left, ev.clientY - r.top);
-    const h = hit(p.x, p.y); moved = false;
+    const h = hit(p.x, p.y); moved = false; down = h;
     if (h && !h.pinned) drag = h;
     else if (h && h.pinned) drag = null;
     else pan = { sx:ev.clientX, sy:ev.clientY, vx:view.x, vy:view.y };
     cv.classList.add("dragging");
   });
   addEventListener("mouseup", () => {
-    if (!moved && drag) setFocus(drag !== focus ? drag : null);
+    if (!moved) setFocus(down && down !== focus ? down : null);
+    down = null;
     drag = null; pan = null; cv.classList.remove("dragging");
   });
   cv.addEventListener("dblclick", () => { el("autofit").checked = true; fit(false); });
@@ -638,30 +655,107 @@
     if (ev.key === "f") { el("autofit").checked = true; fit(false); }
   });
 
-  function setFocus(n) { focus = n; showInspect(n || hover); dirty = true; }
+  function setFocus(n) { focus = n; showInspect(n); dirty = true; }
+  // ---- node detail panel ---------------------------------------------
+  // Everything is set with textContent: labels are app names and window titles,
+  // and the page must never interpret them as markup.
+  const adj = new Map(nodes.map(n => [n.id, []]));
+  DATA.edges.forEach(e => {
+    if (!byId.has(e.s) || !byId.has(e.t) || e.s === e.t) return;
+    adj.get(e.s).push({ other:e.t, rel:e.rel, dir:"out", w:e.w });
+    adj.get(e.t).push({ other:e.s, rel:e.rel, dir:"in",  w:e.w });
+  });
+  const REL = { related_to:"linked with", part_of:"part of", caused_by:"caused by",
+                depends_on:"depends on", followed_by:"followed by", contradicts:"contradicts",
+                created:"created", modified:"modified" };
+  const when = iso => {
+    if (!iso) return "—";
+    const d = new Date(iso); if (isNaN(d)) return "—";
+    const mins = Math.round((Date.now() - d) / 60000);
+    const rel = mins < 2 ? "just now" : mins < 60 ? mins + " min ago"
+      : mins < 1440 ? Math.round(mins / 60) + " h ago" : Math.round(mins / 1440) + " d ago";
+    return d.toLocaleString(undefined, { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })
+      + " · " + rel;
+  };
+  const rows = (dl, pairs) => {
+    dl.replaceChildren();
+    for (const [k, v] of pairs) {
+      if (v === null || v === undefined || v === "") continue;
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = String(v);
+      dl.append(dt, dd);
+    }
+  };
+  el("iClose").addEventListener("click", () => setFocus(null));
+
   function showInspect(n) {
     const box = el("inspect");
     if (!n) { box.classList.remove("on"); return; }
-    box.classList.add("on");
-    const kindCol = colourOf(n.cat);
+    const r = n.raw || {};
+    const links = adj.get(n.id) || [];
+    const ins = links.filter(l => l.dir === "in").length;
     el("iKind").textContent =
       n.cat === "root" ? "the person" : n.cat === "domain" ? "routing hub"
-        : n.cat.replace(/_/g, " ");
-    el("iKind").style.color = kindCol;
+        : (r.kind || n.cat).replace(/_/g, " ");
+    el("iKind").style.color = colourOf(n.cat);
     el("iLbl").textContent = n.label;
     el("iId").textContent = n.id;
-    el("iType").textContent = n.node_type;
-    el("iDom").textContent = n.domain ? n.domain.replace(/^domain:/, "") : "—";
-    el("iScore").textContent = n.relevance_score.toFixed(2) + " / 10";
-    el("iAcc").textContent = n.access_count;
-    el("iDeg").textContent = n.deg;
-    const ram = n.ram ? n.ram.toFixed(0) + " MiB" : "—";
-    const cpu = (n.cpu || n.cpu === 0) && n.cpu ? n.cpu.toFixed(0) + " %" : "—";
-    el("iRam").textContent = ram; el("iCpu").textContent = cpu;
-    el("iRamK").style.display = el("iRam").style.display = n.ram ? "" : "none";
-    el("iCpuK").style.display = el("iCpu").style.display = n.cpu ? "" : "none";
-    el("iCre").textContent = fmtAt(n.t);
+    el("iAbout").textContent = r.about || "No description yet.";
+
+    const used = nodes.filter(x => x.raw && (x.raw.kind === "app" || x.raw.kind === "webapp"))
+      .sort((a, b) => b.relevance_score - a.relevance_score);
+    const rank = used.indexOf(n);
+    rows(el("iNums"), [
+      ["type", n.node_type.replace(/_/g, " ")],
+      ["topic", n.domain ? (byId.get(n.domain) || {}).label || n.domain : "—"],
+      ["relevance", n.relevance_score.toFixed(2) + " / 10" + (rank >= 0 ? `  (#${rank + 1} of ${used.length})` : "")],
+      ["activity", r.activity !== undefined ? r.activity.toFixed(1) : null],
+      ["times used", n.access_count],
+      ["connections", `${links.length}  (${ins} in · ${links.length - ins} out)`],
+      ["memory", n.ram ? n.ram.toFixed(0) + " MiB" : null],
+      ["cpu", n.ram && n.cpu !== null && n.cpu !== undefined ? n.cpu.toFixed(1) + " %" : null],
+      ["measured", r.resources_at ? when(r.resources_at) : null],
+      ["first seen", r.first_seen ? when(r.first_seen) : null],
+      ["last seen", r.last_seen ? when(r.last_seen) : null],
+      ["last touched", when(r.last_accessed)],
+      ["added", when(r.created)],
+    ]);
     el("iBar").style.width = (Math.min(n.relevance_score, 10) / 10 * 100) + "%";
+
+    const spec = r.spec;
+    el("iSpecWrap").style.display = spec ? "" : "none";
+    if (spec) rows(el("iSpec"), [
+      ["kind", spec.kind],
+      ["facet", spec.facet ? String(spec.facet).replace(/_/g, " ") : null],
+      ["about", (spec.refs || []).map(x => x.label).join(", ")],
+      ["value", typeof spec.value === "number" ? spec.value.toFixed(2) : null],
+      ["asked", spec.text],
+    ]);
+
+    const list = el("iConns"); list.replaceChildren();
+    const sorted = links.slice().sort((a, b) => b.w - a.w
+      || (byId.get(a.other).label || "").localeCompare(byId.get(b.other).label || ""));
+    el("iConnN").textContent = `(${links.length})`;
+    const SHOW = 40;
+    for (const l of sorted.slice(0, SHOW)) {
+      const o = byId.get(l.other);
+      const li = document.createElement("li");
+      const b = document.createElement("button"); b.textContent = o.label;
+      b.title = o.id;
+      b.addEventListener("click", () => setFocus(o));
+      const rel = document.createElement("span"); rel.className = "rel";
+      rel.textContent = (l.dir === "out" ? "→ " : "← ") + (REL[l.rel] || l.rel.replace(/_/g, " "))
+        + (l.w > 0 ? "  " + l.w.toFixed(2) : "");
+      const bar = document.createElement("div"); bar.className = "wbar";
+      const fill = document.createElement("i"); fill.style.width = (Math.min(l.w / MAXW, 1) * 100) + "%";
+      bar.append(fill); li.append(b, rel, bar); list.append(li);
+    }
+    if (sorted.length > SHOW) {
+      const more = document.createElement("li"); more.className = "more";
+      more.textContent = `+ ${sorted.length - SHOW} more`; list.append(more);
+    }
+    box.classList.add("on");
+    box.scrollTop = 0;
   }
 
   // ---- chrome --------------------------------------------------------

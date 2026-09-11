@@ -45,7 +45,7 @@ import argparse
 import json
 import sys
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -120,7 +120,288 @@ def build_ticks(t0: datetime, span: float, count: int = 7) -> list[str]:
     ]
 
 
-def build_payload(graph: dict[str, Any]) -> dict[str, Any]:
+# --------------------------------------------------------------------------- #
+# the node detail panel: what a click shows, and the plain-English "what the   #
+# system is learning here" line. Built here, not in the page, so it is tested  #
+# and deterministic — no model writes it (rules: extractive before generative) #
+# --------------------------------------------------------------------------- #
+_KIND_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("ephemeral:", "probe"),
+    ("insight:", "insight"),
+    ("idle:", "thought"),
+    ("action:", "action"),
+    ("webapp:", "webapp"),
+    ("app:", "app"),
+)
+_SIGNAL_WORDS = {
+    "idle": "away from the computer",
+    "high_load": "under heavy load",
+    "distraction": "switching around a lot",
+    "focus_session": "in a focused stretch",
+    "working_set_change": "opening and closing heavy apps",
+    "memory_pressure": "short on memory",
+    "heavy_app_started": "starting a heavy app",
+}
+_LAYER_WORDS = {
+    "L3": "pattern detector",
+    "L4": "learning layer",
+    "diagnosis": "pattern detector",
+    "learning": "learning layer",
+}
+_FACT_KINDS = ("probe", "insight", "thought")
+
+
+def node_kind(node_id: str, node_type: str) -> str:
+    """What a node *is*, for the panel: root, domain, app, webapp, insight,
+    thought, probe, action — or its stored node_type for anything else."""
+    if node_id == ROOT_ID:
+        return "root"
+    if node_id.startswith(DOMAIN_PREFIX):
+        return "domain"
+    for prefix, kind in _KIND_PREFIXES:
+        if node_id.startswith(prefix):
+            return kind
+    return node_type
+
+
+class _Context:
+    """One pass over the graph: names, kinds, adjacency, ranks, back-references."""
+
+    def __init__(self, nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
+        self.nodes = {n["id"]: n for n in nodes}
+        self.kind = {n["id"]: node_kind(n["id"], str(n["node_type"])) for n in nodes}
+        # (other, relation, "out" | "in", weight)
+        self.adj: dict[str, list[tuple[str, str, str, float]]] = {i: [] for i in self.nodes}
+        for e in edges:
+            s, t = e["source"], e["target"]
+            if s in self.adj and t in self.adj and s != t:
+                rel, w = str(e.get("relation", "related_to")), float(e.get("weight", 0.0))
+                self.adj[s].append((t, rel, "out", w))
+                self.adj[t].append((s, rel, "in", w))
+        used = [i for i in self.nodes if self.kind[i] in ("app", "webapp")]
+        used.sort(key=lambda i: (-float(self.nodes[i].get("relevance_score", 0.0)), i))
+        self.rank = {i: r + 1 for r, i in enumerate(used)}
+        self.ranked = len(used)
+        self.about: dict[str, list[str]] = {}  # node id -> generated facts about it
+        for i, n in self.nodes.items():
+            spec = n.get("spec")
+            if isinstance(spec, dict):
+                for ref in spec.get("refs", ()):
+                    self.about.setdefault(str(ref), []).append(i)
+
+    def name(self, node_id: str) -> str:
+        node = self.nodes.get(node_id)
+        if node is not None:
+            return str(node.get("label") or node_id)
+        return node_id.split(":", 1)[-1] or node_id
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _join(names: list[str]) -> str:
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _ago(value: Any, now: datetime) -> str | None:
+    if not value:
+        return None
+    try:
+        then = _parse_dt(str(value))
+    except ValueError:
+        return None
+    gap = now - then
+    if gap < timedelta(minutes=2):
+        return "just now"
+    if gap < timedelta(hours=1):
+        return f"{int(gap.total_seconds() // 60)} min ago"
+    if gap < timedelta(days=1):
+        return f"{int(gap.total_seconds() // 3600)} h ago"
+    return _plural(gap.days, "day") + " ago"
+
+
+def _article(noun: str) -> str:
+    """'anomaly' -> 'an anomaly', 'distraction' -> 'a distraction'."""
+    if noun in ("something", ""):
+        return "something"
+    return ("an " if noun[:1].lower() in "aeiou" else "a ") + noun
+
+
+def _strength(w: float) -> str:
+    return "strongly" if w >= 0.5 else "often" if w >= 0.2 else "sometimes"
+
+
+def describe_node(node: dict[str, Any], ctx: _Context, now: datetime) -> str:
+    """Plain English: what this node is, and what the system is learning from
+    it. Built only from the node's own recorded data and its edges."""
+    nid, kind, name = node["id"], ctx.kind[node["id"]], ctx.name(node["id"])
+    links = ctx.adj.get(nid, [])
+    uses = int(node.get("access_count", 0))
+
+    if kind == "root":
+        topics = [ctx.name(o) for o, _r, _d, _w in links if ctx.kind.get(o) == "domain"]
+        direct = [o for o, _r, _d, _w in links if ctx.kind.get(o) not in ("domain",)]
+        parts = ["This is you — the centre of everything the system learns."]
+        if topics:
+            count = _plural(len(topics), "topic")
+            parts.append(f"It sorts your activity into {count}: {_join(sorted(topics))}.")
+        if direct:
+            parts.append(
+                f"{_plural(len(direct), 'item')} hang off you directly; those are things "
+                "it has not yet filed under a topic."
+            )
+        return " ".join(parts)
+
+    if kind == "domain":
+        members = sorted({ctx.name(o) for o, r, d, _w in links if r == "part_of" and d == "in"})
+        if not members:
+            return (
+                f"A topic the system can file your activity under: {name}. Nothing is "
+                "filed here yet — it appears once you use an app that belongs to it."
+            )
+        shown = members[:6] + ([f"{len(members) - 6} more"] if len(members) > 6 else [])
+        return (
+            f"A topic the system files your activity under: {name}. "
+            f"{len(members)} {'app or site' if len(members) == 1 else 'apps or sites'} "
+            f"belong{'s' if len(members) == 1 else ''} here: {_join(shown)}. "
+            f"Every time you use one of them it counts as {name.lower()} activity — "
+            "that is how the system learns what kind of work you are doing."
+        )
+
+    if kind in ("app", "webapp"):
+        parts = []
+        when = _ago(node.get("last_accessed"), now)
+        parts.append(
+            f"You have used {name} {_plural(uses, 'time')}"
+            + (f", most recently {when}." if when else ".")
+        )
+        if nid in ctx.rank:
+            parts.append(
+                f"It is #{ctx.rank[nid]} of your {ctx.ranked} apps and sites by relevance "
+                f"({float(node.get('relevance_score', 0.0)):.1f} out of 10)."
+            )
+        topics = [
+            ctx.name(o)
+            for o, r, d, _w in links
+            if r == "part_of" and d == "out" and ctx.kind.get(o) == "domain"
+        ]
+        hosts = [
+            ctx.name(o)
+            for o, r, d, _w in links
+            if r == "part_of" and d == "out" and ctx.kind.get(o) == "app"
+        ]
+        if kind == "webapp" and hosts:
+            parts.append(f"It is a site you use inside {_join(hosts)}.")
+        parts.append(
+            f"The system files it under {_join(topics)}."
+            if topics
+            else "It is not filed under a topic yet."
+        )
+        partners = sorted(
+            (
+                (w, ctx.name(o))
+                for o, r, _d, w in links
+                if r == "related_to" and w > 0 and ctx.kind.get(o) in ("app", "webapp")
+            ),
+            reverse=True,
+        )
+        if partners:
+            said = [f"{p} ({_strength(w)})" for w, p in partners[:4]]
+            parts.append(
+                f"From how you switch between apps, it has learned that {name} goes "
+                f"with {_join(said)}."
+            )
+        else:
+            parts.append(
+                f"It has not yet learned what {name} goes with — no regular co-use so far."
+            )
+        facts = ctx.about.get(nid, [])
+        insights = sum(1 for f in facts if ctx.kind.get(f) == "insight")
+        thoughts = sum(1 for f in facts if ctx.kind.get(f) == "thought")
+        if insights:
+            parts.append(f"It has noticed {_plural(insights, 'unusual pattern')} around it.")
+        if thoughts:
+            parts.append(
+                f"While you were away it asked itself {_plural(thoughts, 'question')} about it."
+            )
+        if node.get("ram_mb"):
+            measured = _ago(node.get("resources_at"), now)
+            parts.append(
+                f"Last measured using about {float(node['ram_mb']):.0f} MiB of memory"
+                + (f" ({measured})." if measured else ".")
+            )
+        return " ".join(parts)
+
+    spec = node.get("spec") if isinstance(node.get("spec"), dict) else {}
+    refs = [ctx.name(str(r)) for r in spec.get("refs", ())]
+    facet = str(spec.get("facet", ""))
+    value = spec.get("value")
+
+    if kind == "insight":
+        category, _, signal = facet.partition("/")
+        cited = sum(1 for _o, r, d, _w in links if r == "caused_by" and d == "in")
+        parts = [
+            f"The system noticed {'an' if category[:1] in 'aeiou' else 'a'} "
+            f"{category or 'pattern'} involving {_join(refs) or 'your activity'} while you were "
+            f"{_SIGNAL_WORDS.get(signal, signal.replace('_', ' ') or 'active')}"
+            + (f" (confidence {float(value):.2f})." if value is not None else ".")
+        ]
+        if cited:
+            parts.append(f"{_plural(cited, 'follow-up note')} back it up.")
+        parts.append(
+            "Insights like this add pressure to an app; when two independent sources "
+            "agree, the system tells you."
+        )
+        return " ".join(parts)
+
+    if kind == "thought":
+        question = str(spec.get("text") or node.get("label") or "")
+        return (
+            f"While you were away, the system asked itself: “{question}” It is exploring "
+            f"how {_join(refs)} relate. It has come back to this "
+            f"{_plural(max(uses, 1), 'time')}. Idle thoughts are kept for 48 hours."
+        )
+
+    if kind == "probe":
+        group, _, detail = facet.partition("/")
+        subject = _join(refs) or "an app"
+        if group == "summary":
+            layer, _, cause = detail.partition(".")
+            who = _LAYER_WORDS.get(layer, "system")
+            amount = f"of {float(value):.2f} " if value is not None else ""
+            return (
+                f"A short-lived investigation note: pressure {amount}built up on {subject} "
+                f"because the {who} spotted {_article(cause.replace('_', ' ') or 'something')}. "
+                "Notes like this help the system decide whether to act; they are deleted "
+                "after 14 days."
+            )
+        return (
+            f"A short-lived note recording that the {_LAYER_WORDS.get(detail, detail or 'system')} "
+            f"contributed evidence about {subject}. Deleted after 14 days."
+        )
+
+    if kind == "action":
+        return f"A record of something the system did: {name}."
+    what = str(node.get("node_type", "item")).replace("_", " ")
+    return f"The system has seen this {what} {_plural(uses, 'time')}."
+
+
+def _spec_view(spec: Any, ctx: _Context) -> dict[str, Any] | None:
+    if not isinstance(spec, dict):
+        return None
+    return {
+        "kind": spec.get("kind"),
+        "facet": spec.get("facet"),
+        "value": spec.get("value"),
+        "text": spec.get("text"),
+        "refs": [{"id": str(r), "label": ctx.name(str(r))} for r in spec.get("refs", ())],
+    }
+
+
+def build_payload(graph: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Turn the on-disk graph into what the template needs.
 
     Times become seconds offset from the earliest `created_at`, so the scrubber
@@ -137,6 +418,8 @@ def build_payload(graph: dict[str, Any]) -> dict[str, Any]:
     span = max((s - t0).total_seconds() for s in stamps)
 
     domains = derive_domains(nodes, edges)
+    ctx = _Context(nodes, edges)
+    moment = now or datetime.now().astimezone()
     hub_ids = [n["id"] for n in nodes if n["id"] == ROOT_ID or n["id"].startswith(DOMAIN_PREFIX)]
     domain_ids = sorted(i for i in hub_ids if i.startswith(DOMAIN_PREFIX))
 
@@ -151,6 +434,16 @@ def build_payload(graph: dict[str, Any]) -> dict[str, Any]:
             "domain": domains.get(n["id"]),
             "ram": round(float(n["ram_mb"]), 1) if n.get("ram_mb") else None,
             "cpu": round(float(n["cpu_percent"]), 1) if n.get("cpu_percent") else None,
+            # the detail panel
+            "kind": ctx.kind[n["id"]],
+            "about": describe_node(n, ctx, moment),
+            "activity": round(float(n.get("activity", 0.0)), 2),
+            "created": n.get("created_at"),
+            "last_accessed": n.get("last_accessed"),
+            "first_seen": n.get("first_seen_at"),
+            "last_seen": n.get("last_seen_at"),
+            "resources_at": n.get("resources_at"),
+            "spec": _spec_view(n.get("spec"), ctx),
         }
         for n in nodes
     ]
