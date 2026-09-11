@@ -78,7 +78,13 @@ from neuropaca.core.models import Edge, Node
 # replaces the separate frequency and recency terms of `relevance_score`. A v5
 # file loads unchanged: a missing `activity` defaults to `access_count + 1` as of
 # `last_accessed` (the lifetime tally is the best estimate a young graph has).
-_SCHEMA_VERSION = 6
+# v7 (V-7): a node's `spec` may carry an optional `text` — a free-text payload
+# (what a thought actually asked, in the words used at the time) that is NOT
+# part of the fingerprint, so every existing node id is unchanged and a v6 file
+# loads as-is with `text` simply absent. The bump is for honesty in the other
+# direction: an older build reading a v7 file would silently drop the field,
+# and `_validate_schema_version` refusing it is the point of the check.
+_SCHEMA_VERSION = 7
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
 
 # V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.
@@ -1133,7 +1139,13 @@ class GraphMemory:
         node_id = fact_id(spec)
         if node_id in self._graph:
             data = self._graph.nodes[node_id]
-            data["spec"] = spec  # the latest value (pressure, confidence) wins
+            existing = data.get("spec")
+            # V-7 · the latest *value* (pressure, confidence) wins, but the
+            # *first* text stands: it is the record of what was actually asked
+            # or said the first time, which re-asking must not rewrite.
+            if isinstance(existing, LabelSpec) and existing.text is not None:
+                spec = replace(spec, text=existing.text)
+            data["spec"] = spec
             self._touch_unsafe(data)
             data["label"] = render(spec, self._ref_name)
             self._dirty = True

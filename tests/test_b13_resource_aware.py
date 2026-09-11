@@ -356,10 +356,10 @@ async def test_a_v2_graph_loads_under_v3(tmp_path: Path) -> None:
     assert node.ram_mb == 0.0 and node.first_seen_at is None
 
 
-def test_schema_version_is_v6() -> None:
+def test_schema_version_is_v7() -> None:
     # v3: B13 resource attrs. v4: B14 NodeType.WEBAPP. v5: B18 LabelSpec.
-    # v6: V-2 decaying `activity` counter.
-    assert graph_schema_version() == 6
+    # v6: V-2 decaying `activity` counter. v7: V-7 optional `spec.text`.
+    assert graph_schema_version() == 7
 
 
 # gen-ref: a5cd4c80

@@ -253,7 +253,7 @@ async def test_a_v5_graph_loads_with_activity_estimated_from_access_count(tmp_pa
 
     await gm.save()
     saved = json.loads(path.read_text())
-    assert saved["schema_version"] == 6
+    assert saved["schema_version"] == 7
     (x,) = (n for n in saved["nodes"] if n["id"] == "app:x")
     assert x["activity"] == pytest.approx(10.0)
 

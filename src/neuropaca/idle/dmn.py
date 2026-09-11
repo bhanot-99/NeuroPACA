@@ -47,7 +47,7 @@ from neuropaca.core.enums import EventType, NodeType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
-from neuropaca.core.labels import KIND_PREFIX, LabelKind
+from neuropaca.core.labels import KIND_PREFIX, LabelKind, render
 from neuropaca.core.models import Event, Node, system_error_event
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
@@ -299,6 +299,12 @@ class DefaultModeNetwork(BaseModule):
             k, exclude_types=_EXCLUDED_SEED_TYPES, exclude_prefixes=(EPHEMERAL_PREFIX,)
         )
 
+    def _question_text(self, insight: Insight) -> str:
+        """The question in the words of the moment (V-7) — the same renderer the
+        label uses, resolved against the graph's *current* display names, which
+        is exactly what "at the time" means at the instant of asking."""
+        return render(insight.spec, lambda ref: self._graph.display_name(ref))
+
     async def _one_thought(self, seeds: list[Node], rotation: int) -> Insight | None:
         ordered = seeds[rotation:] + seeds[:rotation]
         aliased = alias_nodes(ordered)
@@ -318,7 +324,12 @@ class DefaultModeNetwork(BaseModule):
             return None
         # B18: the thought is a fact; asking the same open question again —
         # this cycle or a week of restarts later — reinforces it, never repeats it.
-        node, created = await self._graph.upsert_fact(insight.spec)
+        # V-7: the question is also stored as it read *when it was asked*, using
+        # the names those nodes had then. The label still re-renders from
+        # {facet, refs} and so heals on a rename; this does not, deliberately —
+        # it is the record of what was actually asked.
+        spec = replace(insight.spec, text=self._question_text(insight))
+        node, created = await self._graph.upsert_fact(spec)
         if not created:
             return None
         stored = replace(insight, node_id=node.id, label=node.label)
