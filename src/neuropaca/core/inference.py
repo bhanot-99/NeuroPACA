@@ -38,6 +38,15 @@ _GRACEFUL_ABSTAIN = '{"cited_node_id": null, "insight_category": "routine"}'
 
 _ALIAS_ENUM_RE = re.compile(r'"\\?"(n[1-9][0-9]*)\\?"')
 _PROMPT_FACT_RE = re.compile(r"\[(n[1-9][0-9]*)\]\s+(.+?)\s+·")
+# V-4 · the grammar's `template ::=` branch list. The fake must answer with a
+# key the grammar actually allows — the real sampler cannot emit anything else,
+# so a fake that ignored the rotation would test a path production never takes.
+_TEMPLATE_ENUM_RE = re.compile(r"^template ::= (.+)$", re.MULTILINE)
+_TEMPLATE_KEY_RE = re.compile(r'"\\?"([a-z_]+)\\?"')
+# Which of those keys are meaningless without a distinct object node
+# (`learning.prompts._PROACTIVE_NEEDS_OBJECT`, duplicated here rather than
+# imported — `core` never imports from `learning`).
+_RELATIONAL_KEYS = frozenset({"how_does_x_affect_y", "what_connects_x_and_y"})
 
 # The opening phrase of `learning.prompts.EXPLAIN_SYSTEM` — the tell that a
 # free-decode call is the L9 `tell --explain` paraphrase (B12).
@@ -62,16 +71,23 @@ def _fake_proactive(prompt: str, grammar: str) -> str:
     aliases = _ALIAS_ENUM_RE.findall(grammar)
     labels = dict(_PROMPT_FACT_RE.findall(prompt))
     present = [a for a in aliases if a in labels]
-    if len(present) >= 2:
+    offered = _offered_templates(grammar)
+    relational = [k for k in offered if k in _RELATIONAL_KEYS]
+    single = [k for k in offered if k not in _RELATIONAL_KEYS]
+    if len(present) >= 2 and relational:
         return (
             f'{{"subject": "{present[0]}", "object": "{present[1]}", '
-            f'"query_template": "how_does_x_affect_y"}}'
+            f'"query_template": "{relational[0]}"}}'
         )
-    if len(present) == 1:
-        return (
-            f'{{"subject": "{present[0]}", "object": null, "query_template": "what_changed_in_x"}}'
-        )
-    return '{"subject": "n1", "object": null, "query_template": "what_changed_in_x"}'
+    key = single[0] if single else (offered[0] if offered else "what_changed_in_x")
+    subject = present[0] if present else "n1"
+    return f'{{"subject": "{subject}", "object": null, "query_template": "{key}"}}'
+
+
+def _offered_templates(grammar: str) -> list[str]:
+    """The `query_template` keys this grammar allows, in branch order."""
+    m = _TEMPLATE_ENUM_RE.search(grammar)
+    return _TEMPLATE_KEY_RE.findall(m.group(1)) if m else []
 
 
 @runtime_checkable
