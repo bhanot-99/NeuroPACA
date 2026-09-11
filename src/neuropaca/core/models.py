@@ -65,8 +65,9 @@ class Node:
     surfaced_at: datetime | None = None
     # B13-B3 · durable resource attributes for `app:<id>` nodes (schema v3, D-19).
     # Written by a pattern's `NodeSpec.attributes` when the concurrent `process`
-    # census has a matching row. `first_seen_at` is write-once (like
-    # `created_at`); the others refresh on every sighting. Deliberately NOT fed
+    # census has a matching row. `first_seen_at` only ever moves earlier and
+    # `last_seen_at` only later (V-10: a focus event is a sighting too, not just
+    # the census); the reading refreshes on every census row. Deliberately NOT fed
     # into `relevance_score` — see B13 §7: importance tracks behavioural
     # salience, not memory footprint.
     #

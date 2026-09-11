@@ -296,6 +296,35 @@ class GraphMemory:
         async with self._lock:
             return self._add_edge_unsafe(source_id, target_id, relation, weight)
 
+    async def mark_seen(self, node_id: str, when: datetime) -> bool:
+        """V-10 · record one sighting of an existing node: `first_seen_at` moves
+        only earlier, `last_seen_at` only later. Returns whether either moved.
+
+        Deliberately NOT an access: no `_touch_unsafe`, so `activity`,
+        `access_count` and `last_accessed` — and through them `relevance_score`
+        (V-2) — are exactly what they were. "When did I last see this" and "how
+        much does this matter" are different questions, and V-10 must not change
+        the answer to the second. A missing node is a no-op, never a create: a
+        sighting of something the graph does not hold is not this layer's call.
+        One `_lock` cycle.
+        """
+        async with self._lock:
+            if node_id not in self._graph:
+                return False
+            data = self._graph.nodes[node_id]
+            moved = False
+            first = _as_dt_opt(data.get("first_seen_at"))
+            if first is None or when < first:
+                data["first_seen_at"] = when
+                moved = True
+            last = _as_dt_opt(data.get("last_seen_at"))
+            if last is None or when > last:
+                data["last_seen_at"] = when
+                moved = True
+            if moved:
+                self._dirty = True
+            return moved
+
     async def update_node(self, node_id: str, attributes: dict[str, Any]) -> None:
         async with self._lock:
             self._update_node_unsafe(node_id, attributes)
@@ -1380,10 +1409,16 @@ class GraphMemory:
         for key, value in attributes.items():
             if key not in self._UPSERT_PROTECTED:
                 data[key] = _as_dt_opt(value) if key in self._UPSERT_DT_OPT_KEYS else value
-        # A first census sighting still sets `first_seen_at` once, even though the
-        # key is protected against later overwrites.
-        if data.get("first_seen_at") is None and attributes.get("first_seen_at") is not None:
-            data["first_seen_at"] = _as_dt_opt(attributes["first_seen_at"])
+        # `first_seen_at` is protected from being overwritten by a LATER time, but
+        # an EARLIER one still wins (V-10). Write-once was right while the census
+        # was the only writer; now a focus event can stamp a node before the
+        # census has run, and the census then reports the process's real — and
+        # earlier — start time, which write-once would throw away. Earliest-wins
+        # is the rule `_merge_nodes_unsafe` already used.
+        offered = _as_dt_opt(attributes.get("first_seen_at"))
+        current = _as_dt_opt(data.get("first_seen_at"))
+        if offered is not None and (current is None or offered < current):
+            data["first_seen_at"] = offered
         self._touch_unsafe(data)
         self._dirty = True
         return self._node_from_attrs(node_id, data)
