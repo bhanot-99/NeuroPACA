@@ -93,6 +93,10 @@ _ACTIVITY_HALF_LIFE_DAYS = 7.0
 _W_ACTIVITY, _W_STRENGTH, _W_BRIDGE = 6.0, 2.0, 2.0
 _STRUCTURAL_EDGE_STRENGTH = 0.1
 _BRIDGE_MIN_WEIGHT = 0.1  # ~ one full-credit co-use at the default hebbian_delta
+# V-6 · how many never-yet-linked node ids the link ledger remembers. Generous:
+# nodes are minted by focus switches and probes, not in bursts. Past it the
+# oldest entry is evicted and the DMN's whole-graph sweep catches it instead.
+_UNLINKED_LEDGER_CAP = 512
 _DERIVED_PREFIXES: tuple[str, ...] = (*_FACT_PREFIXES, "action:")
 # `labels.py` is stdlib-only (the graph window loads it by path), so the
 # kind -> NodeType half of the table lives here.
@@ -187,6 +191,12 @@ class GraphMemory:
         self._dirty = False
         self._last_save: datetime | None = None
         self._ref_name = ref_namer(self._lookup)  # B18 · names refs inside labels
+        # V-6 · ids of nodes created in this process that have never had an
+        # edge. `_add_edge_unsafe` discharges an id the moment one lands, so
+        # what survives a scheduler tick is a real orphan — and linking it costs
+        # O(pending) instead of the O(N) degree scan a whole-graph sweep needs.
+        # A dict, not a set: insertion order is the eviction order at the cap.
+        self._unlinked: dict[str, None] = {}
 
     # ------------------------------------------------------------------ singleton
     @classmethod
@@ -701,6 +711,39 @@ class GraphMemory:
             return False
         return int(self._graph.degree(hub_id)) == 0
 
+    async def link_new_orphans(self) -> int:
+        """V-6 · link the nodes minted since the last pass that still have no
+        edge. The prompt half of `link_orphan_nodes`.
+
+        `link_orphan_nodes` only ever ran inside a DMN reminiscence cycle, so a
+        node created after the last idle spell floated unreachable — invisible
+        to `find_related` from anything — until the CPU next went quiet, which
+        on a machine in continuous use is hours, and a restart in between did
+        not help either. In the live graph that was `app:cosmic-settings`: score
+        0.0, degree 0, focused at 16:40 and still unreachable that evening. An
+        unmapped app the correlator mints on focus (V-1) is the common case —
+        it has no `part_of domain:` edge and no co-active peer to wire to.
+
+        This runs on the scheduler tick instead, and touches only the ledger
+        `_add_node_unsafe` fills and `_add_edge_unsafe` discharges — O(pending),
+        no degree scan of the graph, so it is cheap enough to run every few
+        minutes. The whole-graph sweep stays as the periodic backstop for
+        anything evicted at the cap or orphaned on disk before a restart.
+
+        One `_lock` cycle per link with a yield between (rules.md §3). Returns
+        links made.
+        """
+        async with self._lock:
+            pending, self._unlinked = list(self._unlinked), {}
+        linked = 0
+        for node_id in pending:
+            async with self._lock:
+                if self._is_orphan_unsafe(node_id):
+                    self._add_edge_unsafe(node_id, "YOU", RelationType.RELATED_TO, 0.0)
+                    linked += 1
+            await asyncio.sleep(0)
+        return linked
+
     async def prune_stale_nodes(self, ttl: timedelta) -> int:
         """Drop a non-hub node when its `relevance_score` has decayed to ~0, or
         it has aged past `ttl` (D-13). An `INSIGHT` / `IDLE_THOUGHT` node past
@@ -1063,7 +1106,18 @@ class GraphMemory:
         )
         self._graph.add_node(node_id, **self._node_to_attrs(node))
         self._dirty = True
+        if node_id not in HUB_NODE_IDS:
+            self._note_unlinked_unsafe(node_id)
         return node
+
+    def _note_unlinked_unsafe(self, node_id: str) -> None:
+        """V-6 · put a brand-new node on the link ledger. Bounded: past the cap
+        the oldest entry is dropped rather than the ledger growing without
+        limit, and the DMN's whole-graph `link_orphan_nodes` is still the
+        backstop that catches anything evicted."""
+        self._unlinked[node_id] = None
+        while len(self._unlinked) > _UNLINKED_LEDGER_CAP:
+            self._unlinked.pop(next(iter(self._unlinked)))
 
     # ------------------------------------------------------------ B18 · facts
     def _lookup(self, ref: str) -> tuple[str, LabelSpec | None] | None:
@@ -1217,6 +1271,8 @@ class GraphMemory:
             created_at=edge.created_at,
         )
         self._dirty = True
+        self._unlinked.pop(source_id, None)  # V-6 · both ends are reachable now
+        self._unlinked.pop(target_id, None)
         return edge
 
     def _related_between_unsafe(self, a: str, b: str) -> bool:
@@ -1315,6 +1371,7 @@ class GraphMemory:
         if node_id in self._graph:
             self._graph.remove_node(node_id)
             self._dirty = True
+        self._unlinked.pop(node_id, None)  # V-6 · never link a dead id
 
     def _prune_unsafe(self, older_than: timedelta, min_importance: float) -> int:
         now = _utcnow()
