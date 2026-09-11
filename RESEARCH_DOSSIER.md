@@ -5,10 +5,10 @@
 | | |
 | --- | --- |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
-| **Version** | v9 |
+| **Version** | v10 |
 | **Dossier date** | 2026-09-11 |
-| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. V-2 (`da78779`, 2026-09-11) rebuilds `relevance_score` — a decaying activity counter (schema **v6**), learned association strength, real cross-domain bridges — so the score spans 0.69–10 instead of 2.98–9 (§21.9). V-3 (`f79f42b`) removes accumulated cruft: stale `→ YOU` placeholders released (18 → 10), the daemon's own processes purged after a config override was found disabling the exclude list, subject-less probes reaped (§21.10). All three run on the live daemon; `main` pushed to GitHub. |
-| **Code size** | 15,028 lines of source · 14,761 lines of tests · 743 collected tests (719 default) · 139 commits · 17 merged PRs |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. V-2 (`da78779`, 2026-09-11) rebuilds `relevance_score` — a decaying activity counter (schema **v6**), learned association strength, real cross-domain bridges — so the score spans 0.69–10 instead of 2.98–9 (§21.9). V-3 (`f79f42b`) removes accumulated cruft: stale `→ YOU` placeholders released (18 → 10), the daemon's own processes purged after a config override was found disabling the exclude list, subject-less probes reaped (§21.10). All three run on the live daemon; `main` pushed to GitHub. v10 adds **V-4 … V-7** (`fix-v4-v7-graph-hygiene`, 2026-09-11, §21.11) — four graph-hygiene defects fixed as one analyse → fix → test → measure cycle: the idle-thought engine no longer circles one clique (seed reach 5 → 24), dead `domain:` hubs are reaped and rebuilt on demand (70 → 65 nodes, 0 edges lost), a new node is linked on the next scheduler tick instead of the next idle spell (23.839 → 0.008 ms, the measurement that chose the design), and a thought now records the question it actually asked (`LabelSpec.text`, schema **v7**, 0 node ids changed). The live graph is still v6 on disk and migrates on the next daemon start. |
+| **Code size** | 15,366 lines of source · 15,668 lines of tests · 800 collected tests (776 default) · 144 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
 | **Research goal** | A publishable paper — the benchmarks *and* the rejected alternatives are deliverables. |
@@ -626,6 +626,10 @@ flowchart LR
 | **V-1** | T7's learning stayed inside a **6-node clique**: 11 of 84 edges weighted, all among 6 nodes; unmapped apps never took part, every switch re-wired all recent pairs, decay ticked per CPU-idle spell, `PART_OF` edges collected weight | Star-shaped `wire_coactivation` with time-proximity credit; saturating `w += rate·(1 − w)`; decay by uptime half-life (72 h); `PART_OF` pairs skipped and healed; unmapped focused apps join; a 30 s per-pair refractory. Simulation: 6 → 8 apps, weight range 0.03–0.26 → 0.02–0.98; storm loop lag held at `main`'s level; 719 tests (§21.8) |
 | **V-2** | `relevance_score` barely discriminated: 70 nodes in 2.98–9.0 (median 3.38), a cliff after the two busiest apps, generated probes outranking real tools (8 of 29 apps). Causes: a flat ~3-point recency floor, frequency saturating at 100 accesses, plain degree counting bookkeeping edges, `bridge` meaning "is in `app_map`", a never-decaying `access_count` | `6·activity + 2·strength + 2·bridge`: a decaying access counter (`Node.activity`, schema v6), learned association strength with hub and provenance edges excluded, bridge through associations; two-pass chunked recalc with one cached adjacency walk per node. Live graph 0.69–10.0 (median 1.34); 10k recalc 83 ms (`main` 59 ms; a first cut was 388 ms); retention unchanged; 724 tests (§21.9) |
 | **V-3** | Cruft: `YOU` wired to 18 nodes, 3 of them no longer orphans; the daemon's own processes (`neuropacad`, `python3`, `cosmic-comp`, …) living as apps; probes about deleted apps lingering; a "dedup every restart" report | `release_you_links()` (boot + idle sweep); the root cause of the exclude-list failure was **config** — every shipped TOML set `process_exclude_names = []` — fixed, plus a boot purge of excluded names; L8 reaps a probe once its subject is gone (14 d TTL kept by ruling); the dedup report proved to be one pre-B17 migration line. Live: 71 → 66 nodes, `YOU` 18 → 10; 740 tests (§21.10) |
+| **V-4** | The idle-thought engine was an **echo chamber**: `dmn_top_k` was both the prompt size and the candidate pool, so imagination drew from the same argmax five nodes forever; all 8 stored thoughts were one facet. Once every pair in that five had been asked, `upsert_fact` deduped everything and imagination went silent *while still spending its inference budget* | Weighted sampling of `dmn_top_k` seeds from a `dmn_candidate_pool_k` pool (Efraimidis–Spirakis), a bounded refractory penalty on recent seeds, and a rotating relational + single-subject template pair per inference. Live graph: seed reach **5 → 24** with the leaders still leading; +55 µs per idle cycle; one ranked read and the same inference budget, both test-pinned (§21.11) |
+| **V-5** | Five `domain:` hubs at degree 0 — dead weight in every graph view and an empty branch in `find_related`. Two different causes: `comms`/`projects`/`meetings` are mapped but their apps were never opened; `system`/`mental_models` have **no entry in either map file** | `prune_dead_hubs()` last in the idle sweep; `_add_edge_unsafe` materialises a hub again the instant something routes to it, identical to the seeded one. `YOU` never reaped. Live graph 70 → 65 nodes, **0 edges lost**, 0.08 ms; steady state 0.01 ms (§21.11) |
+| **V-6** | A node minted after the last idle spell floated **unreachable until the CPU next went quiet** — `link_orphan_nodes` ran from exactly one place, the DMN sweep. Measuring it explained why: an O(N) degree walk, **23.8 ms of event-loop block at 10k nodes**, too expensive to put on a timer | A bounded FIFO ledger of never-yet-linked ids, discharged by the first edge; `link_new_orphans()` is O(pending) with no graph walk and runs on the scheduler tick before the save. **23.839 → 0.008 ms.** The whole-graph sweep stays as the backstop, plus one boot sweep for nodes orphaned on disk (§21.11) |
+| **V-7** | B18's "labels are rendered, never stored" bought rename-healing but left a thought's words as a template id only — no record of what was actually asked, and nowhere for a payload the closed facet vocabulary cannot express (the briefing needs one) | `LabelSpec.text`: out of the fingerprint (**0 ids change, nothing to migrate**), out of the rendered label (rename-healing intact), and out of an existing record's rewrite (a later `value` wins, the *first* text stands). Capped at 512 chars, absent when unset. Schema **v6 → v7** (§21.11) |
 | **B18** | Generated labels were frozen text: stale after renames, duplicated after restarts, drawn as lookalikes, and copied into each other | Every generated node stores a `LabelSpec` (what it is about, by id); one renderer; the node id is the fact fingerprint (schema v5); graph-backed repeat gate replaces the in-memory Jaccard buffer. Real graph 89 → 60 nodes live; 699 tests green |
 
 ---
@@ -1243,6 +1247,10 @@ for this one sensor took five tries.
 | **V-1** | T7's learning was confined to a **6-node clique** — 11 of 84 live edges weighted (0.01–0.37), all among `{brave, cosmic-term, cosmic-files, obsidian, google-gemini, youtube}`; every other edge `0.0`. | 🟢 **Diagnosed + fixed 2026-09-10** (full chapter: §21.8; merged `c6ca7ea`, daemon restarted on it). Five causes: unmapped focused apps never co-activated; every switch re-wired *all* pairs in the window (a clique by construction); decay was a fixed factor per CPU-idle spell, so a pair used once was pruned within ~9 idle spells; `wire_cooccurrence` bumped structural `PART_OF` edges (never decayed); additive, unbounded weights. Fix: star-shaped `wire_coactivation` with time-proximity credit; saturating update; uptime half-life; `PART_OF` skipped + healed; unmapped apps join (`focus_exclude_app_ids` drops dialogs); 30 s per-pair refractory. Closes on a soak showing the mesh reach beyond the old 6 apps with a spread of weights. |
 | **V-2** | `relevance_score` squeezed the live graph into 2.98–9.0 (median 3.38), with generated `ephemeral:` probes (3.15–3.37) outranking real tools (`cosmic-comp` 3.20, `pytest` ~3.4). The score drives retention, idle replay and retrieval ranking (§3.2), so a flat score makes all three arbitrary. | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.9; merged `da78779`, live since 00:18 IST). Five causes: recency ×3 with a 7-day half-life was a flat floor (every node touched this week); `min(1, access_count/100)` saturated only the two busiest apps; plain degree counted bookkeeping and `→ YOU` edges; `bridge` counted only direct domain edges, of which an app has one; `access_count` never decays. Fix: `6·activity + 2·strength + 2·bridge` with a decaying counter (schema v6), association strength, bridges through associations. Remaining: generated notes still rank second in a label search; the 6/2/2 weights and 7-day half-life await the §18 ablation. |
 | **V-3** | Cruft accumulating: `YOU` degree 18; the daemon's own processes as `app:` nodes; probes outliving their subject; a reported "12 duplicates merged every restart". | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.10; merged `f79f42b`, live since 00:51 IST). `link_orphan_nodes` placeholders were never taken back → `release_you_links()` at boot and in the idle sweep; the exclude list was disabled by `process_exclude_names = []` in all three shipped TOMLs → overrides removed + boot purge; a probe about a deleted app lost its edge and lingered → L8 reaps it (14 d TTL kept by ruling); the duplicate report was one B18-migration log line on pre-B17 data → regression test only. Remaining: 10 genuine orphans still on `YOU` (apps never focused); D-13's 48 h prune of untouched leaf nodes is by ruling and unchanged. |
+| **V-4** | The DMN's imagination was seeded from the argmax `dmn_top_k` nodes — a set that never moves — so every idle thought circled one clique, in one facet, and stopped producing anything new once that clique was exhausted. | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.11). The pool was the sample; a grammar offering all four templates let a 2B4T model copy the few-shot. Fix: score-weighted sampling from a wider pool, a refractory penalty, a rotating template pair. Seed reach 5 → 24 on the live graph. Remaining: the draw is no longer reproducible run-to-run (unseeded RNG, injectable for tests) and the rotation is a fixed 4-step cycle, not adaptive. |
+| **V-5** | Five of ten `domain:` hubs sat at degree 0 — clutter in every graph view, an empty branch in `find_related`. | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.11). The five were dead for *two* reasons — three routable but unused, two unroutable because no map entry names them — which is why the fix reaps and rebuilds on demand instead of editing `DOMAIN_SLUGS`. 70 → 65 nodes, 0 edges lost. Remaining: nothing; a hub returns on its first edge. |
+| **V-6** | A node created between idle spells stayed unreachable for hours; `link_orphan_nodes` ran only in the DMN sweep. | 🟢 **Diagnosed + fixed 2026-09-11** (full chapter: §21.11). The sweep is an O(N) walk — 23.8 ms at 10k — so it could not simply be moved to a timer; a bounded ledger of never-linked ids makes the pass O(pending) at 0.008 ms. Remaining: the boot tidy now carries one whole-graph sweep (~24 ms at 10k, once per start). |
+| **V-7** | An idle thought stored a template id, not its question; no generated node could carry free text. | 🟢 **Fixed 2026-09-11** (full chapter: §21.11). `LabelSpec.text` — identity-free, so no id changed and there was nothing to migrate; the label still renders and still heals on a rename, while the text records what was asked. Schema v7. Remaining: the live graph is still v6 on disk and migrates on the next daemon start; the briefing that consumes this payload is S0. |
 
 ### 16.2 Methodological limitations — stated, not hidden
 
@@ -3960,6 +3968,270 @@ legend's node-type counts (`app 18`, `concept 18`), not `YOU`'s degree.
 - **`neuropaca.soak.toml`'s round-1 raw-census intent** (D-19(c)) is
   superseded: the soak now runs with the D-20 exclusions like everything else.
 
+### 21.11 V-4 … V-7 · Four graph-hygiene defects, fixed as one cycle
+
+| | |
+| --- | --- |
+| **Branch** | `fix-v4-v7-graph-hygiene` (off `main` after V-3 and its dossier chapter) |
+| **Found** | 2026-09-10, whole-graph review against the secretary vision (`VISION.md`, defects **V-4** *medium*, **V-5** *small*, **V-6** *small*, **V-7** *small, by design, but a gap*) |
+| **Method** | One issue at a time, each analysed → fixed → tested → measured against a copy of the live graph before the next was started. Four commits, one per defect. |
+| **Outcome** | Full suite (`-m ""`) **797 passed**, 3 skipped; ruff + format + mypy clean. 57 new tests. Schema **v6 → v7**. |
+
+**In plain words.** Four smaller faults, all in how the graph keeps itself tidy.
+(1) The daydreaming part of the system kept thinking about the same five apps
+forever, so after a while it stopped producing anything new at all. (2) Five of
+the ten topic folders were empty and stayed empty, cluttering every view.
+(3) A brand-new app stayed disconnected from everything until the next time you
+walked away from the machine — which can be hours. (4) When the system asked
+itself a question, it saved only a template number, not the question, so there
+was no record of what it had actually wondered.
+
+#### Step 1 · What we saw
+
+Live graph, 2026-09-11 (70 nodes, 115 edges):
+
+```
+V-4  8 idle thoughts, all facet how_does_x_affect_y, all pairs drawn from
+     {brave, cosmic-term, cosmic-files, obsidian, gemini}
+V-5  degree-0 hubs: comms, meetings, mental_models, projects, system   (5 of 10)
+V-6  link_orphan_nodes() is called from exactly one place — DMN reminiscence
+V-7  every idle:/insight: node — spec.value null, question text nowhere on disk
+```
+
+#### Step 2 · Why it happened
+
+- **V-4 · the pool *was* the sample.** `dmn_top_k` served as both the number of
+  facts put in the prompt and the size of the candidate set they were drawn
+  from, and `top_nodes_by_score` is a deterministic argmax. So the candidate set
+  was the same five nodes on every cycle for the life of the graph; the
+  per-cycle `rotation` only reordered them. A second, quieter cost follows from
+  B18: a thought is a fact keyed by fingerprint, so once every
+  subject/object/template combination within a frozen five had been asked,
+  `upsert_fact` returned `created=False` for everything and imagination went
+  **permanently silent while still spending its inference budget each cycle**.
+  The monotone facet had a separate cause: all four template keys were offered
+  in every grammar, and a 2B4T model under a grammar copies the few-shot's
+  answer — which used `how_does_x_affect_y`.
+- **V-5 · two different kinds of dead.** Checking the shipped map files split
+  the five cleanly. `comms` (9 mappings), `projects` (7) and `meetings` (4) are
+  routable and were empty only because those apps had not been opened yet.
+  `system` and `mental_models` have **zero entries in either map file**, so
+  nothing could ever reach them — dead by construction. VISION.md listed all
+  five together; they are not the same defect, and the distinction is what
+  decides the fix.
+- **V-6 · the sweep was in the wrong place, and it had to be.**
+  `link_orphan_nodes()` runs only inside a DMN reminiscence cycle, so a node
+  minted after the last idle spell floats unreachable until the CPU next goes
+  quiet — hours on a machine in continuous use, and a restart in between did not
+  help either (the boot tidy released `→ YOU` placeholders but never made any).
+  The common case is V-1's own addition: an app the correlator mints on focus
+  when `app_map` has no domain for it has no `part_of` edge and, absent a
+  co-active peer, no association edge. Measuring the sweep explained the
+  placement — it is an O(N) degree walk, **23.8 ms of unbroken event-loop block
+  on the 10k fixture**. It was hiding in the idle cycle because it is too
+  expensive to put on a timer.
+- **V-7 · B18 left no room for it.** "Labels are rendered, never stored" buys
+  rename-healing: change an app's name and every label mentioning it heals at
+  once. But it means a thought's words exist only as a template id resolved
+  against *current* names, so there is no record of what was asked at the time,
+  and no place for any payload the closed four-template vocabulary cannot
+  express — which the briefing (S0) needs.
+
+**Root cause, in one sentence:** three of the four are the same shape as V-3's —
+a rule for adding structure with no matching rule for refreshing it (the seed
+set, the hubs, the orphan links all set once and never revisited) — and the
+fourth is a deliberate B18 trade whose cost had not yet been paid back.
+
+**Why the tests never caught them:** V-4's tests asserted a cycle produces *a*
+thought, never that two cycles produce *different* ones; V-5 and V-6 had no
+test because neither is a failure, only a state that never improves; V-7 was
+working as designed.
+
+#### Step 3 · How we fixed it — the approach
+
+- **A · Sample the seeds, don't take the argmax** (V-4). New
+  `dmn_candidate_pool_k` (default 24) widens the ranked read; `dmn_top_k` seeds
+  are drawn from that pool by weighted sampling without replacement
+  (Efraimidis–Spirakis: one key `u^(1/w)` per item, take the k largest — one
+  O(pool) pass), weight = `relevance_score` under a floor so an unscored node is
+  reachable rather than impossible. `dmn_candidate_pool_k == dmn_top_k` is the
+  documented escape hatch back to fixed argmax seeding.
+- **B · A refractory penalty, not an exclusion** (V-4). A bounded deque of the
+  last `dmn_top_k × dmn_seed_refractory_cycles` seed ids; a listed node keeps
+  0.2 of its weight. The apps you live in still dominate — they just stop
+  crowding everything else out. The draw is recorded *before* the inferences, so
+  a cycle cancelled mid-imagination by `ACTIVITY_DETECTED` still moves on rather
+  than redrawing the set it was interrupted on.
+- **C · Rotate the menu, keep the choice** (V-4). `template_rotation(step)`
+  narrows the grammar's `query_template` enum per inference to a rotating pair —
+  always one relational and one single-subject key, so no step can force an
+  abstain — and the step carries across cycles. Pure string work before the
+  lock; no extra tokens, no extra call. `FakeInferenceBackend` now reads the
+  offered keys out of the grammar it was handed, so the fake cannot answer with
+  something the real sampler could not emit.
+- **D · Reap dead hubs, materialise on demand** (V-5).
+  `GraphMemory.prune_dead_hubs()` drops a `domain:` hub at degree 0 and runs
+  **last** in the reminiscence sweep, after prunes and links have settled the
+  edges. `_add_edge_unsafe` materialises a hub through the same
+  `_seed_hub_unsafe` the fresh-graph seed uses, so a reaped hub returns
+  identical — and is never the attribute-less node networkx would otherwise
+  create for an unknown edge endpoint. `YOU` is never reaped: it is the anchor
+  `link_orphan_nodes` attaches true orphans to. A fresh graph still seeds all
+  11, so a first run stays self-describing and `doctor`'s "seeds 11 hubs" line
+  stays true; the first idle cycle then trims it to what you use.
+- **E · A ledger, not a faster scan** (V-6). `_add_node_unsafe` records a new
+  node's id in a bounded FIFO (`_unlinked`, cap 512); `_add_edge_unsafe`
+  discharges both endpoints the moment an edge lands. What survives is a real
+  orphan, so `link_new_orphans()` is **O(pending) with no graph walk at all**.
+  The scheduler drains it each tick, *before* the save, so a link made this tick
+  is persisted with it. The whole-graph sweep stays as the periodic backstop for
+  anything evicted at the cap, and the orchestrator boot tidy now runs it once
+  for nodes orphaned on disk before a restart — the one case a
+  this-process ledger cannot know about.
+- **F · An identity-free text payload** (V-7). `LabelSpec.text`, kept out of
+  three places on purpose: out of the **fingerprint** (so the same question in
+  different words is one question — and, practically, no id changes and there is
+  nothing to migrate); out of the **rendered label** (B18's rename-healing
+  intact); and out of an existing record's **rewrite** (a later `value` still
+  wins, because pressure and confidence are live numbers, but the *first* text
+  stands, because re-asking must not rewrite when it was first asked).
+  Whitespace-collapsed, blank → `None`, clipped to `TEXT_MAX` = 512, and a spec
+  with no text writes no key at all. The DMN stores each question as it read at
+  the instant of asking.
+
+#### Step 4 · What was built
+
+| Area | Before | After |
+| --- | --- | --- |
+| Imagination seeds | argmax `dmn_top_k`, fixed for the life of the graph | weighted sample of `dmn_top_k` from a `dmn_candidate_pool_k` pool, recent seeds penalised |
+| Question template | all 4 offered every call → one facet in practice | a rotating relational + single-subject pair per inference |
+| Dead `domain:` hub | seeded once, kept forever | reaped at degree 0; materialised again by the first edge that routes to it |
+| New node with no edge | unreachable until the next idle spell | linked on the next scheduler tick, O(pending) |
+| Orphans carried in from disk | waited for an idle spell | one whole-graph sweep in the boot tidy |
+| A thought's words | a template id only | `spec.text` — the question as asked, identity-free, capped at 512 chars |
+
+```
+EDIT  src/neuropaca/core/config.py            dmn_candidate_pool_k, dmn_seed_refractory_cycles + validation
+EDIT  src/neuropaca/idle/dmn.py               _seed_nodes/_seed_weight; template step; _question_text; hub reap in the sweep
+EDIT  src/neuropaca/learning/prompts.py       template_rotation(); build_proactive_grammar(aliases, templates)
+EDIT  src/neuropaca/core/inference.py         fake obeys the grammar's template enum
+EDIT  src/neuropaca/core/graph_memory.py      prune_dead_hubs; _seed_hub_unsafe; _unlinked ledger; link_new_orphans; first-text-wins; schema v7
+EDIT  src/neuropaca/core/labels.py            LabelSpec.text, TEXT_MAX, _clean_text; text excluded from fingerprint
+EDIT  src/neuropaca/orchestration/scheduler.py   tick drains the link ledger before the save
+EDIT  src/neuropaca/orchestration/orchestrator.py boot tidy sweeps orphans carried in from disk
+NEW   tests/test_v4_dmn_diversity.py          15 tests
+NEW   tests/test_v5_dead_hubs.py              12 tests
+NEW   tests/test_v6_orphan_linking.py         12 tests
+NEW   tests/test_v7_thought_text.py           18 tests
+EDIT  tests/test_idle.py                      cancelled-cycle invariant narrowed to what it meant
+EDIT  tests/test_b13_resource_aware.py, test_labels.py, test_graph_memory.py   schema v6 → v7
+```
+
+#### Step 5 · How we proved it
+
+**Tests.** Full suite `pytest -m ""` **797 passed**, 3 skipped (57 new); ruff,
+format, mypy clean. Three of the new tests are cost assertions rather than
+behaviour assertions — they exist because every fix here had to be free:
+
+- a cycle still performs **exactly one** ranked graph read, of the pool, and at
+  most `dmn_max_inferences_per_cycle` model calls (V-4);
+- `link_new_orphans` makes **exactly one** `degree` lookup for one pending id —
+  it does not scan (V-6);
+- the refractory deque never exceeds `dmn_top_k × dmn_seed_refractory_cycles`.
+
+**V-4, on a copy of the live graph, 200 cycles, old rule vs new:**
+
+| | argmax top-5 (`main`) | sample of 24 |
+| --- | --- | --- |
+| Distinct nodes reachable as a seed | **5** | **24** |
+| Draw distribution (top 6 of 1000 slots) | brave/cosmic-term/cosmic-files/obsidian/code — 200 each | cosmic-files 80, brave 77, cosmic-term 71, github 63, chrome 56, obsidian 54 |
+| Cost per draw | 0.039 ms | 0.094 ms |
+
+The distribution is the part worth reading: the widened pool did **not** flatten
+into a uniform shuffle — the apps actually in use still lead by a wide margin,
+and the 55 µs is paid once per idle cycle.
+
+**V-5, on a copy of the live graph:**
+
+```
+before : 70 nodes, 115 edges, 10 domain hubs
+reaped : 5 hubs in 0.08 ms  -> comms, meetings, mental_models, projects, system
+after  : 65 nodes, 115 edges          <- edges lost: 0 (degree-0 only, by construction)
+surviving: engineering, habits, learning, research, tools
+one Slack edge -> domain:comms returns as "Comms", NodeType.CONCEPT
+steady-state sweep: 0 dropped in 0.01 ms   (the per-idle-cycle cost)
+```
+
+**V-6 — the measurement that chose the design.** The 10k fixture (10 011 nodes,
+25 000 edges):
+
+| Pass | Cost |
+| --- | --- |
+| Whole-graph `link_orphan_nodes()` — what running the old sweep on a timer would have cost | **23.839 ms** |
+| `link_new_orphans()`, nothing pending (the new per-tick cost) | **0.008 ms** |
+| `link_new_orphans()`, 50 nodes to link | 0.387 ms |
+
+On the live graph a newly minted unmapped app goes from unreachable-until-idle
+to linked in 0.077 ms.
+
+**V-7, migrating a copy of the live graph v6 → v7:**
+
+```
+before : schema v6, 70 nodes, 47.9 KiB, 32 generated nodes
+after  : schema v7, 70 nodes, 47.9 KiB
+ids changed : 0        <- text is not a fingerprint input
+nodes carrying a text key after migration : 0   (v6 data has none)
+cost of a full set of stored questions : ~1.25 KiB real, 16.0 KiB ceiling at the cap
+```
+
+A rename test pins the two halves apart: after a node is renamed the thought's
+**label** heals to the new name while its **text** still reads as it was asked.
+
+#### Step 6 · What we rejected
+
+| # | Alternative | Why rejected |
+| --- | --- | --- |
+| 6.1 | Just raise `dmn_top_k` to 20 (V-4) | puts 20 facts in every prompt — more tokens per inference — and the set is still fixed; it delays exhaustion instead of removing it |
+| 6.2 | Seed uniformly at random from the whole graph (V-4) | throws away the relevance signal entirely; imagination about noise is worse than imagination about a clique |
+| 6.3 | Query the graph for already-asked pairs and exclude them (V-4) | an O(thoughts) lookup per candidate pair per cycle, and it still only delays exhaustion of a frozen pool |
+| 6.4 | Let the model write the question freely (V-4) | violates §7's *extractive before generative*, and is what `problems.md` 1.13 already ruled out for 2B4T |
+| 6.5 | Force one template key per inference (V-4) | removes the model's choice altogether; a rotating **pair** moves the menu while the selection stays the model's |
+| 6.6 | Delete `system` / `mental_models` from `DOMAIN_SLUGS` (V-5) | the slugs are the validation vocabulary a user's own map file is checked against; unroutable today is not invalid |
+| 6.7 | Never seed the hubs; create them lazily only (V-5) | would not catch a hub that goes dead *later* (last app uninstalled), and "a first run seeds 11 hubs" is load-bearing in `doctor`, the orchestrator's boot message and three tests |
+| 6.8 | Leave the dead hubs — they are harmless (V-5) | VISION rates them dead weight in every graph view and an empty branch in `find_related`; the cost of reaping is 0.01 ms |
+| 6.9 | Reap hubs inside `prune_stale_nodes` (V-5) | that function deliberately spares hubs; two rules fighting over one knob is exactly what D-16(f) rejected |
+| 6.10 | Run `link_orphan_nodes()` on the scheduler tick (V-6) | **measured: 23.8 ms of event-loop block at 10k nodes.** This is the alternative the ledger exists to avoid |
+| 6.11 | Give every node a `→ YOU` edge at creation (V-6) | re-creates precisely the hub-and-spoke tangle V-3a removed, and makes `release_you_links` do more work every sweep |
+| 6.12 | Link orphans lazily inside `find_related` (V-6) | a read path that mutates; it hides the state rather than fixing it |
+| 6.13 | Make the whole-graph sweep incremental with a cursor (V-6) | more persistent state, still O(N) amortised, and strictly more expensive than a ledger that already knows the answer |
+| 6.14 | Store the rendered text as the label and stop rendering (V-7) | abandons B18's rename-healing — the property the whole labelling rework was for |
+| 6.15 | Put `text` in the fingerprint (V-7) | every generated id changes (a real migration), and the same question in different words becomes two open questions |
+| 6.16 | Keep question text in a side table (V-7) | a second index to lose or corrupt — the same argument `fact_id` was derived for |
+| 6.17 | Overwrite `text` on every re-ask (V-7) | destroys the one thing it is for: what was actually asked, the first time |
+
+#### Step 7 · What is left
+
+- **V-8 … V-12 remain open** — flat insight citations, zeroed `ram_mb` /
+  `cpu_percent`, missing provenance timestamps, the Wayland sensor still taking
+  the orchestrator down, and no action ever reaching the user. The last two are
+  the ones that block the secretary behaviour, so "4 of 12" understates what is
+  left in terms of risk.
+- **Idle thoughts are no longer reproducible run to run.** The seed draw uses an
+  unseeded `random.Random`; the `rng` is injectable and tests pin it, but a
+  production run cannot be replayed. This is a real trade against B18's
+  reproducibility argument, taken knowingly — a fixed set that never moves is
+  perfectly reproducible and useless. If the S6 evaluation needs replay, the
+  seed should come from config.
+- **The boot tidy now carries one whole-graph orphan sweep** — ~24 ms at 10k
+  nodes, once per start. Acceptable at boot, where the identity pass already
+  scans, but it is a real addition and it is the one place the 23.8 ms number
+  is still paid.
+- **The template rotation is a fixed 4-step cycle**, not adaptive. It spreads
+  the vocabulary; it does not choose the *useful* facet for a given pair.
+- **The live graph is still v6 on disk.** V-7's bump migrates it on the next
+  daemon start; ids are unchanged, so the migration is a no-op beyond the
+  version field.
+
 ---
 
 ## Appendix A — decision log index
@@ -4046,16 +4318,20 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | Toplevel-proxy lifetime probe | `--leak`: every proxy finalised < 1 s, `fd-readable ×0` after · `--hold`: continuous focus stream, 0 stray finalises | B16 |
 | Daemon A/B, B16 build, ~3 min real use | **19 focus switches tracked in real time, 0 watchdog reconnects, `window✓`** (old build: count frozen, a reconnect every ~180 s) | B16 |
 | B13 test count / B14 / B15 / B16 / B17 / B18 | 484 / ~524 / 561 / 587 / 643 / **699** green | B13–B18 |
-| Full suite (`-m ""`) after V-1 / V-2 / V-3 | 719 / 724 / **740** passed, 3/3 runs each | V-1–V-3 |
+| Full suite (`-m ""`) after V-1 / V-2 / V-3 / V-4–V-7 | 719 / 724 / 740 / **797** passed | V-1–V-7 |
 | Hebbian sim, 3 days, old vs new rule | 15 edges over 6 apps (0.027–0.261) → 26 edges over 8 apps (0.022–0.979) | V-1 |
 | 20k-switch storm max loop lag, `main` / V-1 first cut / V-1 final | 14–23 / 30–57 / 16–24 ms | V-1 |
 | `relevance_score`, live graph, before → after | 2.98–9.00, median 3.38 → 0.69–10.00, median 1.34 | V-2 |
 | Real apps outranked by a generated probe, before → after | 8 / 29 → 5 / 29 (the 5 have zero recorded use — ties) | V-2 |
 | 10k-node `recalculate_importance`, `main` / V-2 first cut / V-2 final | 59 / 388 / 83 ms (max loop lag 4.1 / 17.9 / 4.7 ms) | V-2 |
 | V-3 boot cleanup, live graph | 71 → 66 nodes, `YOU` degree 18 → 10, 5 excluded-name nodes dropped, 3 placeholders released | V-3 |
+| DMN seed reach, live graph, 200 cycles, argmax → sampled | **5 → 24** distinct nodes; leaders still lead (80 / 77 / 71 of 1000 slots); 0.039 → 0.094 ms per draw | V-4 |
+| Dead-hub reap, live graph | 70 → 65 nodes, **0 edges lost**, 0.08 ms; steady-state sweep 0.01 ms | V-5 |
+| Orphan linking @10k, whole-graph sweep vs ledger | **23.839 ms → 0.008 ms** idle (0.387 ms with 50 pending) | V-6 |
+| V-7 schema migration, live graph copy | v6 → v7, **0 node ids changed**, 47.9 → 47.9 KiB; stored questions ~1.25 KiB real / 16 KiB capped | V-7 |
 | B18 label migration, real graph | copy: 87 → 59 nodes, 51 → 23 generated · live: 89 → 60 nodes, 53 → 24 generated; 0 duplicate facts, 0 raw ids in labels, 0 caption collisions | B18 |
 | B17 graph clean, real soak graph | 63 → 57 nodes (24 → 19 `app:`/`webapp:`); Brave's 2 nodes → 1 keeping `ram_mb ≈ 3811` **and** the focus count **and** 4 webapp children; 0 dangling edges; idempotent | B17 |
-| Graph schema version | **v6** (`Node.activity`, V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 |
+| Graph schema version | **v7** (`LabelSpec.text`, V-7 — 0 ids changed); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 
