@@ -78,7 +78,13 @@ from neuropaca.core.models import Edge, Node
 # replaces the separate frequency and recency terms of `relevance_score`. A v5
 # file loads unchanged: a missing `activity` defaults to `access_count + 1` as of
 # `last_accessed` (the lifetime tally is the best estimate a young graph has).
-_SCHEMA_VERSION = 6
+# v7 (V-7): a node's `spec` may carry an optional `text` — a free-text payload
+# (what a thought actually asked, in the words used at the time) that is NOT
+# part of the fingerprint, so every existing node id is unchanged and a v6 file
+# loads as-is with `text` simply absent. The bump is for honesty in the other
+# direction: an older build reading a v7 file would silently drop the field,
+# and `_validate_schema_version` refusing it is the point of the check.
+_SCHEMA_VERSION = 7
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
 
 # V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.
@@ -93,6 +99,10 @@ _ACTIVITY_HALF_LIFE_DAYS = 7.0
 _W_ACTIVITY, _W_STRENGTH, _W_BRIDGE = 6.0, 2.0, 2.0
 _STRUCTURAL_EDGE_STRENGTH = 0.1
 _BRIDGE_MIN_WEIGHT = 0.1  # ~ one full-credit co-use at the default hebbian_delta
+# V-6 · how many never-yet-linked node ids the link ledger remembers. Generous:
+# nodes are minted by focus switches and probes, not in bursts. Past it the
+# oldest entry is evicted and the DMN's whole-graph sweep catches it instead.
+_UNLINKED_LEDGER_CAP = 512
 _DERIVED_PREFIXES: tuple[str, ...] = (*_FACT_PREFIXES, "action:")
 # `labels.py` is stdlib-only (the graph window loads it by path), so the
 # kind -> NodeType half of the table lives here.
@@ -187,6 +197,12 @@ class GraphMemory:
         self._dirty = False
         self._last_save: datetime | None = None
         self._ref_name = ref_namer(self._lookup)  # B18 · names refs inside labels
+        # V-6 · ids of nodes created in this process that have never had an
+        # edge. `_add_edge_unsafe` discharges an id the moment one lands, so
+        # what survives a scheduler tick is a real orphan — and linking it costs
+        # O(pending) instead of the O(N) degree scan a whole-graph sweep needs.
+        # A dict, not a set: insertion order is the eviction order at the cap.
+        self._unlinked: dict[str, None] = {}
 
     # ------------------------------------------------------------------ singleton
     @classmethod
@@ -662,6 +678,78 @@ class GraphMemory:
                 break
         return linked
 
+    async def prune_dead_hubs(self) -> int:
+        """V-5 · drop a `domain:` hub that nothing routes to.
+
+        All ten hubs are seeded on a fresh graph so a first run is
+        self-describing, but only what you actually do ever attaches to one.
+        On the live graph five sat at degree 0 forever — `domain:comms`,
+        `domain:projects` and `domain:meetings` because those apps had not been
+        opened yet, `domain:system` and `domain:mental_models` because **no
+        entry in either map file routes to them at all**, so nothing could ever
+        reach them. Either way they were dead weight in every graph view and an
+        empty branch in `find_related`.
+
+        Reaping rather than never-seeding is deliberate: it also catches a hub
+        that *becomes* dead (its last app uninstalled, its mapping removed), and
+        `_add_edge_unsafe` materialises a hub again the instant something routes
+        to it, so nothing is lost — a reaped hub is one keystroke from
+        returning. `YOU` is never reaped: it is the anchor `link_orphan_nodes`
+        attaches true orphans to.
+
+        One `_lock` cycle per removal with a yield between (rules.md §3).
+        Returns hubs dropped.
+        """
+        async with self._lock:
+            candidates = [hub for hub in sorted(DOMAIN_HUB_IDS) if self._is_dead_hub_unsafe(hub)]
+        dropped = 0
+        for hub in candidates:
+            async with self._lock:
+                if self._is_dead_hub_unsafe(hub):
+                    self._graph.remove_node(hub)
+                    self._dirty = True
+                    dropped += 1
+            await asyncio.sleep(0)
+        return dropped
+
+    def _is_dead_hub_unsafe(self, hub_id: str) -> bool:
+        if hub_id not in DOMAIN_HUB_IDS or hub_id not in self._graph:
+            return False
+        return int(self._graph.degree(hub_id)) == 0
+
+    async def link_new_orphans(self) -> int:
+        """V-6 · link the nodes minted since the last pass that still have no
+        edge. The prompt half of `link_orphan_nodes`.
+
+        `link_orphan_nodes` only ever ran inside a DMN reminiscence cycle, so a
+        node created after the last idle spell floated unreachable — invisible
+        to `find_related` from anything — until the CPU next went quiet, which
+        on a machine in continuous use is hours, and a restart in between did
+        not help either. In the live graph that was `app:cosmic-settings`: score
+        0.0, degree 0, focused at 16:40 and still unreachable that evening. An
+        unmapped app the correlator mints on focus (V-1) is the common case —
+        it has no `part_of domain:` edge and no co-active peer to wire to.
+
+        This runs on the scheduler tick instead, and touches only the ledger
+        `_add_node_unsafe` fills and `_add_edge_unsafe` discharges — O(pending),
+        no degree scan of the graph, so it is cheap enough to run every few
+        minutes. The whole-graph sweep stays as the periodic backstop for
+        anything evicted at the cap or orphaned on disk before a restart.
+
+        One `_lock` cycle per link with a yield between (rules.md §3). Returns
+        links made.
+        """
+        async with self._lock:
+            pending, self._unlinked = list(self._unlinked), {}
+        linked = 0
+        for node_id in pending:
+            async with self._lock:
+                if self._is_orphan_unsafe(node_id):
+                    self._add_edge_unsafe(node_id, "YOU", RelationType.RELATED_TO, 0.0)
+                    linked += 1
+            await asyncio.sleep(0)
+        return linked
+
     async def prune_stale_nodes(self, ttl: timedelta) -> int:
         """Drop a non-hub node when its `relevance_score` has decayed to ~0, or
         it has aged past `ttl` (D-13). An `INSIGHT` / `IDLE_THOUGHT` node past
@@ -1024,7 +1112,18 @@ class GraphMemory:
         )
         self._graph.add_node(node_id, **self._node_to_attrs(node))
         self._dirty = True
+        if node_id not in HUB_NODE_IDS:
+            self._note_unlinked_unsafe(node_id)
         return node
+
+    def _note_unlinked_unsafe(self, node_id: str) -> None:
+        """V-6 · put a brand-new node on the link ledger. Bounded: past the cap
+        the oldest entry is dropped rather than the ledger growing without
+        limit, and the DMN's whole-graph `link_orphan_nodes` is still the
+        backstop that catches anything evicted."""
+        self._unlinked[node_id] = None
+        while len(self._unlinked) > _UNLINKED_LEDGER_CAP:
+            self._unlinked.pop(next(iter(self._unlinked)))
 
     # ------------------------------------------------------------ B18 · facts
     def _lookup(self, ref: str) -> tuple[str, LabelSpec | None] | None:
@@ -1040,7 +1139,13 @@ class GraphMemory:
         node_id = fact_id(spec)
         if node_id in self._graph:
             data = self._graph.nodes[node_id]
-            data["spec"] = spec  # the latest value (pressure, confidence) wins
+            existing = data.get("spec")
+            # V-7 · the latest *value* (pressure, confidence) wins, but the
+            # *first* text stands: it is the record of what was actually asked
+            # or said the first time, which re-asking must not rewrite.
+            if isinstance(existing, LabelSpec) and existing.text is not None:
+                spec = replace(spec, text=existing.text)
+            data["spec"] = spec
             self._touch_unsafe(data)
             data["label"] = render(spec, self._ref_name)
             self._dirty = True
@@ -1155,6 +1260,14 @@ class GraphMemory:
             return self._edge_from_attrs(
                 source_id, target_id, rel, self._graph.edges[source_id, target_id, rel]
             )
+        # V-5 · a routing hub is materialised the moment something routes to it.
+        # `prune_dead_hubs` reaps the ones nothing reaches, so a hub may legally
+        # be absent when its first app finally shows up; and networkx would
+        # otherwise auto-create a bare, attribute-less node that every later
+        # read (`_node_from_attrs`) raises KeyError on.
+        for endpoint in (source_id, target_id):
+            if endpoint in DOMAIN_HUB_IDS and endpoint not in self._graph:
+                self._seed_hub_unsafe(endpoint)
         edge = Edge(
             source_id=source_id,
             target_id=target_id,
@@ -1170,6 +1283,8 @@ class GraphMemory:
             created_at=edge.created_at,
         )
         self._dirty = True
+        self._unlinked.pop(source_id, None)  # V-6 · both ends are reachable now
+        self._unlinked.pop(target_id, None)
         return edge
 
     def _related_between_unsafe(self, a: str, b: str) -> bool:
@@ -1268,6 +1383,7 @@ class GraphMemory:
         if node_id in self._graph:
             self._graph.remove_node(node_id)
             self._dirty = True
+        self._unlinked.pop(node_id, None)  # V-6 · never link a dead id
 
     def _prune_unsafe(self, older_than: timedelta, min_importance: float) -> int:
         now = _utcnow()
@@ -1528,9 +1644,14 @@ class GraphMemory:
     def _seed_hubs_unsafe(self) -> None:
         self._add_node_unsafe("YOU", NodeType.CONCEPT, {"label": "YOU"})
         for slug in DOMAIN_SLUGS:
-            self._add_node_unsafe(
-                f"domain:{slug}", NodeType.CONCEPT, {"label": slug.replace("_", " ").title()}
-            )
+            self._seed_hub_unsafe(f"domain:{slug}")
+
+    def _seed_hub_unsafe(self, hub_id: str) -> None:
+        """One `domain:` hub, with the label every seeding path has always given
+        it. Shared by the fresh-graph seed and V-5's materialise-on-demand, so a
+        reaped hub comes back identical to the one it replaces."""
+        slug = hub_id.removeprefix("domain:")
+        self._add_node_unsafe(hub_id, NodeType.CONCEPT, {"label": slug.replace("_", " ").title()})
 
     # ---------------------------------------------------------------- (de)serialise
     @staticmethod

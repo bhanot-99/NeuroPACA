@@ -73,24 +73,51 @@ _THOUGHT_SHORT: dict[str, str] = {
 }
 
 
+#: V-7 · hard cap on a spec's stored `text`. Every node record carries its spec,
+#: so an unbounded payload would bloat the whole graph file; a question or a
+#: briefing line is a sentence, not a document.
+TEXT_MAX = 512
+
+
 @dataclass(frozen=True, slots=True)
 class LabelSpec:
     """What a generated node is about. `refs` are node ids, in meaning order
     (subject first). `value` is the one number worth showing and is **not**
-    part of identity: pressure 1.43 and 1.59 on Brave are the same probe."""
+    part of identity: pressure 1.43 and 1.59 on Brave are the same probe.
+
+    `text` (V-7) is an optional free-text payload — likewise **not** part of
+    identity, and never what the label renders from. B18's rule stands: a
+    label is rendered from `{kind, facet, refs}` so a rename heals every label
+    at once. `text` is the complementary record B18 left no room for: what was
+    actually said *at the time*, which a later rename must NOT rewrite, plus
+    somewhere for a thought to carry a payload the closed facet vocabulary
+    cannot express (the briefing will need this). Clipped to `TEXT_MAX`;
+    blank is normalised to `None` so "no text" has one representation.
+    """
 
     kind: LabelKind
     refs: tuple[str, ...]
     facet: str = ""
     value: float | None = None
+    text: str | None = None
+
+    def __post_init__(self) -> None:
+        cleaned = _clean_text(self.text)
+        if cleaned != self.text:
+            object.__setattr__(self, "text", cleaned)  # frozen: normalise in place
 
     def to_record(self) -> dict[str, Any]:
-        return {
+        record: dict[str, Any] = {
             "kind": str(self.kind),
             "refs": list(self.refs),
             "facet": self.facet,
             "value": self.value,
         }
+        # Only when there is one: an extra null on every probe/insight/thought
+        # record is pure weight in a file that holds thousands of them.
+        if self.text is not None:
+            record["text"] = self.text
+        return record
 
     @classmethod
     def from_record(cls, raw: Any) -> LabelSpec | None:
@@ -102,11 +129,13 @@ class LabelSpec:
             kind = LabelKind(raw["kind"])
             refs = tuple(str(r) for r in raw.get("refs", ()))
             value = raw.get("value")
+            text = raw.get("text")
             return cls(
                 kind=kind,
                 refs=refs,
                 facet=str(raw.get("facet", "")),
                 value=None if value is None else float(value),
+                text=None if text is None else str(text),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -115,10 +144,24 @@ class LabelSpec:
 # --------------------------------------------------------------------------- #
 # identity                                                                     #
 # --------------------------------------------------------------------------- #
+def _clean_text(raw: str | None) -> str | None:
+    """Normalise a spec's free text: collapse whitespace, clip to `TEXT_MAX`,
+    and turn anything empty into `None`."""
+    if raw is None:
+        return None
+    text = " ".join(str(raw).split())
+    if not text:
+        return None
+    return text[:TEXT_MAX] if len(text) > TEXT_MAX else text
+
+
 def fingerprint(spec: LabelSpec) -> str:
     """64-bit hex identity of a fact: kind + facet + refs. A thought's refs are
     unordered ("how does A affect B" and "… B affect A" are one open question);
-    the others keep order. `value` is excluded on purpose."""
+    the others keep order. `value` and `text` are excluded on purpose — the same
+    question asked twice in different words is one open question, and keeping
+    them out means V-7 added no new fingerprint input, so every id in an
+    existing graph is unchanged."""
     refs = sorted(spec.refs) if spec.kind is LabelKind.THOUGHT else list(spec.refs)
     key = f"{spec.kind}|{spec.facet}|{','.join(refs)}"
     return hashlib.blake2b(key.encode("utf-8"), digest_size=8).hexdigest()

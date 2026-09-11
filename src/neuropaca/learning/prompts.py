@@ -299,10 +299,31 @@ _PROACTIVE_GRAMMAR_TEMPLATE = (
     '"\\"object\\":" ws (alias | "null") ws "," ws '
     '"\\"query_template\\":" ws template ws "}"\n'
     "alias ::= __ALIASES__\n"
-    'template ::= "\\"how_does_x_affect_y\\"" | "\\"what_connects_x_and_y\\"" | '
-    '"\\"what_changed_in_x\\"" | "\\"why_is_x_active\\""\n'
+    "template ::= __TEMPLATES__\n"
     'ws ::= " "?\n'
 )
+
+# V-4 · the template rotation. Every idle thought in the live graph was
+# `how_does_x_affect_y`: all four keys were on offer every time, and a 2B4T
+# model under a grammar copies the few-shot's answer (and the enum's first
+# branch) almost deterministically. Offering a rotating *pair* — one relational,
+# one single-subject — keeps the choice with the model but moves the menu, so a
+# cycle's inferences spread across the facet vocabulary instead of stacking on
+# one. Pure string work; no extra tokens, no extra call.
+_TEMPLATE_ROTATION: tuple[tuple[str, ...], ...] = (
+    ("how_does_x_affect_y", "what_changed_in_x"),
+    ("what_connects_x_and_y", "why_is_x_active"),
+    ("how_does_x_affect_y", "why_is_x_active"),
+    ("what_connects_x_and_y", "what_changed_in_x"),
+)
+
+
+def template_rotation(step: int) -> tuple[str, ...]:
+    """The template keys to offer on inference `step` (V-4). Always contains one
+    relational and one single-subject key, so neither an object-less nor an
+    object-bearing selection is ever forced to abstain."""
+    return _TEMPLATE_ROTATION[step % len(_TEMPLATE_ROTATION)]
+
 
 _PROACTIVE_FEW_SHOT = (
     "Facts:\n"
@@ -314,9 +335,14 @@ _PROACTIVE_FEW_SHOT = (
 )
 
 
-def build_proactive_grammar(aliases: Sequence[str]) -> str:
+def build_proactive_grammar(aliases: Sequence[str], templates: Sequence[str] | None = None) -> str:
     """Splice this prompt's alias enum into the proactive skeleton. `aliases`
-    must be exactly the aliases present in the prompt (`rules.md §4.1`)."""
+    must be exactly the aliases present in the prompt (`rules.md §4.1`).
+
+    `templates` narrows the question menu to this call's rotation (V-4); the
+    default offers all of `PROACTIVE_TEMPLATES`. Every key must be a known
+    template — the grammar is the schema, so an unknown key here would let the
+    model emit something `parse_proactive` then throws away."""
     if not aliases:
         raise ValueError("at least one alias is required")
     for alias in aliases:
@@ -324,8 +350,15 @@ def build_proactive_grammar(aliases: Sequence[str]) -> str:
             raise ValueError(f"not a local alias: {alias!r}")
     if len(set(aliases)) != len(aliases):
         raise ValueError(f"duplicate aliases: {list(aliases)!r}")
+    keys = list(templates) if templates is not None else list(PROACTIVE_TEMPLATES)
+    if not keys:
+        raise ValueError("at least one query template is required")
+    unknown = [k for k in keys if k not in PROACTIVE_TEMPLATES]
+    if unknown:
+        raise ValueError(f"unknown query template(s): {unknown!r}")
     enum = " | ".join(f'"\\"{alias}\\""' for alias in aliases)
-    return _PROACTIVE_GRAMMAR_TEMPLATE.replace("__ALIASES__", enum)
+    menu = " | ".join(f'"\\"{key}\\""' for key in dict.fromkeys(keys))
+    return _PROACTIVE_GRAMMAR_TEMPLATE.replace("__ALIASES__", enum).replace("__TEMPLATES__", menu)
 
 
 def build_proactive_prompt(aliased: Sequence[tuple[str, Node]]) -> str:

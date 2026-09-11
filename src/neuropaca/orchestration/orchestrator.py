@@ -172,6 +172,14 @@ class NeuroPACAOrchestrator:
             released = await self._graph_memory.release_you_links()
             if released:
                 _log.info("V-3a: released %d stale -> YOU placeholder link(s)", released)
+            # V-6 · the ledger `link_new_orphans` drains only knows about nodes
+            # minted in *this* process, so a node orphaned on disk before a
+            # restart would still wait for an idle spell. One whole-graph sweep
+            # at boot closes that, next to the scan `canonicalise_app_nodes`
+            # already does here.
+            linked = await self._graph_memory.link_orphan_nodes()
+            if linked:
+                _log.info("V-6: linked %d orphan node(s) carried in from disk", linked)
         except Exception:
             _log.exception("B17 app-identity pass failed — booting with the graph as loaded")
 

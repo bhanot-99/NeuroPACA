@@ -167,11 +167,22 @@ class Config:
     #     calls per cycle; the DMN also bails the moment `BitNetRuntime.is_busy`.
     #   - dmn_idle_thought_ttl_hours — an `idle:` / `insight:` node past this age
     #     is pruned (the 48 h idle-thought cache lifetime, Architecture.md §8).
-    #   - dmn_top_k — graph nodes pulled (by relevance_score) to seed imagination.
+    #   - dmn_top_k — graph nodes offered to the model as one prompt's facts.
+    #   - dmn_candidate_pool_k — V-4: how many top-scoring nodes the seed sample
+    #     is drawn FROM. `dmn_top_k` was both the pool and the sample, so the
+    #     argmax five nodes were the entire imagination for the life of the
+    #     graph. Sampling `dmn_top_k` out of this pool (score-weighted, recent
+    #     seeds penalised) costs one larger heap on the same O(N) scan — no new
+    #     traversal, no extra inference — and lets imagination reach past the
+    #     clique. Must be >= dmn_top_k; equal restores the old fixed behaviour.
+    #   - dmn_seed_refractory_cycles — a node used as a seed is down-weighted
+    #     for this many later cycles (0 disables the penalty).
     dmn_cycle_wall_clock_seconds: int = 60
     dmn_max_inferences_per_cycle: int = 3
     dmn_idle_thought_ttl_hours: int = 48
     dmn_top_k: int = 5
+    dmn_candidate_pool_k: int = 24
+    dmn_seed_refractory_cycles: int = 3
     # B7 · Action (L7, D-14). `action_dry_run` defaults **True**: the daemon
     # ships in the dry-run review period the B7 exit criteria require ("a review
     # period in dry-run with zero false positives before any tier goes live"),
@@ -312,6 +323,7 @@ class Config:
             "dmn_max_inferences_per_cycle",
             "dmn_idle_thought_ttl_hours",
             "dmn_top_k",
+            "dmn_candidate_pool_k",
             "coactivation_window_seconds",
             "coactivation_max_nodes",
             "pressure_decay_half_life_seconds",
@@ -324,6 +336,17 @@ class Config:
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if self.dmn_candidate_pool_k < self.dmn_top_k:
+            # V-4 · the sample cannot be wider than the pool it is drawn from.
+            errs.append(
+                f"dmn_candidate_pool_k ({self.dmn_candidate_pool_k}) must be "
+                f">= dmn_top_k ({self.dmn_top_k})"
+            )
+        if self.dmn_seed_refractory_cycles < 0:
+            errs.append(
+                f"dmn_seed_refractory_cycles must be >= 0, got {self.dmn_seed_refractory_cycles}"
+            )
 
         if self.pressure_low_threshold <= 0:
             errs.append(f"pressure_low_threshold must be > 0, got {self.pressure_low_threshold}")

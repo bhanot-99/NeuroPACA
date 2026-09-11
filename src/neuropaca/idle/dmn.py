@@ -7,11 +7,15 @@ When CPU drops (you walked away) L2 publishes `IDLE_DETECTED`; the DMN starts on
 cancellable `idle_task`. The cycle has two halves:
 
 - **Reminiscence** — graph housekeeping: merge exact-duplicate nodes, link
-  orphans to `YOU`, prune stale / expired nodes. All of it runs through
+  orphans to `YOU`, prune stale / expired nodes, and reap `domain:` hubs nothing
+  routes to (V-5). All of it runs through
   `GraphMemory`'s bounded-transaction workers (one lock per mutation, yield
   between), so `ACTIVITY_DETECTED` cancelling the task mid-cycle never leaves the
   graph half-mutated.
-- **Imagination** — pull the top-K nodes by `relevance_score` and, up to
+- **Imagination** — draw `dmn_top_k` seed nodes from the `dmn_candidate_pool_k`
+  highest-`relevance_score` nodes (V-4: score-weighted sampling, recent seeds
+  penalised — the argmax top-K never moved, so every idle thought circled the
+  same five nodes) and, up to
   `dmn_max_inferences_per_cycle` times, ask the **loop** model (BitNet 2B4T, not
   the interactive Qwen — L6 is background) for a *strictly extractive* follow-up
   question: pick a subject node, maybe an object node, and a `query_template`
@@ -30,6 +34,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
+from collections import deque
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -41,7 +47,7 @@ from neuropaca.core.enums import EventType, NodeType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
-from neuropaca.core.labels import KIND_PREFIX, LabelKind
+from neuropaca.core.labels import KIND_PREFIX, LabelKind, render
 from neuropaca.core.models import Event, Node, system_error_event
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
@@ -50,12 +56,22 @@ from neuropaca.learning.prompts import (
     build_proactive_grammar,
     build_proactive_prompt,
     parse_proactive,
+    template_rotation,
 )
 
 _log = logging.getLogger(__name__)
 
 _EXCLUDED_SEED_TYPES = frozenset({NodeType.INSIGHT, NodeType.IDLE_THOUGHT})
 EPHEMERAL_PREFIX = KIND_PREFIX[LabelKind.PROBE]
+
+# V-4 · a node that has just been a seed keeps this fraction of its sampling
+# weight for `dmn_seed_refractory_cycles` cycles. Not zero: the apps you really
+# live in should still come up often — just not to the exclusion of everything
+# else.
+_SEED_REFRACTORY_PENALTY = 0.2
+# Floor under the sampling weight so a score-0.0 node (fresh, or never yet
+# scored) is reachable rather than impossible.
+_SEED_WEIGHT_FLOOR = 0.05
 
 
 class DefaultModeNetwork(BaseModule):
@@ -67,6 +83,7 @@ class DefaultModeNetwork(BaseModule):
         bitnet_runtime: BitNetRuntime,
         *,
         clock: Clock | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         super().__init__("idle", event_bus, config)
         self._graph = graph_memory
@@ -82,6 +99,15 @@ class DefaultModeNetwork(BaseModule):
         self._last_summary = ""
         # V-1 · Hebbian decay is paced by uptime; downtime is not "disuse"
         self._last_decay_mono = self._clock.monotonic()
+        # V-4 · imagination is sampled, not argmax. Injectable so a test can
+        # pin the draw; production gets an unseeded `Random` (no global state —
+        # the module-level `random` is shared and something else reseeding it
+        # would silently couple to this).
+        self._rng = rng if rng is not None else random.Random()
+        self._recent_seeds: deque[str] = deque(
+            maxlen=max(0, config.dmn_top_k * config.dmn_seed_refractory_cycles)
+        )
+        self._template_step = 0
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
@@ -195,9 +221,13 @@ class DefaultModeNetwork(BaseModule):
         linked = await self._graph.link_orphan_nodes()
         ttl = timedelta(hours=self.config.dmn_idle_thought_ttl_hours)
         pruned = await self._graph.prune_stale_nodes(ttl)
+        # V-5 · last, after every other sweep has settled the edges: a hub only
+        # counts as dead once this cycle's prunes and links are done, and a hub
+        # reaped here comes back the moment something routes to it again.
+        hubs = await self._graph.prune_dead_hubs()
         return (
             f"merged {merged} · faded {faded} · released {released} · "
-            f"linked {linked} · pruned {pruned}"
+            f"linked {linked} · pruned {pruned} · dead hubs {hubs}"
         )
 
     async def _imagination(self) -> int:
@@ -208,11 +238,16 @@ class DefaultModeNetwork(BaseModule):
         budget = self.config.dmn_max_inferences_per_cycle
         if budget <= 0 or self._runtime.backend_unavailable:
             return 0
-        seeds = self._top_nodes(self.config.dmn_top_k)
+        seeds = self._seed_nodes()
         if len(seeds) < 2:
             return 0  # nothing to relate — a follow-up question needs two nodes
         if not self._runtime.is_loaded and not await self._runtime.load_model_async():
             return 0
+        # V-4 · remember this cycle's draw *before* the inferences, not after:
+        # a cycle cancelled by ACTIVITY_DETECTED mid-imagination still spent the
+        # seeds, and the next cycle should move on rather than redraw the same
+        # five nodes it was interrupted on.
+        self._recent_seeds.extend(n.id for n in seeds)
 
         made = 0
         for rotation in range(min(budget, len(seeds))):
@@ -221,6 +256,39 @@ class DefaultModeNetwork(BaseModule):
             if await self._one_thought(seeds, rotation) is not None:
                 made += 1
         return made
+
+    def _seed_nodes(self) -> list[Node]:
+        """The nodes offered to the model this cycle (V-4).
+
+        Was: the `dmn_top_k` argmax nodes by `relevance_score` — a set that does
+        not move, so imagination re-asked the same clique until every
+        subject/object/template combination existed and every later cycle
+        produced nothing but duplicates. Now the same one-pass scan collects a
+        wider `dmn_candidate_pool_k` pool and `dmn_top_k` seeds are *sampled*
+        from it, weighted by score and penalised for having just been used. The
+        added cost is a larger heap on a scan that already ran and one pass over
+        the pool — no extra traversal, no extra inference call.
+        """
+        k = self.config.dmn_top_k
+        pool = self._top_nodes(max(k, self.config.dmn_candidate_pool_k))
+        if len(pool) <= k:
+            return pool
+        recent = set(self._recent_seeds)
+        # Efraimidis-Spirakis: one key per item, take the k largest — a weighted
+        # sample without replacement in a single O(pool) pass.
+        keyed = sorted(
+            (
+                (self._rng.random() ** (1.0 / self._seed_weight(node, recent)), node.id, node)
+                for node in pool
+            ),
+            key=lambda t: (-t[0], t[1]),
+        )
+        return [node for _, _, node in keyed[:k]]
+
+    @staticmethod
+    def _seed_weight(node: Node, recent: set[str]) -> float:
+        weight = max(_SEED_WEIGHT_FLOOR, node.relevance_score)
+        return weight * _SEED_REFRACTORY_PENALTY if node.id in recent else weight
 
     def _top_nodes(self, k: int) -> list[Node]:
         """Top-K non-hub, non-thought nodes by `relevance_score`. A sync read —
@@ -231,12 +299,23 @@ class DefaultModeNetwork(BaseModule):
             k, exclude_types=_EXCLUDED_SEED_TYPES, exclude_prefixes=(EPHEMERAL_PREFIX,)
         )
 
+    def _question_text(self, insight: Insight) -> str:
+        """The question in the words of the moment (V-7) — the same renderer the
+        label uses, resolved against the graph's *current* display names, which
+        is exactly what "at the time" means at the instant of asking."""
+        return render(insight.spec, lambda ref: self._graph.display_name(ref))
+
     async def _one_thought(self, seeds: list[Node], rotation: int) -> Insight | None:
         ordered = seeds[rotation:] + seeds[:rotation]
         aliased = alias_nodes(ordered)
         aliases = [a for a, _ in aliased]
         alias_to_id = {a: n.id for a, n in aliased}
-        grammar = build_proactive_grammar(aliases)  # pure string work, before the lock
+        # V-4 · the question menu rotates per inference and carries across
+        # cycles, so the facet vocabulary is actually used instead of every
+        # thought landing on `how_does_x_affect_y`.
+        templates = template_rotation(self._template_step)
+        self._template_step += 1
+        grammar = build_proactive_grammar(aliases, templates)  # string work, before the lock
         prompt = build_proactive_prompt(aliased)
 
         raw = await self._runtime.infer_async(prompt, PROACTIVE_MAX_TOKENS, 0.0, grammar)
@@ -245,7 +324,12 @@ class DefaultModeNetwork(BaseModule):
             return None
         # B18: the thought is a fact; asking the same open question again —
         # this cycle or a week of restarts later — reinforces it, never repeats it.
-        node, created = await self._graph.upsert_fact(insight.spec)
+        # V-7: the question is also stored as it read *when it was asked*, using
+        # the names those nodes had then. The label still re-renders from
+        # {facet, refs} and so heals on a rename; this does not, deliberately —
+        # it is the record of what was actually asked.
+        spec = replace(insight.spec, text=self._question_text(insight))
+        node, created = await self._graph.upsert_fact(spec)
         if not created:
             return None
         stored = replace(insight, node_id=node.id, label=node.label)

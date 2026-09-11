@@ -339,9 +339,13 @@ async def test_activity_cancels_the_cycle_within_one_tick_without_corruption(tmp
         or isinstance(results[0], asyncio.CancelledError)
         or dmn._idle_task.done()
     )
-    # graph consistent: hubs intact, no node half-merged into nothing
+    # graph consistent: no node half-merged into nothing. `YOU` is always
+    # there (the orphan anchor); a `domain:` hub may legitimately have been
+    # reaped by the V-5 sweep if nothing routed to it, but whichever survive
+    # must still be well-formed nodes rather than bare networkx placeholders.
+    assert gm.get_node("YOU") is not None
     for hub in HUB_NODE_IDS:
-        assert gm.get_node(hub) is not None
+        assert hub not in gm.node_ids or gm.get_node(hub) is not None
     remaining = [nid for nid in gm.node_ids if nid.startswith("d")]
     assert all(gm.get_node(nid) is not None for nid in remaining)
     await bus.stop()
