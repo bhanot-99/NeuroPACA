@@ -232,6 +232,15 @@ def test_config_rejects_an_empty_log_file_path_when_the_sink_is_on() -> None:
 # --------------------------------------------------------------- BL-7 · offline
 
 
+@pytest.fixture(autouse=True)
+def _no_host_service_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests describe the repo's behaviour, not this machine's. V-11 added
+    a `systemctl --user is-enabled` probe to `doctor`; without this stub,
+    whether the developer's own unit happens to be enabled would decide whether
+    BL-7 passes. `None` is what a CI runner — no user manager — answers."""
+    monkeypatch.setattr(offline, "_systemctl_is_enabled", lambda _unit: None)
+
+
 def test_doctor_runs_with_no_daemon_and_no_data_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

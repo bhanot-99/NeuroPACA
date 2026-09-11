@@ -28,6 +28,7 @@ import shutil
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -137,6 +138,69 @@ def _graph_report(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
     return rows, problems
 
 
+_SERVICE_UNIT = "neuropacad.service"
+# `systemctl is-enabled` answers that mean "starts with the graphical session".
+_SERVICE_ENABLED = frozenset({"enabled", "enabled-runtime", "linked", "linked-runtime", "alias"})
+# ...and the ones that mean it will not. Anything else is reported, not flagged.
+_SERVICE_OFF = frozenset({"disabled", "masked", "masked-runtime"})
+
+
+def _systemctl_is_enabled(unit: str) -> str | None:
+    """`systemctl --user is-enabled <unit>`'s answer, or `None` when there is no
+    user manager to ask (a container, CI, a non-systemd box) — then the doctor
+    says nothing about the service rather than something wrong. Bounded by a
+    timeout: a wedged user bus must not hang the one verb meant for diagnosing
+    a broken install."""
+    try:
+        done = subprocess.run(
+            ["systemctl", "--user", "is-enabled", unit],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = (done.stdout.strip() or done.stderr.strip()).splitlines()
+    return lines[0].strip() if lines else None
+
+
+def _service_report() -> tuple[list[tuple[str, str]], list[str]]:
+    """V-11 · is the daemon going to come back after a logout?
+
+    The unit is `PartOf=graphical-session.target`, so a logout or compositor
+    restart stops it with SIGTERM — a clean exit 0, which `Restart=on-failure`
+    rightly ignores. The only thing that brings it back is `WantedBy=` pulling it
+    in when the session starts again, and that only happens if the unit is
+    enabled. On the live machine it was installed but disabled, so on
+    2026-09-10 a session restart at 19:14 left the daemon down for 2 h 39 min
+    until it was started by hand. The installer enables it; this catches the
+    drift, because nothing else would — the daemon cannot report its own absence.
+    """
+    state = _systemctl_is_enabled(_SERVICE_UNIT)
+    if state is None:
+        return [], []
+    if state in _SERVICE_ENABLED:
+        return [("service", f"{_SERVICE_UNIT} · {state} — starts with every graphical login")], []
+    if state in _SERVICE_OFF:
+        return (
+            [
+                (
+                    "service",
+                    f"{_SERVICE_UNIT} · {state.upper()} — a logout or compositor restart stops "
+                    f"the daemon and nothing starts it again; fix: "
+                    f"systemctl --user enable {_SERVICE_UNIT}",
+                )
+            ],
+            [f"{_SERVICE_UNIT} is {state} — the daemon will not return after a session restart"],
+        )
+    if "No such file" in state or "not-found" in state or "not found" in state:
+        return [
+            ("service", f"{_SERVICE_UNIT} · not installed (scripts/install-user-service.sh)")
+        ], []
+    return [("service", f"{_SERVICE_UNIT} · {state}")], []
+
+
 def _table(rows: list[tuple[str, str]]) -> Any:
     from rich.table import Table
 
@@ -212,6 +276,10 @@ def doctor(argv: list[str]) -> int:
         else:
             rows.append(("daemon", f"socket {sock} exists but nothing answers — stale"))
             problems.append("stale socket")
+
+    service_rows, service_problems = _service_report()
+    rows.extend(service_rows)
+    problems.extend(service_problems)
 
     try:
         probe = graph_path.parent if graph_path.parent.exists() else Path(".")
