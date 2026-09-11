@@ -5,9 +5,9 @@
 | | |
 | --- | --- |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
-| **Version** | v10 |
+| **Version** | v11 |
 | **Dossier date** | 2026-09-11 |
-| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. V-2 (`da78779`, 2026-09-11) rebuilds `relevance_score` — a decaying activity counter (schema **v6**), learned association strength, real cross-domain bridges — so the score spans 0.69–10 instead of 2.98–9 (§21.9). V-3 (`f79f42b`) removes accumulated cruft: stale `→ YOU` placeholders released (18 → 10), the daemon's own processes purged after a config override was found disabling the exclude list, subject-less probes reaped (§21.10). All three run on the live daemon; `main` pushed to GitHub. v10 adds **V-4 … V-7** (`fix-v4-v7-graph-hygiene`, 2026-09-11, §21.11) — four graph-hygiene defects fixed as one analyse → fix → test → measure cycle: the idle-thought engine no longer circles one clique (seed reach 5 → 24), dead `domain:` hubs are reaped and rebuilt on demand (70 → 65 nodes, 0 edges lost), a new node is linked on the next scheduler tick instead of the next idle spell (23.839 → 0.008 ms, the measurement that chose the design), and a thought now records the question it actually asked (`LabelSpec.text`, schema **v7**, 0 node ids changed). The live graph is still v6 on disk and migrates on the next daemon start. |
+| **Status** | B9 · Hardening — B0–B9 built, plus post-B9 phases B10–B18 (terminal reconceived, resource-aware sensing, web-app attribution, Wayland sensor fix ×2, canonical app identity + a structured graph view, Hebbian wire-together, one labeling system); 6 of 7 B9 exit criteria met. B18 (PR #28, `0ddc50f`) makes every generated node store *what it is about* and renders its name on demand — the live graph migrated to schema v5, 89 → 60 nodes. The 7-day soak runs on the B18 build (session 8, 1 d 2 h of 7 d accrued). v8 merges the per-phase plans and test reports into §21. V-1 (`c6ca7ea`, 2026-09-10) reworks the Hebbian rule after T7's learning was found confined to a 6-node clique — star-shaped, saturating, time-decayed (§21.8); the daemon runs it from 23:39 IST that day. V-2 (`da78779`, 2026-09-11) rebuilds `relevance_score` — a decaying activity counter (schema **v6**), learned association strength, real cross-domain bridges — so the score spans 0.69–10 instead of 2.98–9 (§21.9). V-3 (`f79f42b`) removes accumulated cruft: stale `→ YOU` placeholders released (18 → 10), the daemon's own processes purged after a config override was found disabling the exclude list, subject-less probes reaped (§21.10). All three run on the live daemon; `main` pushed to GitHub. v10 adds **V-4 … V-7** (`fix-v4-v7-graph-hygiene`, 2026-09-11, §21.11) — four graph-hygiene defects fixed as one analyse → fix → test → measure cycle: the idle-thought engine no longer circles one clique (seed reach 5 → 24), dead `domain:` hubs are reaped and rebuilt on demand (70 → 65 nodes, 0 edges lost), a new node is linked on the next scheduler tick instead of the next idle spell (23.839 → 0.008 ms, the measurement that chose the design), and a thought now records the question it actually asked (`LabelSpec.text`, schema **v7**, 0 node ids changed). The live graph is still v6 on disk and migrates on the next daemon start. v11 adds **V-8 … V-12** (§21.12): probes cite their insight, unmeasured resource fields are absent not zero (schema **v8**), a focus counts as a sighting, the Wayland pump never gives up and `doctor` flags a disabled unit (the real cause of a 2 h 39 min outage), and live notifications reach the desktop. |
 | **Code size** | 15,366 lines of source · 15,668 lines of tests · 800 collected tests (776 default) · 144 commits · 17 merged PRs |
 | **Runs on** | One laptop. CPU only. Single user. No GPU, no accounts, no cloud, no telemetry. |
 | **License** | [AGPL-3.0-only](LICENSE) · SPDX headers on every first-party source file · per-file authorship-provenance markers (`scripts/_provenance.py`) |
@@ -4232,6 +4232,89 @@ A rename test pins the two halves apart: after a node is renamed the thought's
   daemon start; ids are unchanged, so the migration is a no-op beyond the
   version field.
 
+### 21.12 V-8 … V-12 · Provenance, readings, sightings, resilience, delivery
+
+| | |
+| --- | --- |
+| **Branch** | `fix-v8-v12-provenance-resilience` (off `main` after V-4…V-7) |
+| **Outcome** | Five commits, one per defect. Full suite (`-m ""`) 866 passed; one timing benchmark (`test_glob_fallback_path_is_cheap_per_lookup`) failed once under full-suite load and passed 5/5 in isolation on the branch and 5/5 on `main` — load noise in code no V-fix touched. Schema **v7 → v8**. |
+
+**In plain words.** Three of these five were not quite what VISION said they
+were. The probes and insights had the evidence link all along — it was thrown
+away one step early. The "always zero" RAM numbers were real for the apps that
+mattered; the problem was that *every other* node also claimed a zero it never
+measured. And the "crash" at 19:14 was not the sensor killing the daemon: the
+desktop session ended, and the daemon — installed but switched off in systemd —
+never came back for 2 h 39 min.
+
+#### V-8 · Insight citations were flat
+*Cause:* L4 stores an insight before publishing it, so its node id is real when
+pressure sees it — and `on_insight_event` reduced it to a reason string.
+*Fix:* `PressureEntry.evidence` (deduped, bounded 4) carries the id; L8 wires
+`probe -CAUSED_BY-> insight`; `GraphMemory.citations_of()` reads it. An edge,
+not a ref: refs are identity, and citing there would mint a probe per insight
+and race the ephemeral cap. Score-neutral by construction (both ends are
+generated nodes → provenance, V-2).
+*Proof:* live insight `aa31106e…` 0 → 2 citations, probe count 23 → 23, 0.18 ms.
+*Rejected:* evidence in `spec.refs` (identity churn, cap race).
+
+#### V-9 · Resource readings were 0.0 everywhere
+*Cause:* the census works (12 real readings, all apps over 200 MB), but
+`_node_record` wrote 0.0 on all 74 nodes — "never measured" looked like "zero".
+*Found before coding:* the census was also the ONLY writer of first/last-seen,
+so `last_seen_at` doubled as the reading's timestamp and the merge rule keyed on
+it. V-10 would have broken that. Hence `resources_at`.
+*Fix:* `ram_mb`/`cpu_percent` optional, omitted when unmeasured; `resources_at`
+stamped by the census; merge keys on it. Lossless v7→v8 conversion.
+*Proof:* live copy — 0 ids changed, 0 readings lost or altered, 12/12
+`resources_at == last_seen_at`, measured-idle 0.0 CPU kept, 74 → 12 records
+carrying `ram_mb`, 50.6 → 49.1 KiB.
+
+#### V-10 · Sighting times were missing
+*Cause:* only the thresholded census wrote them; a focus event, the most direct
+sighting, wrote neither.
+*Fix:* `GraphMemory.mark_seen()` (not an access — no score change), stamped on
+focus behind a per-node 60 s gate; `first_seen_at` becomes earliest-wins so the
+census's real, earlier start time is not lost to a focus that arrived first.
+*Proof:* 4000-switch focus storm — naive stamping 4000 extra lock cycles, gated
+0; stamping all 27 app/webapp nodes changed 0 relevance inputs.
+*Rejected:* stamp every focus (undoes V-1's lock-free storm path).
+
+#### V-11 · "The sensor crashes the orchestrator"
+*Evidence:* `Failed to read events` at 19:14:23 logged at ERROR (daemon not yet
+stopping), `orchestrator stopped` the same second; only SIGTERM/SIGINT can stop
+it. Both were consequences of the session ending (`PartOf=graphical-session.target`).
+*Real defect 1:* the unit was installed but **disabled**, so nothing restarted
+it — next start 21:53:43, **2 h 39 min down**. Enabling it is the user's call;
+`neuropaca doctor` now flags it (exits 1, prints the fix).
+*Real defect 2 (latent, never observed):* the pump gave up after ~62 s of
+failed reconnects. It now retries every 60 s forever, logging once.
+*Proof:* real pump at 1/100 scale recovers from 10 s … 1 h outages; 1 h costs
+65 connect attempts.
+*Rejected:* `Restart=always` (systemd never restarts a PartOf-propagated stop).
+
+#### V-12 · No action ever reached the user
+*Chain:* high tier is the only notification source (never reached live — D-14
+corroboration, by design); the action is SAFE tier (not a blocker); dry-run
+blocks execution (by design); and **delivery did not exist** — L9 only queued
+for `neuropaca notifications`.
+*Fix:* L9 hands live intents to `notify-send` → `org.freedesktop.Notifications`
+(argv, `--` guard, 5 s bound, 30 s rate limit, node names not raw ids). No new
+dependency (rules.md §9); unix socket only, zero egress holds. Dry-run intents
+are never shown.
+*Proof:* real executor + gate (live, throwaway config) → L9 → notify-send →
+cosmic-notifications: live sent=1, dry-run sent=0.
+*Rejected:* a Python D-Bus library (new dependency needs approval); popups
+during dry-run (an effect, which dry-run forbids).
+
+#### What is left
+- **Going live** — `action_dry_run = false` — is the user's decision (B7 review period).
+- **Enable the unit** — `systemctl --user enable neuropacad.service`.
+- **The live L9 socket file vanished** during 2026-09-11 while the daemon kept
+  running; cause unknown (tests, a second instance and runtime-dir cleanup ruled
+  out). A restart restores it. `doctor` then reports "not running" for a running daemon.
+- The graph on disk is still v6; the next start migrates it to v8.
+
 ---
 
 ## Appendix A — decision log index
@@ -4318,7 +4401,7 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | Toplevel-proxy lifetime probe | `--leak`: every proxy finalised < 1 s, `fd-readable ×0` after · `--hold`: continuous focus stream, 0 stray finalises | B16 |
 | Daemon A/B, B16 build, ~3 min real use | **19 focus switches tracked in real time, 0 watchdog reconnects, `window✓`** (old build: count frozen, a reconnect every ~180 s) | B16 |
 | B13 test count / B14 / B15 / B16 / B17 / B18 | 484 / ~524 / 561 / 587 / 643 / **699** green | B13–B18 |
-| Full suite (`-m ""`) after V-1 / V-2 / V-3 / V-4–V-7 | 719 / 724 / 740 / **797** passed | V-1–V-7 |
+| Full suite (`-m ""`) after V-1 / V-2 / V-3 / V-4–V-7 / V-8–V-12 | 719 / 724 / 740 / 797 / **866** passed | V-1–V-12 |
 | Hebbian sim, 3 days, old vs new rule | 15 edges over 6 apps (0.027–0.261) → 26 edges over 8 apps (0.022–0.979) | V-1 |
 | 20k-switch storm max loop lag, `main` / V-1 first cut / V-1 final | 14–23 / 30–57 / 16–24 ms | V-1 |
 | `relevance_score`, live graph, before → after | 2.98–9.00, median 3.38 → 0.69–10.00, median 1.34 | V-2 |
@@ -4329,9 +4412,14 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | Dead-hub reap, live graph | 70 → 65 nodes, **0 edges lost**, 0.08 ms; steady-state sweep 0.01 ms | V-5 |
 | Orphan linking @10k, whole-graph sweep vs ledger | **23.839 ms → 0.008 ms** idle (0.387 ms with 50 pending) | V-6 |
 | V-7 schema migration, live graph copy | v6 → v7, **0 node ids changed**, 47.9 → 47.9 KiB; stored questions ~1.25 KiB real / 16 KiB capped | V-7 |
+| Insight citations, live copy | 0 → 2 citations, probe count 23 → 23, 0.18 ms | V-8 |
+| Resource fields v7 → v8, live copy | 0 readings lost, 12/12 as-of recovered, 74 → 12 records carry `ram_mb`, 50.6 → 49.1 KiB | V-9 |
+| Focus storm, 4000 switches | 4000 → **0** extra graph-lock cycles with the 60 s gate; 0 relevance inputs changed | V-10 |
+| Daemon outage after session end, 2026-09-10 | **2 h 39 min** (unit disabled); pump recovers 10 s … 1 h outages at 1/100 scale | V-11 |
+| Notification end to end | live: desktop sent 1 · dry-run: sent 0 | V-12 |
 | B18 label migration, real graph | copy: 87 → 59 nodes, 51 → 23 generated · live: 89 → 60 nodes, 53 → 24 generated; 0 duplicate facts, 0 raw ids in labels, 0 caption collisions | B18 |
 | B17 graph clean, real soak graph | 63 → 57 nodes (24 → 19 `app:`/`webapp:`); Brave's 2 nodes → 1 keeping `ram_mb ≈ 3811` **and** the focus count **and** 4 webapp children; 0 dangling edges; idempotent | B17 |
-| Graph schema version | **v7** (`LabelSpec.text`, V-7 — 0 ids changed); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 |
+| Graph schema version | **v8** (optional resource reading + `resources_at`, V-9); v7 = `LabelSpec.text` (V-7); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 
