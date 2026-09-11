@@ -7,7 +7,8 @@ When CPU drops (you walked away) L2 publishes `IDLE_DETECTED`; the DMN starts on
 cancellable `idle_task`. The cycle has two halves:
 
 - **Reminiscence** — graph housekeeping: merge exact-duplicate nodes, link
-  orphans to `YOU`, prune stale / expired nodes. All of it runs through
+  orphans to `YOU`, prune stale / expired nodes, and reap `domain:` hubs nothing
+  routes to (V-5). All of it runs through
   `GraphMemory`'s bounded-transaction workers (one lock per mutation, yield
   between), so `ACTIVITY_DETECTED` cancelling the task mid-cycle never leaves the
   graph half-mutated.
@@ -220,9 +221,13 @@ class DefaultModeNetwork(BaseModule):
         linked = await self._graph.link_orphan_nodes()
         ttl = timedelta(hours=self.config.dmn_idle_thought_ttl_hours)
         pruned = await self._graph.prune_stale_nodes(ttl)
+        # V-5 · last, after every other sweep has settled the edges: a hub only
+        # counts as dead once this cycle's prunes and links are done, and a hub
+        # reaped here comes back the moment something routes to it again.
+        hubs = await self._graph.prune_dead_hubs()
         return (
             f"merged {merged} · faded {faded} · released {released} · "
-            f"linked {linked} · pruned {pruned}"
+            f"linked {linked} · pruned {pruned} · dead hubs {hubs}"
         )
 
     async def _imagination(self) -> int:

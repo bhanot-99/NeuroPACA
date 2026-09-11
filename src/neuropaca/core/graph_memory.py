@@ -662,6 +662,45 @@ class GraphMemory:
                 break
         return linked
 
+    async def prune_dead_hubs(self) -> int:
+        """V-5 · drop a `domain:` hub that nothing routes to.
+
+        All ten hubs are seeded on a fresh graph so a first run is
+        self-describing, but only what you actually do ever attaches to one.
+        On the live graph five sat at degree 0 forever — `domain:comms`,
+        `domain:projects` and `domain:meetings` because those apps had not been
+        opened yet, `domain:system` and `domain:mental_models` because **no
+        entry in either map file routes to them at all**, so nothing could ever
+        reach them. Either way they were dead weight in every graph view and an
+        empty branch in `find_related`.
+
+        Reaping rather than never-seeding is deliberate: it also catches a hub
+        that *becomes* dead (its last app uninstalled, its mapping removed), and
+        `_add_edge_unsafe` materialises a hub again the instant something routes
+        to it, so nothing is lost — a reaped hub is one keystroke from
+        returning. `YOU` is never reaped: it is the anchor `link_orphan_nodes`
+        attaches true orphans to.
+
+        One `_lock` cycle per removal with a yield between (rules.md §3).
+        Returns hubs dropped.
+        """
+        async with self._lock:
+            candidates = [hub for hub in sorted(DOMAIN_HUB_IDS) if self._is_dead_hub_unsafe(hub)]
+        dropped = 0
+        for hub in candidates:
+            async with self._lock:
+                if self._is_dead_hub_unsafe(hub):
+                    self._graph.remove_node(hub)
+                    self._dirty = True
+                    dropped += 1
+            await asyncio.sleep(0)
+        return dropped
+
+    def _is_dead_hub_unsafe(self, hub_id: str) -> bool:
+        if hub_id not in DOMAIN_HUB_IDS or hub_id not in self._graph:
+            return False
+        return int(self._graph.degree(hub_id)) == 0
+
     async def prune_stale_nodes(self, ttl: timedelta) -> int:
         """Drop a non-hub node when its `relevance_score` has decayed to ~0, or
         it has aged past `ttl` (D-13). An `INSIGHT` / `IDLE_THOUGHT` node past
@@ -1155,6 +1194,14 @@ class GraphMemory:
             return self._edge_from_attrs(
                 source_id, target_id, rel, self._graph.edges[source_id, target_id, rel]
             )
+        # V-5 · a routing hub is materialised the moment something routes to it.
+        # `prune_dead_hubs` reaps the ones nothing reaches, so a hub may legally
+        # be absent when its first app finally shows up; and networkx would
+        # otherwise auto-create a bare, attribute-less node that every later
+        # read (`_node_from_attrs`) raises KeyError on.
+        for endpoint in (source_id, target_id):
+            if endpoint in DOMAIN_HUB_IDS and endpoint not in self._graph:
+                self._seed_hub_unsafe(endpoint)
         edge = Edge(
             source_id=source_id,
             target_id=target_id,
@@ -1528,9 +1575,14 @@ class GraphMemory:
     def _seed_hubs_unsafe(self) -> None:
         self._add_node_unsafe("YOU", NodeType.CONCEPT, {"label": "YOU"})
         for slug in DOMAIN_SLUGS:
-            self._add_node_unsafe(
-                f"domain:{slug}", NodeType.CONCEPT, {"label": slug.replace("_", " ").title()}
-            )
+            self._seed_hub_unsafe(f"domain:{slug}")
+
+    def _seed_hub_unsafe(self, hub_id: str) -> None:
+        """One `domain:` hub, with the label every seeding path has always given
+        it. Shared by the fresh-graph seed and V-5's materialise-on-demand, so a
+        reaped hub comes back identical to the one it replaces."""
+        slug = hub_id.removeprefix("domain:")
+        self._add_node_unsafe(hub_id, NodeType.CONCEPT, {"label": slug.replace("_", " ").title()})
 
     # ---------------------------------------------------------------- (de)serialise
     @staticmethod
