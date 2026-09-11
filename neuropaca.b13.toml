@@ -63,7 +63,7 @@ pressure_decay_half_life_seconds = 60
 pressure_decay_interval_seconds = 10
 
 # L7 · action. Dry-run ON, safe tier only — same stance as neuropaca.toml.
-action_dry_run = true
+action_dry_run = false
 action_enabled_tiers = ["safe"]
 action_confirmation_timeout_seconds = 60
 quarantine_ttl_hours = 168
