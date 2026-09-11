@@ -91,6 +91,10 @@ _LATCH_RELEASE_FRACTION = 0.9
 # what makes it valuable is that it comes from a different layer.
 _SIGNAL_WEIGHT = 1.0
 _INSIGHT_WEIGHT = 0.8
+# V-8 · how many causing nodes one entry remembers. An investigation cites what
+# is current, not a history — and L8 spawns at most `_SUBCLUSTER_MAX` probes,
+# so a longer list would never be read.
+_MAX_EVIDENCE = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +109,13 @@ class PressureEntry:
 
     `sources` is additive to the blueprint (D-14) and load-bearing: it is what
     makes the high tier's corroboration test possible.
+
+    `evidence` (V-8) is the ids of the graph nodes that actually caused this
+    pressure — an L4 `insight:` node, today. `reason` names the *cause in
+    words* ("L4 anomaly (idle)"); `evidence` names it *by node*, which is what
+    lets L8's probes cite what they are investigating instead of every probe
+    and every insight hanging flatly off the same app. Bounded at
+    `_MAX_EVIDENCE`, most recent last.
     """
 
     node_id: str
@@ -113,6 +124,7 @@ class PressureEntry:
     created_at: datetime
     last_updated: datetime
     sources: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -128,6 +140,9 @@ class _Accumulation:
     # source -> monotonic time of that source's last high-confidence contribution
     corroboration: dict[str, float] = field(default_factory=dict)
     latched: str = ""  # "", "low", or "high"
+    # V-8 · node ids that caused this pressure, insertion-ordered, bounded. A
+    # dict rather than a list so a repeat moves to the back instead of growing.
+    evidence: dict[str, None] = field(default_factory=dict)
 
     def view(self) -> PressureEntry:
         return PressureEntry(
@@ -137,7 +152,15 @@ class _Accumulation:
             created_at=self.created_at,
             last_updated=self.last_updated,
             sources=tuple(sorted(self.corroboration)),
+            evidence=tuple(self.evidence),
         )
+
+    def cite(self, node_id: str) -> None:
+        """V-8 · record a causing node, newest last, oldest evicted."""
+        self.evidence.pop(node_id, None)
+        self.evidence[node_id] = None
+        while len(self.evidence) > _MAX_EVIDENCE:
+            self.evidence.pop(next(iter(self.evidence)))
 
 
 class PressureAccumulator(BaseModule):
@@ -240,6 +263,10 @@ class PressureAccumulator(BaseModule):
                     f"L4 {insight.category} ({insight.source_signal})",
                     source=SOURCE_LEARNING,
                     confidence=insight.confidence,
+                    # V-8 · the insight is stored before it is published, so its
+                    # node id is real here; carrying it is what lets L8 cite the
+                    # insight it is investigating.
+                    evidence=insight.node_id,
                 )
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._fail("on_insight_event", exc)
@@ -260,6 +287,7 @@ class PressureAccumulator(BaseModule):
         *,
         source: str = SOURCE_DIAGNOSIS,
         confidence: float = 1.0,
+        evidence: str = "",
     ) -> PressureEntry:
         """Decay this node to *now*, add `amount`, then re-evaluate the tiers.
 
@@ -293,6 +321,9 @@ class PressureAccumulator(BaseModule):
         entry.updated_monotonic = now_mono
         if confidence >= _CORROBORATION_MIN_CONFIDENCE:
             entry.corroboration[source] = now_mono
+        if evidence and evidence != node_id:
+            # V-8 · never cite the node under pressure as its own evidence
+            entry.cite(evidence)
 
         self._contributions += 1
         self._last_at = now_wall

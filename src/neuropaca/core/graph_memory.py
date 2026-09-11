@@ -803,6 +803,27 @@ class GraphMemory:
         visited.discard(node_id)
         return [self._node_from_attrs(n, self._graph.nodes[n]) for n in visited if n in self._graph]
 
+    def citations_of(self, node_id: str) -> list[Node]:
+        """V-8 · the generated nodes that cite `node_id` as their cause — L8's
+        probes for an L4 `insight:` node, newest first.
+
+        Before V-8 an insight and every probe about the same episode all pointed
+        flatly at the same `app:` node, so "what did the system look at when it
+        concluded this?" had no answer in the graph: the probes were siblings of
+        the insight, not its citations. They hang off it now, and this is the
+        read side of that — a plain in-edge walk on one node, no scan.
+        """
+        if node_id not in self._graph:
+            return []
+        cited = [
+            other
+            for other, keyed in self._graph._pred[node_id].items()
+            if RelationType.CAUSED_BY in keyed and other in self._graph
+        ]
+        nodes = [self._node_from_attrs(n, self._graph.nodes[n]) for n in cited]
+        nodes.sort(key=lambda n: (n.last_accessed, n.id), reverse=True)
+        return nodes
+
     def top_nodes_by_score(
         self,
         limit: int,
