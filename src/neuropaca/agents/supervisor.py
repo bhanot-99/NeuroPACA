@@ -66,6 +66,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -74,7 +75,7 @@ from neuropaca.agents.payloads import AgentCompletedPayload, AgentSpawnedPayload
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EventType
+from neuropaca.core.enums import EventType, RelationType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
@@ -274,7 +275,9 @@ class AgentSupervisor(BaseModule):
 
         created = 0
         for facet, value in facets[:_SUBCLUSTER_MAX]:
-            node_id = await self.spawn_node(facet, trigger_node=entry.node_id, value=value)
+            node_id = await self.spawn_node(
+                facet, trigger_node=entry.node_id, value=value, evidence=entry.evidence
+            )
             if node_id is None:
                 break  # graph-wide cap reached — stop, do not spin
             created += 1
@@ -282,7 +285,12 @@ class AgentSupervisor(BaseModule):
 
     # --------------------------------------------------- structural plasticity
     async def spawn_node(
-        self, facet: str, *, trigger_node: str, value: float | None = None
+        self,
+        facet: str,
+        *,
+        trigger_node: str,
+        value: float | None = None,
+        evidence: Sequence[str] = (),
     ) -> str | None:
         """Grow (or reinforce) one probe about `trigger_node`. Returns its id, or
         `None` if it would be new and the graph-wide cap is already reached.
@@ -290,6 +298,15 @@ class AgentSupervisor(BaseModule):
         B18: a probe is a fact — `LabelSpec(PROBE, (trigger,), facet, value)` —
         written through `upsert_fact`, so pressure on Brave twice refreshes the
         one "Brave · pressure" probe instead of growing a second.
+
+        V-8: `evidence` are the nodes that caused the pressure (an L4 `insight:`
+        node). Each becomes a `CAUSED_BY` edge **from** the probe, so an
+        insight's citations hang off the insight instead of every probe and
+        every insight pointing flatly at the same app. It is deliberately an
+        edge and not part of `spec.refs`: refs are identity, so citing the
+        insight there would mint a fresh probe per insight and race the
+        ephemeral cap, where the whole point of B18's fingerprint is that
+        "Brave · pressure" is *one* probe that gets refreshed.
 
         The cap is checked **before** the mutation and under `_spawn_lock`, so two
         concurrent agents cannot both see room and both take it. A reinforcement
@@ -311,7 +328,19 @@ class AgentSupervisor(BaseModule):
             node, created = await self._graph.upsert_fact(spec)
             if created:
                 self._nodes_created += 1
+        await self._cite(node.id, evidence)
         return node.id
+
+    async def _cite(self, probe_id: str, evidence: Sequence[str]) -> None:
+        """V-8 · wire `probe -CAUSED_BY-> cause` for every cause still in the
+        graph. Outside `_spawn_lock` (it is the cap's lock, not the graph's) and
+        skipped silently for a cause that has since been pruned — a citation of
+        something gone is worse than no citation. Weight 0.0, and both endpoints
+        are generated nodes, so `_edge_profile_unsafe` counts it as provenance:
+        the system's own bookkeeping neither earns nor lends relevance (V-2)."""
+        for cause in evidence:
+            if cause != probe_id and self._graph.has_node(cause):
+                await self._graph.add_edge(probe_id, cause, RelationType.CAUSED_BY, 0.0)
 
     async def kill_node(self, node_id: str) -> bool:
         """Delete one ephemeral node. Refuses anything that is not ephemeral —

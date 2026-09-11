@@ -42,6 +42,14 @@ _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 0.2
 _RECONNECT_DELAYS_SECONDS = (2.0, 4.0, 8.0, 16.0, 32.0)
+# V-11 · after the fast ladder above (~62 s in all) the pump used to `return`
+# for good — one compositor restart or resume-from-suspend longer than a minute
+# and the focus sensor stayed deaf for the rest of the daemon's life, however
+# long the compositor was back. It now keeps trying at this slow, fixed pace
+# forever: a failed attempt is one refused socket connect, so while the
+# compositor is gone this costs next to nothing, and the moment it returns the
+# sensor is back within one interval without a daemon restart.
+_SLOW_RECONNECT_SECONDS = 60.0
 # Roundtrips during connect to drain the compositor's initial state. Binding the
 # toplevel list makes each handler send a `get_cosmic_toplevel` request; a
 # further round collects the `state` replies to those.
@@ -279,12 +287,24 @@ class WaylandConnection:
                     self._teardown()
                     return
                 self.pump_errors += 1
-                _log.exception("WaylandConnection pump tick failed — will reconnect")
+                if failures < len(_RECONNECT_DELAYS_SECONDS):
+                    _log.exception("WaylandConnection pump tick failed — will reconnect")
+                    delay = _RECONNECT_DELAYS_SECONDS[failures]
+                else:
+                    # V-11 · never give up. Say so once, at the switch to the slow
+                    # pace — a week-long outage must not write a traceback a minute.
+                    if failures == len(_RECONNECT_DELAYS_SECONDS):
+                        _log.error(
+                            "WaylandConnection: compositor still unreachable after %d "
+                            "attempts — retrying every %.0fs until it returns",
+                            failures,
+                            _SLOW_RECONNECT_SECONDS,
+                        )
+                    else:
+                        _log.debug("WaylandConnection slow reconnect attempt %d failed", failures)
+                    delay = _SLOW_RECONNECT_SECONDS
                 self._teardown()
-                if failures >= len(_RECONNECT_DELAYS_SECONDS):
-                    _log.error("WaylandConnection giving up after %d reconnect attempts", failures)
-                    return
-                await asyncio.sleep(_RECONNECT_DELAYS_SECONDS[failures])
+                await asyncio.sleep(delay)
                 failures += 1
                 continue
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)

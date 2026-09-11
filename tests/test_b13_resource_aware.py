@@ -353,13 +353,14 @@ async def test_a_v2_graph_loads_under_v3(tmp_path: Path) -> None:
     await graph.load()  # must not raise
     node = graph.get_node("app:x")
     assert node is not None
-    assert node.ram_mb == 0.0 and node.first_seen_at is None
+    assert node.ram_mb is None and node.first_seen_at is None  # V-9: never measured
 
 
-def test_schema_version_is_v7() -> None:
+def test_schema_version_is_v8() -> None:
     # v3: B13 resource attrs. v4: B14 NodeType.WEBAPP. v5: B18 LabelSpec.
     # v6: V-2 decaying `activity` counter. v7: V-7 optional `spec.text`.
-    assert graph_schema_version() == 7
+    # v8: V-9 optional resource reading + `resources_at`.
+    assert graph_schema_version() == 8
 
 
 # gen-ref: a5cd4c80

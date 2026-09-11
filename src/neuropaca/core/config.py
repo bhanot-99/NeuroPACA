@@ -203,6 +203,13 @@ class Config:
     api_allowlist: list[str] = field(default_factory=list)
     # How long a paused dangerous action waits for the human. Expiry = refusal.
     action_confirmation_timeout_seconds: int = 60
+    # V-12 · L9 hands a *live* notification intent to the desktop through the
+    # session's `org.freedesktop.Notifications` server (the system `notify-send`,
+    # argv only — rules.md §5.4). A dry-run intent is never delivered: that is
+    # what dry-run means, and B7's review period depends on it — so with the
+    # shipped `action_dry_run = True` nothing changes on screen. This is the
+    # switch for the day actions go live; False keeps them terminal-only.
+    notify_desktop: bool = True
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4

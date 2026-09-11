@@ -21,6 +21,8 @@ Contract under test:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import os
 import sys
 import time
@@ -388,21 +390,106 @@ def test_seconds_since_event_climbs_once_an_event_has_landed() -> None:
     assert 4.0 < conn.seconds_since_event < 10.0
 
 
-async def test_permanent_failure_gives_up_and_reports_dead(monkeypatch) -> None:
+async def test_a_long_outage_never_gives_up_and_reports_dead_meanwhile(monkeypatch) -> None:
+    """V-11 · the pump used to `return` after the fast ladder (~62 s), leaving the
+    focus sensor deaf for the rest of the daemon's life. It now keeps trying —
+    and, as B15 requires, reports itself dead the whole time it is not connected."""
     monkeypatch.setattr(wc, "_RECONNECT_DELAYS_SECONDS", (0.01, 0.01))
+    monkeypatch.setattr(wc, "_SLOW_RECONNECT_SECONDS", 0.01)
     conn = WaylandConnection()
     conn._stopped = False
     conn._display = None
     conn.add(_FakeHandler())
+    attempts = 0
 
-    monkeypatch.setattr(conn, "_connect", lambda: (_ for _ in ()).throw(CollectorError("no comp")))
+    def refused() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise CollectorError("no compositor")
 
+    monkeypatch.setattr(conn, "_connect", refused)
     task = asyncio.get_running_loop().create_task(conn._pump())
     conn._task = task
-    await asyncio.sleep(0.15)
+    try:
+        await asyncio.sleep(0.2)
+        assert not task.done(), "the pump gave up"
+        assert conn.is_alive is False
+        assert attempts > len(wc._RECONNECT_DELAYS_SECONDS) + 3  # well past the old limit
+    finally:
+        conn._stopped = True
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
-    assert task.done()
-    assert conn.is_alive is False
+
+async def test_the_sensor_comes_back_when_the_compositor_does(monkeypatch) -> None:
+    """The point of never giving up: the compositor returns long after the old
+    give-up point, and focus sensing resumes with no daemon restart."""
+    monkeypatch.setattr(wc, "_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(wc, "_RECONNECT_DELAYS_SECONDS", (0.01, 0.01))
+    monkeypatch.setattr(wc, "_SLOW_RECONNECT_SECONDS", 0.01)
+    r, w = os.pipe()
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn._display = None
+    handler = _FakeHandler()
+    conn.add(handler)
+    attempts = 0
+
+    def comes_back() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 6:  # three times the old two-attempt budget
+            raise CollectorError("no compositor")
+        d = _FakeDisplay()
+        conn._display = d
+        conn._fd = r
+        conn._connected = True
+        for h in conn._handlers:
+            h.bound({})
+            h.primed()
+
+    monkeypatch.setattr(conn, "_connect", comes_back)
+    task = asyncio.get_running_loop().create_task(conn._pump())
+    conn._task = task
+    try:
+        await asyncio.sleep(0.3)
+        assert conn.is_alive, "did not recover"
+        assert conn.reconnects >= 1
+        assert handler.primed_calls >= 1  # handlers re-primed on the new connection
+    finally:
+        conn._stopped = True
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        os.close(r)
+        os.close(w)
+
+
+async def test_a_long_outage_logs_once_not_once_a_minute(monkeypatch, caplog) -> None:
+    """A week-long outage must not write a traceback every minute."""
+    caplog.set_level(logging.DEBUG, logger="neuropaca.sensing.activity.wayland_conn")
+    monkeypatch.setattr(wc, "_RECONNECT_DELAYS_SECONDS", (0.01,))
+    monkeypatch.setattr(wc, "_SLOW_RECONNECT_SECONDS", 0.01)
+    conn = WaylandConnection()
+    conn._stopped = False
+    conn._display = None
+    conn.add(_FakeHandler())
+    monkeypatch.setattr(conn, "_connect", lambda: (_ for _ in ()).throw(CollectorError("x")))
+    task = asyncio.get_running_loop().create_task(conn._pump())
+    conn._task = task
+    try:
+        await asyncio.sleep(0.2)
+    finally:
+        conn._stopped = True
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    switch = [r for r in caplog.records if "retrying every" in r.getMessage()]
+    assert len(switch) == 1 and switch[0].levelno == logging.ERROR
+    tracebacks = [r for r in caplog.records if r.exc_info]
+    assert len(tracebacks) == len(wc._RECONNECT_DELAYS_SECONDS)  # the fast ladder only
 
 
 async def test_shutdown_race_is_not_counted_as_a_pump_error(monkeypatch, caplog) -> None:

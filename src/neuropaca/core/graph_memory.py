@@ -84,7 +84,12 @@ from neuropaca.core.models import Edge, Node
 # loads as-is with `text` simply absent. The bump is for honesty in the other
 # direction: an older build reading a v7 file would silently drop the field,
 # and `_validate_schema_version` refusing it is the point of the check.
-_SCHEMA_VERSION = 7
+# v8 (V-9): `ram_mb` / `cpu_percent` are optional — absent means never measured,
+# not a reading of zero — and gain `resources_at`, the time they were measured.
+# A v7 file converts losslessly: the census wrote ram, cpu, first/last-seen as
+# one NodeSpec and never below `process_min_rss_mb`, so a stored ram of 0.0 was
+# always "never measured", and `last_seen_at` was exactly the reading's time.
+_SCHEMA_VERSION = 8
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
 
 # V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.
@@ -171,6 +176,11 @@ def _activity_at(data: dict[str, Any], when: datetime) -> float:
     last = _as_dt(data.get("last_accessed", when))
     age_days = max(0.0, (when - last).total_seconds() / 86400.0)
     return float(data.get("activity", 0.0)) * math.pow(0.5, age_days / _ACTIVITY_HALF_LIFE_DAYS)
+
+
+def _as_float_opt(value: Any) -> float | None:
+    """V-9 · `None` stays `None` (never measured); anything else is a reading."""
+    return None if value is None else float(value)
 
 
 def _as_dt_opt(value: Any) -> datetime | None:
@@ -285,6 +295,35 @@ class GraphMemory:
     ) -> Edge:
         async with self._lock:
             return self._add_edge_unsafe(source_id, target_id, relation, weight)
+
+    async def mark_seen(self, node_id: str, when: datetime) -> bool:
+        """V-10 · record one sighting of an existing node: `first_seen_at` moves
+        only earlier, `last_seen_at` only later. Returns whether either moved.
+
+        Deliberately NOT an access: no `_touch_unsafe`, so `activity`,
+        `access_count` and `last_accessed` — and through them `relevance_score`
+        (V-2) — are exactly what they were. "When did I last see this" and "how
+        much does this matter" are different questions, and V-10 must not change
+        the answer to the second. A missing node is a no-op, never a create: a
+        sighting of something the graph does not hold is not this layer's call.
+        One `_lock` cycle.
+        """
+        async with self._lock:
+            if node_id not in self._graph:
+                return False
+            data = self._graph.nodes[node_id]
+            moved = False
+            first = _as_dt_opt(data.get("first_seen_at"))
+            if first is None or when < first:
+                data["first_seen_at"] = when
+                moved = True
+            last = _as_dt_opt(data.get("last_seen_at"))
+            if last is None or when > last:
+                data["last_seen_at"] = when
+                moved = True
+            if moved:
+                self._dirty = True
+            return moved
 
     async def update_node(self, node_id: str, attributes: dict[str, Any]) -> None:
         async with self._lock:
@@ -803,6 +842,27 @@ class GraphMemory:
         visited.discard(node_id)
         return [self._node_from_attrs(n, self._graph.nodes[n]) for n in visited if n in self._graph]
 
+    def citations_of(self, node_id: str) -> list[Node]:
+        """V-8 · the generated nodes that cite `node_id` as their cause — L8's
+        probes for an L4 `insight:` node, newest first.
+
+        Before V-8 an insight and every probe about the same episode all pointed
+        flatly at the same `app:` node, so "what did the system look at when it
+        concluded this?" had no answer in the graph: the probes were siblings of
+        the insight, not its citations. They hang off it now, and this is the
+        read side of that — a plain in-edge walk on one node, no scan.
+        """
+        if node_id not in self._graph:
+            return []
+        cited = [
+            other
+            for other, keyed in self._graph._pred[node_id].items()
+            if RelationType.CAUSED_BY in keyed and other in self._graph
+        ]
+        nodes = [self._node_from_attrs(n, self._graph.nodes[n]) for n in cited]
+        nodes.sort(key=lambda n: (n.last_accessed, n.id), reverse=True)
+        return nodes
+
     def top_nodes_by_score(
         self,
         limit: int,
@@ -1027,7 +1087,7 @@ class GraphMemory:
         first_seen = _as_dt_opt(data.get("first_seen_at"))
         last_seen = _as_dt_opt(data.get("last_seen_at"))
         spec = data.get("spec")
-        return {
+        record: dict[str, Any] = {
             "id": node_id,
             "node_type": str(data["node_type"]),
             "label": str(data["label"]),
@@ -1037,13 +1097,22 @@ class GraphMemory:
             "relevance_score": float(data["relevance_score"]),
             "priority": int(data["priority"]),
             "surfaced_at": surfaced.isoformat() if surfaced is not None else None,
-            "ram_mb": float(data.get("ram_mb", 0.0)),
-            "cpu_percent": float(data.get("cpu_percent", 0.0)),
             "first_seen_at": first_seen.isoformat() if first_seen is not None else None,
             "last_seen_at": last_seen.isoformat() if last_seen is not None else None,
             "spec": spec.to_record() if isinstance(spec, LabelSpec) else None,
             "activity": round(float(data.get("activity", 0.0)), 6),
         }
+        # V-9 · only a measured node carries a reading: two dead 0.0 floats on
+        # every concept, hub, probe and web-app claimed a measurement of zero.
+        ram, cpu = _as_float_opt(data.get("ram_mb")), _as_float_opt(data.get("cpu_percent"))
+        measured = _as_dt_opt(data.get("resources_at"))
+        if ram is not None:
+            record["ram_mb"] = ram
+        if cpu is not None:
+            record["cpu_percent"] = cpu
+        if measured is not None:
+            record["resources_at"] = measured.isoformat()
+        return record
 
     @staticmethod
     def _edge_record(u: str, v: str, key: Any, data: dict[str, Any]) -> dict[str, Any]:
@@ -1101,8 +1170,9 @@ class GraphMemory:
             relevance_score=float(attributes.get("relevance_score", 0.0)),
             priority=int(attributes.get("priority", 0)),
             surfaced_at=_as_dt_opt(attributes.get("surfaced_at")),
-            ram_mb=float(attributes.get("ram_mb", 0.0)),
-            cpu_percent=float(attributes.get("cpu_percent", 0.0)),
+            ram_mb=_as_float_opt(attributes.get("ram_mb")),
+            cpu_percent=_as_float_opt(attributes.get("cpu_percent")),
+            resources_at=_as_dt_opt(attributes.get("resources_at")),
             first_seen_at=_as_dt_opt(attributes.get("first_seen_at")),
             last_seen_at=_as_dt_opt(attributes.get("last_seen_at")),
             # creation is one sighting (V-2); a caller seeding `access_count`
@@ -1327,7 +1397,7 @@ class GraphMemory:
         }
     )
     _UPSERT_DT_OPT_KEYS: ClassVar[frozenset[str]] = frozenset(
-        {"surfaced_at", "first_seen_at", "last_seen_at"}
+        {"surfaced_at", "first_seen_at", "last_seen_at", "resources_at"}
     )
 
     def _upsert_node_unsafe(
@@ -1339,10 +1409,16 @@ class GraphMemory:
         for key, value in attributes.items():
             if key not in self._UPSERT_PROTECTED:
                 data[key] = _as_dt_opt(value) if key in self._UPSERT_DT_OPT_KEYS else value
-        # A first census sighting still sets `first_seen_at` once, even though the
-        # key is protected against later overwrites.
-        if data.get("first_seen_at") is None and attributes.get("first_seen_at") is not None:
-            data["first_seen_at"] = _as_dt_opt(attributes["first_seen_at"])
+        # `first_seen_at` is protected from being overwritten by a LATER time, but
+        # an EARLIER one still wins (V-10). Write-once was right while the census
+        # was the only writer; now a focus event can stamp a node before the
+        # census has run, and the census then reports the process's real — and
+        # earlier — start time, which write-once would throw away. Earliest-wins
+        # is the rule `_merge_nodes_unsafe` already used.
+        offered = _as_dt_opt(attributes.get("first_seen_at"))
+        current = _as_dt_opt(data.get("first_seen_at"))
+        if offered is not None and (current is None or offered < current):
+            data["first_seen_at"] = offered
         self._touch_unsafe(data)
         self._dirty = True
         return self._node_from_attrs(node_id, data)
@@ -1463,17 +1539,22 @@ class GraphMemory:
         if s.get("surfaced_at") is None and v.get("surfaced_at") is not None:
             s["surfaced_at"] = _as_dt_opt(v.get("surfaced_at"))
 
-        # B13-B3 · resource attributes: keep the earliest first-sighting and the
-        # most recent census — and the ram/cpu numbers from whichever side owns
-        # that most recent sighting.
+        # B13-B3 · sightings: keep the earliest first and the latest last.
         s_first, v_first = _as_dt_opt(s.get("first_seen_at")), _as_dt_opt(v.get("first_seen_at"))
         if v_first is not None and (s_first is None or v_first < s_first):
             s["first_seen_at"] = v_first
         s_last, v_last = _as_dt_opt(s.get("last_seen_at")), _as_dt_opt(v.get("last_seen_at"))
         if v_last is not None and (s_last is None or v_last > s_last):
             s["last_seen_at"] = v_last
-            s["ram_mb"] = float(v.get("ram_mb", 0.0))
-            s["cpu_percent"] = float(v.get("cpu_percent", 0.0))
+        # V-9 · the reading comes from whichever side *measured* more recently —
+        # its own timestamp, not the sighting's. Keyed on `last_seen_at` it
+        # would take the more-recently-*seen* side's numbers, which (once focus
+        # counts as a sighting) is often the side that was never measured.
+        s_res, v_res = _as_dt_opt(s.get("resources_at")), _as_dt_opt(v.get("resources_at"))
+        if v_res is not None and (s_res is None or v_res > s_res):
+            s["resources_at"] = v_res
+            s["ram_mb"] = _as_float_opt(v.get("ram_mb"))
+            s["cpu_percent"] = _as_float_opt(v.get("cpu_percent"))
 
         # Rewire every edge on the victim to the survivor, dropping any edge
         # between the two (it would become a self-loop) and folding a weight into
@@ -1687,10 +1768,37 @@ class GraphMemory:
             )
         return int(raw)
 
+    @staticmethod
+    def _resources_from_record(
+        raw: dict[str, Any],
+    ) -> tuple[float | None, float | None, datetime | None]:
+        """V-9 · `(ram_mb, cpu_percent, resources_at)` for one stored node.
+
+        A v8 record says what it means: an absent reading was never taken. A
+        record from before v8 (no `resources_at` key) stored 0.0 for "never
+        measured" and has to be read by what the census could have written: it
+        emitted ram, cpu and first/last-seen as ONE `NodeSpec`, and never for a
+        process under `process_min_rss_mb`, so a stored ram of 0.0 (or none, in a
+        v1/v2 file) was always unmeasured — and `last_seen_at`, which only the
+        census wrote, is exactly when a real reading was taken. The conversion
+        therefore loses nothing.
+        """
+        if "resources_at" in raw:
+            return (
+                _as_float_opt(raw.get("ram_mb")),
+                _as_float_opt(raw.get("cpu_percent")),
+                _as_dt_opt(raw.get("resources_at")),
+            )
+        ram = float(raw.get("ram_mb") or 0.0)
+        if ram <= 0.0:
+            return None, None, None
+        return ram, float(raw.get("cpu_percent") or 0.0), _as_dt_opt(raw.get("last_seen_at"))
+
     def _deserialise(self, payload: dict[str, Any]) -> Any:
         self._validate_schema_version(payload)
         graph = nx.MultiDiGraph()
         for raw in payload.get("nodes", []):
+            ram, cpu, measured = self._resources_from_record(raw)
             node = Node(
                 id=raw["id"],
                 node_type=NodeType(raw["node_type"]),
@@ -1701,8 +1809,9 @@ class GraphMemory:
                 relevance_score=float(raw["relevance_score"]),
                 priority=int(raw["priority"]),
                 surfaced_at=_as_dt_opt(raw.get("surfaced_at")),  # absent in a v1 file
-                ram_mb=float(raw.get("ram_mb", 0.0)),  # absent in a v1/v2 file
-                cpu_percent=float(raw.get("cpu_percent", 0.0)),
+                ram_mb=ram,
+                cpu_percent=cpu,
+                resources_at=measured,
                 first_seen_at=_as_dt_opt(raw.get("first_seen_at")),
                 last_seen_at=_as_dt_opt(raw.get("last_seen_at")),
                 spec=LabelSpec.from_record(raw.get("spec")),  # absent before v5
@@ -1734,6 +1843,7 @@ class GraphMemory:
             "surfaced_at": node.surfaced_at,
             "ram_mb": node.ram_mb,
             "cpu_percent": node.cpu_percent,
+            "resources_at": node.resources_at,
             "first_seen_at": node.first_seen_at,
             "last_seen_at": node.last_seen_at,
             "spec": node.spec,
@@ -1752,8 +1862,9 @@ class GraphMemory:
             relevance_score=float(data["relevance_score"]),
             priority=int(data["priority"]),
             surfaced_at=_as_dt_opt(data.get("surfaced_at")),
-            ram_mb=float(data.get("ram_mb", 0.0)),
-            cpu_percent=float(data.get("cpu_percent", 0.0)),
+            ram_mb=_as_float_opt(data.get("ram_mb")),
+            cpu_percent=_as_float_opt(data.get("cpu_percent")),
+            resources_at=_as_dt_opt(data.get("resources_at")),
             first_seen_at=_as_dt_opt(data.get("first_seen_at")),
             last_seen_at=_as_dt_opt(data.get("last_seen_at")),
             spec=_as_spec(data.get("spec")),

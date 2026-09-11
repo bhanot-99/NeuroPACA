@@ -65,12 +65,22 @@ class Node:
     surfaced_at: datetime | None = None
     # B13-B3 · durable resource attributes for `app:<id>` nodes (schema v3, D-19).
     # Written by a pattern's `NodeSpec.attributes` when the concurrent `process`
-    # census has a matching row; 0.0 / None on every node the census never sees.
-    # `first_seen_at` is write-once (like `created_at`); the other three refresh
-    # on every census sighting. Deliberately NOT fed into `relevance_score` — see
-    # B13 §7: importance tracks behavioural salience, not memory footprint.
-    ram_mb: float = 0.0
-    cpu_percent: float = 0.0
+    # census has a matching row. `first_seen_at` only ever moves earlier and
+    # `last_seen_at` only later (V-10: a focus event is a sighting too, not just
+    # the census); the reading refreshes on every census row. Deliberately NOT fed
+    # into `relevance_score` — see B13 §7: importance tracks behavioural
+    # salience, not memory footprint.
+    #
+    # V-9 · `None` means *never measured*. They were 0.0 on every node the census
+    # never saw — concepts, hubs, probes, web-apps, any app under
+    # `process_min_rss_mb` — which is indistinguishable from a real reading of
+    # zero, and cost two dead floats in every record. `resources_at` is when the
+    # pair was measured: the census used to be the only writer of `last_seen_at`
+    # too, so that doubled as the reading's timestamp, which stops being true the
+    # moment anything else counts as a sighting (V-10).
+    ram_mb: float | None = None
+    cpu_percent: float | None = None
+    resources_at: datetime | None = None
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
     # B18 · what a generated node is ABOUT (schema v5). When set, `label` is only

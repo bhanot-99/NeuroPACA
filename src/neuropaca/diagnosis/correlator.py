@@ -20,7 +20,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.config import Config
@@ -46,6 +46,12 @@ _ACTIVITY_COLLECTOR = "activity"
 # focused overnight must not wire to the first app of the morning.
 _MAX_FOCUS_DWELL_SECONDS = 2 * 3600.0
 _CANON_CACHE_MAX = 1024
+# V-10 · a focused node's sighting is written at most this often. A focus storm
+# (alt-tab, or a compositor firing focus events) must stay lock-free — V-1 went
+# to lengths for that — and "last seen" at minute resolution is all a briefing
+# can use. Past `_CANON_CACHE_MAX` entries the gate drops the ones older than
+# this window: they would pass the gate anyway, so they carry no information.
+_SIGHTING_REFRESH_SECONDS = 60.0
 
 
 def _now() -> float:
@@ -109,6 +115,8 @@ class SignalCorrelator(BaseModule):
         self._refractory = float(config.coactivation_refractory_seconds)
         self._pair_wired_at: dict[frozenset[str], float] = {}
         self._canon_cache: dict[str, tuple[str, str]] = {}
+        # V-10 · node id -> monotonic time its last sighting was written
+        self._sighted_at: dict[str, float] = {}
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
@@ -188,6 +196,17 @@ class SignalCorrelator(BaseModule):
                     await self._graph.upsert_node(node_id, NodeType.APP, {"label": label})
             if webapp is not None:
                 await self._classify_webapp_into_graph(webapp, app_id, webapp_domain)
+
+            # V-10 · a focus is the most direct sighting there is, yet only the
+            # census (apps over `process_min_rss_mb`) ever wrote first/last-seen,
+            # so a light app you live in all day had neither. A tab is a sighting
+            # of its browser too. Rate-limited per node; excluded windows (dialogs,
+            # portals) are not activity and are not stamped.
+            if webapp is not None:
+                await self._mark_sighting(f"webapp:{webapp}")
+                await self._mark_sighting(self._canon_app_id(app_id)[0])
+            elif not excluded:
+                await self._mark_sighting(self._canon_app_id(app_id)[0])
 
             # T7 · Hebbian co-activation — the focused node is the tab if we
             # identified one, else the app. Both nodes now exist (upserted above).
@@ -283,6 +302,24 @@ class SignalCorrelator(BaseModule):
             if domain_id:
                 await self._graph.add_edge(node_id, domain_id, RelationType.PART_OF)
             self._known_webapps.add(webapp)
+
+    async def _mark_sighting(self, node_id: str) -> None:
+        """V-10 · stamp `node_id` as seen now, at most once per
+        `_SIGHTING_REFRESH_SECONDS`. The gate is a lock-free dict read, so a
+        repeat focus inside the window costs no graph lock at all; only a stale
+        sighting pays one `mark_seen` lock cycle, which never touches the node's
+        activity or score."""
+        now = _now()
+        if now - self._sighted_at.get(node_id, -math.inf) < _SIGHTING_REFRESH_SECONDS:
+            return
+        self._sighted_at[node_id] = now
+        if len(self._sighted_at) > _CANON_CACHE_MAX:
+            self._sighted_at = {
+                nid: at
+                for nid, at in self._sighted_at.items()
+                if now - at < _SIGHTING_REFRESH_SECONDS
+            }
+        await self._graph.mark_seen(node_id, datetime.now(UTC))
 
     def _focus_excluded(self, app_id: str) -> bool:
         key = self._canon_app_id(app_id)[0].removeprefix("app:")
