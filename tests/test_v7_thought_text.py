@@ -241,3 +241,6 @@ async def test_a_stored_idle_thought_carries_the_question_as_asked(tmp_path) -> 
     finally:
         await dmn.stop()
         await bus.stop()
+
+
+# gen-ref: e451c3a5

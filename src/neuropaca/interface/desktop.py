@@ -82,3 +82,6 @@ async def notify(
         await proc.wait()
         _log.warning("desktop notification timed out after %.0fs", wait_seconds)
         return False
+
+
+# gen-ref: 68090d6e

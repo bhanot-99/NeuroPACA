@@ -59,6 +59,15 @@ class EventType(StrEnum):
     # B5 health bridge; `rules.md §0` ("no module imports another module") holds.
     ACTION_PROPOSAL = auto()
     ACTION_PROPOSAL_RESULT = auto()
+    # A0 · Interface (F1, VISION_PHASES.md). The `Moment` seam — every typed,
+    # grounded, evidence-carrying thing the machine proposes to say. Introduced
+    # by `MomentComposer` (published straight through to delivery in A0);
+    # gated by A3 once the guardian exists (deliver / hold / drop); fed to S5's
+    # ranker via the feedback event. `MOMENT_DELIVERED` / `MOMENT_FEEDBACK` are
+    # defined now (the closed set) though only A3/F2 populate them.
+    MOMENT_PROPOSED = auto()
+    MOMENT_DELIVERED = auto()
+    MOMENT_FEEDBACK = auto()
 
 
 class NodeType(StrEnum):

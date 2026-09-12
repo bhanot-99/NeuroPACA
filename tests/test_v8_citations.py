@@ -269,3 +269,6 @@ async def test_citing_survives_a_save_and_load(tmp_path) -> None:
     reloaded = GraphMemory.get_instance(persistence_path=str(tmp_path / "g.json"))
     await reloaded.load()
     assert reloaded.citations_of(insight.id)
+
+
+# gen-ref: 759dcb05

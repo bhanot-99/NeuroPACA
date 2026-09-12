@@ -294,3 +294,6 @@ async def test_sightings_never_move_the_score_inputs(tmp_path, repeat: int) -> N
         assert (after.activity, after.access_count) == (before.activity, before.access_count)
     finally:
         await bus.stop()
+
+
+# gen-ref: 70de458a

@@ -184,3 +184,6 @@ def test_the_unroutable_domains_are_still_a_valid_vocabulary() -> None:
     assert "system" in DOMAIN_SLUGS
     assert "mental_models" in DOMAIN_SLUGS
     assert HUB_NODE_IDS == DOMAIN_HUB_IDS | {"YOU"}
+
+
+# gen-ref: a0b774d9

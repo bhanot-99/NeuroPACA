@@ -210,6 +210,17 @@ class Config:
     # shipped `action_dry_run = True` nothing changes on screen. This is the
     # switch for the day actions go live; False keeps them terminal-only.
     notify_desktop: bool = True
+    # A0 · the welcome-back moment (VISION_PHASES.md). `welcome_min_idle_minutes`
+    # is the shortest idle spell worth greeting — below it, ACTIVITY_DETECTED's
+    # own `idle_seconds` is used directly, no separate timer kept. Real-data spike
+    # (2026-09-12 soak): `insights` stayed 0 across the whole sampled soak window,
+    # so the "you were in {app}" half is the one that actually carries most
+    # returns — the design already drops either half independently when it has
+    # nothing grounded to say. `welcome_daily_cap` bounds how many fire per day
+    # before A3's guardian exists to do that job properly.
+    welcome_enabled: bool = True
+    welcome_min_idle_minutes: int = 20
+    welcome_daily_cap: int = 6
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -340,6 +351,8 @@ class Config:
             "agent_wall_clock_budget_seconds",
             "agent_idle_ttl_days",
             "max_ephemeral_nodes",
+            "welcome_min_idle_minutes",
+            "welcome_daily_cap",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")

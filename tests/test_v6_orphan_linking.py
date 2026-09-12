@@ -192,3 +192,6 @@ async def test_a_failing_link_pass_does_not_break_the_tick(tmp_path) -> None:
 
     gm.link_new_orphans = boom  # type: ignore[method-assign]
     await scheduler._tick()  # logged, not raised
+
+
+# gen-ref: 7f201b5d

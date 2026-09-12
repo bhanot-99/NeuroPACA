@@ -259,3 +259,6 @@ async def test_a_merge_of_two_unmeasured_nodes_stays_unmeasured(tmp_path) -> Non
     await gm.add_node("app:b", NodeType.APP, None)
     assert gm._merge_nodes_unsafe("app:a", "app:b")
     assert gm.get_node("app:a").ram_mb is None
+
+
+# gen-ref: 3edd5f61

@@ -94,6 +94,26 @@ class Node:
     activity: float = 1.0
 
 
+@dataclass(frozen=True, slots=True)
+class Moment:
+    """A typed, grounded, evidence-carrying proposal to speak (A0, F1 —
+    VISION_PHASES.md). Every entity named in `text` must resolve to an id in
+    `evidence`, and each id must exist in the graph — a moment that fails that
+    check is dropped and logged, never delivered.
+
+    Introduced in A0 (published straight through to delivery); gated by A3 once
+    the guardian exists (deliver / hold / drop); fed to S5's ranker via
+    `MOMENT_FEEDBACK`.
+    """
+
+    kind: str  # "welcome_back" | "briefing" | "mirror" | "offer" | "nudge"
+    text: str  # rendered, deterministic, grounded
+    evidence: tuple[str, ...]  # graph node ids / episode ids every claim rests on
+    value: float  # V(m) in VISION.md §3.6 — how much it is worth saying
+    context: dict[str, Any]  # focus state, hour bucket, recent dismissals …
+    expires_at: datetime  # a held moment is dropped after this
+
+
 @dataclass(slots=True)
 class Edge:
     """A directed, typed, weighted edge. `(source_id, target_id, relation)` is the

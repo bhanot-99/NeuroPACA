@@ -212,3 +212,6 @@ async def test_a_delivery_crash_is_logged_not_raised(tmp_path, monkeypatch) -> N
     await layer.on_action_triggered(_intent("x", dry_run=False))
     await _settle(layer)
     assert layer._desktop_failed == 1
+
+
+# gen-ref: 5fd7d9fb

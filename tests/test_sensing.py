@@ -256,7 +256,8 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> L9 (B8, D-16; Architecture.md §10 A7)
+    # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> A0 -> L9 (B8, D-16; Architecture.md
+    # §10 A7; VISION_PHASES.md A0 adds `moments` before the final L9 interface).
     assert [m.name for m in modules] == [
         "sensing",
         "diagnosis",
@@ -265,6 +266,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "action",
         "agents",
         "idle",
+        "moments",
         "interface",
     ]
     assert isinstance(modules[0], XMetricCollector)
@@ -295,6 +297,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "action",
         "agents",
         "idle",
+        "moments",
         "interface",
     ]
     assert with_activity[0]._emit_idle_from_cpu is False
