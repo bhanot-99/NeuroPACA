@@ -184,23 +184,4 @@ class SignalType(StrEnum):
     WORKING_SET_CHANGE = auto()
 
 
-class InterfaceChannel(StrEnum):
-    """Where an L9 `Message` is delivered (Architecture.md §9)."""
-
-    CLI = auto()
-    WEB_SOCKET = auto()
-    NOTIFICATION_ONLY = auto()
-
-
-class MessageRole(StrEnum):
-    """Who authored an L9 `Message` (Architecture.md §9, B8). The blueprint's
-    `Message.role: str` is replaced by this closed set — a bare string here is a
-    defect like anywhere else (rules.md §7). `conversation_history` is RAM-only
-    (rules.md §6), so these values never reach disk."""
-
-    USER = auto()
-    ASSISTANT = auto()
-    SYSTEM = auto()
-
-
 # gen-ref: aaa10008

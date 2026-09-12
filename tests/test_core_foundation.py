@@ -17,8 +17,6 @@ import pytest
 from neuropaca.core.config import Config
 from neuropaca.core.enums import (
     EventType,
-    InterfaceChannel,
-    MessageRole,
     NodeType,
     RelationType,
     SignalType,
@@ -44,8 +42,6 @@ def test_enum_members_match_the_blueprint() -> None:
     assert len(NodeType) == 12  # +IDLE_THOUGHT (B6, D-13) +WEBAPP (B14, schema v4)
     assert len(RelationType) == 8
     assert len(SignalType) == 8  # +WORKING_SET_CHANGE (B13-B4, D-19(e))
-    assert len(InterfaceChannel) == 3
-    assert len(MessageRole) == 3  # B5
 
 
 def test_strenum_member_is_its_wire_string() -> None:
