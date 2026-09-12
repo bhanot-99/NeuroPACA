@@ -282,6 +282,77 @@ def test_doctor_surfaces_a_previous_boot_recovery(
     assert "quarantined graph" in capsys.readouterr().out
 
 
+def _write_episode_config(tmp_path: Path, *, episodes_db: Path) -> Path:
+    cfg = tmp_path / "neuropaca.toml"
+    cfg.write_text(
+        'inference_backend = "fake"\n'
+        f'graph_db_path = "{tmp_path / "data" / "graph.json"}"\n'
+        "episodes_enabled = true\n"
+        f'episodes_db_path = "{episodes_db}"\n',
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_doctor_reports_episodes_disabled_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph = tmp_path / "data" / "graph.json"
+    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
+    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
+
+    assert offline.doctor([]) == 0
+    assert "episodes_enabled = false" in capsys.readouterr().out
+
+
+def test_doctor_reports_episode_store_row_count_and_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from neuropaca.core.enums import EpisodeKind
+    from neuropaca.core.episodes import EpisodeStore
+
+    episodes_db = tmp_path / "data" / "episodes.sqlite"
+
+    async def _seed() -> None:
+        store = EpisodeStore(episodes_db)
+        await store.start()
+        t0 = datetime(2026, 9, 15, 9, 0, tzinfo=UTC)
+        store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", t0, t0 + timedelta(minutes=5))
+        await store.flush()
+        await store.stop()
+
+    asyncio.run(_seed())
+
+    monkeypatch.setenv(
+        "NEUROPACA_CONFIG", str(_write_episode_config(tmp_path, episodes_db=episodes_db))
+    )
+    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
+
+    assert offline.doctor([]) == 0
+    out = capsys.readouterr().out
+    assert "1 row(s)" in out
+    assert "episode schema" in out
+
+
+def test_doctor_reports_an_unreadable_episode_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    episodes_db = tmp_path / "data" / "episodes.sqlite"
+    episodes_db.parent.mkdir(parents=True, exist_ok=True)
+    episodes_db.write_text("not a sqlite file", encoding="utf-8")
+
+    monkeypatch.setenv(
+        "NEUROPACA_CONFIG", str(_write_episode_config(tmp_path, episodes_db=episodes_db))
+    )
+    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
+
+    assert offline.doctor([]) == 1
+    assert "UNREADABLE" in capsys.readouterr().out
+
+
 def test_doctor_never_opens_the_socket_when_the_daemon_is_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -380,7 +451,7 @@ def test_panic_refuses_when_the_config_will_not_load(
 
 
 def test_the_offline_verbs_are_dispatched_before_the_socket_client() -> None:
-    for verb in ("doctor", "export", "panic"):
+    for verb in ("doctor", "export", "panic", "repair-graph"):
         assert verb in offline.OFFLINE_VERBS
     assert offline.dispatch([]) is None
     assert offline.dispatch(["health"]) is None

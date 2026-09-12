@@ -8,7 +8,9 @@ Shape (B5, re-scoped in B12):
 - a **Unix-domain socket** at ``$XDG_RUNTIME_DIR/neuropaca.sock`` (JSONL framing:
   one JSON request per line, one JSON response per line). The thin CLI
   (`interface/cli.py`) is the only client. Ops: `health`, `insights`,
-  `notifications`, `confirmations`, `confirm`, `run`, `explain`.
+  `notifications`, `confirmations`, `confirm`, `run`, `explain`, `briefing`,
+  `reload-graph` (internal — `interface/offline.py`'s `repair-graph` verb is
+  the only caller, not a `neuropaca` verb of its own).
 - the terminal is a **read-only project guide** now: `neuropaca tell` / `overview`
   answer deterministically on the client side (`interface/describe.py`) and never
   reach this module. There is no natural-language query of the behavioural graph
@@ -42,17 +44,19 @@ import tempfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType, MessageRole, NodeType
+from neuropaca.core.errors import GraphMemoryError
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.logging import redact
-from neuropaca.core.models import Event, system_error_event
+from neuropaca.core.models import Event, Moment, system_error_event
 from neuropaca.interface import desktop
 from neuropaca.interface.message import Message
 from neuropaca.learning.insight import Insight
@@ -67,6 +71,9 @@ _log = logging.getLogger(__name__)
 _MAX_HISTORY = 50  # conversation_history turns kept in RAM (blueprint max_history_length)
 _EXPLAIN_INFER_TIMEOUT = 45.0  # B12 — CPU wall-clock ceiling for the `tell --explain` paraphrase
 _HEALTH_TIMEOUT = 2.0
+# S0's on-demand briefing composes fresh (a PPR walk, not a cache read) —
+# generous next to `_HEALTH_TIMEOUT`, still well under a human's patience.
+_BRIEFING_TIMEOUT = 5.0
 
 # Insight surfacing (B5, B3; B6 adds `proactive` — L6 idle thoughts, D-13)
 _INSIGHT_MIN_CONFIDENCE = 0.75
@@ -106,6 +113,18 @@ def default_socket_path() -> Path:
     return Path(base) / "neuropaca.sock"
 
 
+def _moment_to_dict(moment: Moment) -> dict[str, Any]:
+    """A `Moment` over the wire — `json.dumps(..., default=str)` cannot encode
+    a dataclass or a tuple key-order-stably on its own, so this is explicit."""
+    return {
+        "kind": moment.kind,
+        "text": moment.text,
+        "evidence": list(moment.evidence),
+        "value": moment.value,
+        "context": moment.context,
+    }
+
+
 class InterfaceLayer(BaseModule):
     def __init__(
         self,
@@ -126,6 +145,11 @@ class InterfaceLayer(BaseModule):
         self._conversation_history: list[Message] = []
         self._latest_health: dict[str, Any] | None = None
         self._health_waiters: list[asyncio.Future[dict[str, Any] | None]] = []
+        # S0 · `neuropaca briefing` (VISION_PHASES.md). Keyed by request_id,
+        # not a broadcast list like health's — a report legitimately differs
+        # request to request (a fresh composition), so one waiter must not
+        # resolve on another's answer.
+        self._briefing_waiters: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
         self._pending_insights: list[Insight] = []
         self._pending_notifications: list[dict[str, Any]] = []
         # V-12 · desktop delivery state
@@ -147,6 +171,7 @@ class InterfaceLayer(BaseModule):
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.subscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
+        self.event_bus.subscribe(EventType.BRIEFING_REPORT, self._on_briefing_report)
         # B7 (D-14): L7 publishes intents and confirmation prompts; L9 is the
         # only module that may turn either into something a human sees.
         self.event_bus.subscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
@@ -192,6 +217,7 @@ class InterfaceLayer(BaseModule):
         self.is_running = False
         self.event_bus.unsubscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
+        self.event_bus.unsubscribe(EventType.BRIEFING_REPORT, self._on_briefing_report)
         self.event_bus.unsubscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
         desktop_task, self._desktop_task = self._desktop_task, None
         if desktop_task is not None and not desktop_task.done():
@@ -229,6 +255,13 @@ class InterfaceLayer(BaseModule):
             if not fut.done():
                 fut.set_result(self._latest_health)
         self._health_waiters.clear()
+
+    async def _on_briefing_report(self, event: Event) -> None:
+        request_id = str(event.payload.get("request_id", ""))
+        fut = self._briefing_waiters.pop(request_id, None)
+        if fut is not None and not fut.done():
+            moment = event.payload.get("moment")
+            fut.set_result(_moment_to_dict(moment) if isinstance(moment, Moment) else None)
 
     async def on_insight_generated(self, event: Event) -> None:
         try:
@@ -496,7 +529,26 @@ class InterfaceLayer(BaseModule):
             return await self._explain(
                 str(req.get("target", "")).strip(), str(req.get("summary", "")).strip()
             )
+        if op == "briefing":
+            self._queries += 1
+            return await self._request_briefing()
+        if op == "reload-graph":
+            return await self._reload_graph()
         return {"ok": False, "error": f"unknown op: {op!r}"}
+
+    async def _reload_graph(self) -> dict[str, Any]:
+        """S0 · pick up a graph `neuropaca repair-graph` just rebuilt, without
+        a restart. `GraphMemory.load()` already fully replaces `self._graph`
+        in place — BL-2's boot-recovery path re-enters it for that exact
+        reason — so hot-reloading the live singleton is calling it again,
+        nothing new. `self._graph` is the same object every other module in
+        this process holds too; a mutation-in-place is visible to all of them
+        the instant the lock releases, no restart, no re-wiring."""
+        try:
+            await self._graph.load()
+        except GraphMemoryError as exc:
+            return {"ok": False, "error": f"reload failed: {exc}"}
+        return {"ok": True, "nodes": self._graph.node_count, "edges": self._graph.edge_count}
 
     async def _request_health(self) -> dict[str, Any] | None:
         loop = asyncio.get_running_loop()
@@ -512,6 +564,29 @@ class InterfaceLayer(BaseModule):
         finally:
             if fut in self._health_waiters:
                 self._health_waiters.remove(fut)
+
+    async def _request_briefing(self) -> dict[str, Any]:
+        """S0's on-demand path (`neuropaca briefing`). `None` (no live
+        `BriefingComposer` — episodes disabled) reads the same as a timeout to
+        the caller: nothing to brief right now."""
+        loop = asyncio.get_running_loop()
+        request_id = uuid4().hex[:12]
+        fut: asyncio.Future[dict[str, Any] | None] = loop.create_future()
+        self._briefing_waiters[request_id] = fut
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.BRIEFING_REQUEST,
+                source="interface",
+                payload={"request_id": request_id},
+            )
+        )
+        try:
+            moment = await asyncio.wait_for(fut, _BRIEFING_TIMEOUT)
+        except TimeoutError:
+            return {"ok": False, "error": "briefing request timed out"}
+        finally:
+            self._briefing_waiters.pop(request_id, None)
+        return {"ok": True, "moment": moment}
 
     # ------------------------------------------------------------ run relay (B7)
     def _relay_command(self, prefix: str, text: str) -> dict[str, Any]:

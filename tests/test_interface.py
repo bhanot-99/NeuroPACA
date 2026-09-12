@@ -26,7 +26,7 @@ from neuropaca.core.enums import EventType, MessageRole, NodeType, SignalType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.inference import FakeInferenceBackend, create_interactive_backend
-from neuropaca.core.models import Event
+from neuropaca.core.models import Event, Moment
 from neuropaca.interface import cli
 from neuropaca.interface.layer import InterfaceLayer
 from neuropaca.interface.message import Message
@@ -126,11 +126,22 @@ class _Wired:
 
     async def request(self, payload: dict) -> dict:
         reader, writer = await asyncio.open_unix_connection(self.sock)
-        writer.write((json.dumps(payload) + "\n").encode())
-        await writer.drain()
-        line = await asyncio.wait_for(reader.readline(), 5)
-        writer.close()
-        await writer.wait_closed()
+        try:
+            writer.write((json.dumps(payload) + "\n").encode())
+            await writer.drain()
+            # A margin over every server-side request timeout this file tests
+            # against (`_HEALTH_TIMEOUT` 2.0, `_BRIEFING_TIMEOUT` 5.0) — a
+            # client timeout tied at the same value races the server's own
+            # and can lose it, abandoning the connection with the write never
+            # sent; the server's `_handle_client` then blocks on that
+            # connection's next `readline()` forever, and `layer.stop()`
+            # hangs waiting for it (`Server.wait_closed()` waits for every
+            # open connection). `finally` below is the second half of that
+            # guarantee — always close, timeout or not.
+            line = await asyncio.wait_for(reader.readline(), 8)
+        finally:
+            writer.close()
+            await writer.wait_closed()
         return json.loads(line)
 
 
@@ -465,10 +476,115 @@ async def test_health_op_bridges_request_and_report_over_the_bus(tmp_path) -> No
     assert resp["health"]["uptime_seconds"] == 42.0
 
 
+async def test_reload_graph_op_picks_up_a_rebuilt_file(tmp_path) -> None:
+    import json as _json
+
+    w = await _wired(tmp_path)
+    try:
+        assert w.graph.has_node("app:webpack")
+        graph_path = tmp_path / "graph.json"
+        await w.graph.save()
+        rebuilt = _json.loads(graph_path.read_text("utf-8"))
+        rebuilt["nodes"] = [n for n in rebuilt["nodes"] if n["id"] != "app:webpack"] + [
+            {
+                "id": "app:rebuilt",
+                "node_type": "app",
+                "label": "rebuilt",
+                "created_at": "2026-09-15T00:00:00+00:00",
+                "last_accessed": "2026-09-15T00:00:00+00:00",
+                "access_count": 1,
+                "relevance_score": 0.0,
+                "priority": 0,
+                "activity": 1.0,
+            }
+        ]
+        graph_path.write_text(_json.dumps(rebuilt), encoding="utf-8")
+
+        resp = await w.request({"op": "reload-graph"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert not w.graph.has_node("app:webpack")
+    assert w.graph.has_node("app:rebuilt")
+
+
+async def test_reload_graph_op_reports_a_corrupt_file_without_crashing(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        (tmp_path / "graph.json").write_text("not json", encoding="utf-8")
+        resp = await w.request({"op": "reload-graph"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False
+    assert "reload failed" in resp["error"]
+
+
 async def test_health_op_times_out_cleanly_when_l10_is_silent(tmp_path) -> None:
     w = await _wired(tmp_path)
     try:
         resp = await w.request({"op": "health"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False and "timed out" in resp["error"]
+
+
+async def test_briefing_op_bridges_request_and_report_over_the_bus(tmp_path) -> None:
+    w = await _wired(tmp_path)
+
+    async def fake_briefing_composer(event: Event) -> None:
+        w.bus.publish(
+            Event(
+                event_type=EventType.BRIEFING_REPORT,
+                source="briefing",
+                payload={
+                    "request_id": event.payload.get("request_id"),
+                    "moment": Moment(
+                        kind="briefing",
+                        text="You were last in webpack.",
+                        evidence=("app:webpack",),
+                        value=1.0,
+                        context={},
+                        expires_at=w.layer._clock.now(),
+                    ),
+                },
+            )
+        )
+
+    w.bus.subscribe(EventType.BRIEFING_REQUEST, fake_briefing_composer)
+    try:
+        resp = await w.request({"op": "briefing"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["moment"]["text"] == "You were last in webpack."
+    assert resp["moment"]["evidence"] == ["app:webpack"]
+
+
+async def test_briefing_op_nothing_to_say_is_still_ok(tmp_path) -> None:
+    w = await _wired(tmp_path)
+
+    async def fake_briefing_composer(event: Event) -> None:
+        w.bus.publish(
+            Event(
+                event_type=EventType.BRIEFING_REPORT,
+                source="briefing",
+                payload={"request_id": event.payload.get("request_id"), "moment": None},
+            )
+        )
+
+    w.bus.subscribe(EventType.BRIEFING_REQUEST, fake_briefing_composer)
+    try:
+        resp = await w.request({"op": "briefing"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["moment"] is None
+
+
+async def test_briefing_op_times_out_cleanly_when_no_composer_is_running(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request({"op": "briefing"})
     finally:
         await _teardown(w)
     assert resp["ok"] is False and "timed out" in resp["error"]

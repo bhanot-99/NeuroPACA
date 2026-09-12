@@ -4389,6 +4389,393 @@ races ahead of the spell closing).
 
 ---
 
+### 21.14 S0 · Episodic stream, attention, and the briefing core
+
+| | |
+| --- | --- |
+| **Branch** | `s0-episodic-stream-attention-briefing` (off `main` after A0) |
+| **Outcome** | Full suite (`-m ""`): 890 → **918 collected, 915 passed**, 3 pre-existing skips unrelated to this change. No graph schema bump (`_last_episode_seq` is a new *top-level* scalar next to `schema_version`, not a node/edge field — an absent key on load just means "never replayed"). New closed-set member: `EpisodeKind` (7 values, `core/enums.py`) and one new sqlite file, `data/episodes.sqlite` (own `episodes_schema_version() == 1`), off by default (`episodes_enabled = false`) so no existing install or test sees a new module until it is turned on. |
+
+**In plain words.** The graph knew *what goes with what* but not *when* — S0
+gives it a memory of time (a durable log beside the graph), the ability to
+tell what is relevant *right now* (Forward Push Personalized PageRank seeded
+on current focus), and the first thing built on both: a morning briefing that
+picks 2-5 items and never says anything it can't point at.
+
+**Spike, answered:**
+- *Store — sqlite3 WAL vs JSONL?* Went with sqlite3 per the design's own
+  expectation, without re-litigating it against a JSONL prototype this
+  session: the exit criterion that actually mattered under the time budget was
+  "20k-switch storm, no loop lag" — proven directly against the sqlite
+  implementation (`test_episodes.py::test_20k_switch_storm_batches_without_dropping`),
+  not against a comparison. `record_span`/`assert_fact` are non-blocking
+  `put_nowait`s (mirroring `EventBus.publish`); one writer task batches
+  whatever is already queued into a single `asyncio.to_thread` transaction —
+  20,000 spans wrote and flushed with zero drops in well under a second.
+- *Bi-temporal semantics.* A **span** (`t_start`/`t_end`) is an episode that
+  happened; a **fact** (`t_valid`/`t_invalid`) is something that was true until
+  superseded. `assert_fact` closes the old interval (`t_invalid = valid_from`)
+  rather than deleting it — proven directly: `at(t)` before the supersession
+  still returns the old fact, `at(t)` after returns the new one, and the old
+  row is still in the log (`test_episodes.py::test_assert_fact_closes_the_contradicting_open_interval`).
+- *PPR at scale.* Implemented Forward Push (Andersen-Chung-Lang 2006) over
+  `GraphMemory`'s own adjacency dicts (`_succ`/`_pred`), not global power
+  iteration. Checked against a from-scratch power-iteration reference on the
+  *same* neighbourhood function (`_ppr_neighbours_unsafe`) — they must agree on
+  the identical transition matrix, not networkx's built-in one, since the hub
+  damping and the structural-edge weight floor are this codebase's own
+  definitions. Matched within 0.02 on a 4-node graph
+  (`test_ppr.py::test_forward_push_matches_power_iteration_within_eps`); cost at
+  2,000+ disconnected nodes stayed under 5 ms
+  (`test_cost_independent_of_graph_size_at_fixed_local_density`) — the
+  O(1/(eps·alpha)) bound holding regardless of graph size, exactly as designed.
+  First attempt at the reference implementation had alpha and (1-alpha) swapped
+  (teleport vs continue probability) — caught immediately by the cross-check
+  disagreeing by 0.48 instead of 0.02.
+- *Briefing trigger.* Implemented both halves of open question 4 as
+  `should_brief_now` (first activity of a new calendar day, OR the first after
+  `briefing_idle_gap_hours` — default 6h — of quiet) rather than picking one; a
+  real log replay to compare firing rates is dogfood-window work, not
+  something this session's synthetic tests can settle.
+- *Volume projection.* Not measured against the live soak this session (the
+  soak's own gate log was not replayed); `episode_retention_days = 90` is the
+  design's own default, not yet cross-checked against real per-day row counts.
+  Left as unfinished business below rather than guessed as done.
+
+**Built.**
+- `core/episodes.py` — `EpisodeStore`: one `episode` table (`episode_seq` the
+  `INTEGER PRIMARY KEY AUTOINCREMENT`, gap-free and monotonic by construction —
+  no separate counter to keep in sync), indexed on `(subject, t_start)` and
+  `(kind, t_start)`; `record_span` / `assert_fact` (fire-and-forget, batched);
+  `at(t)` / `between(t0,t1)` / `since(episode_seq)` (read-only, each off the
+  loop via `asyncio.to_thread`); `forget(entity)` (flushes, then deletes by
+  subject-or-object directly — a rare, immediate, destructive operation, not
+  routed through the batched path).
+- `core/episodic_writer.py` — `EpisodicWriter(BaseModule)`: the *only* module
+  that writes to the store, entirely off the bus (`APP_SWITCH` opens/closes
+  focus spans, `IDLE_DETECTED`/`ACTIVITY_DETECTED` closes/opens idle spans,
+  `INSIGHT_GENERATED` records one row per thought, `MOMENT_DELIVERED`/
+  `MOMENT_FEEDBACK` subscribed now though nothing publishes them until A3/F2
+  exist — the same forward-declaration `EventType` itself already uses).
+- `GraphMemory.personalized_pagerank` (§3.4, Forward Push) +
+  `retrieval_scores` (the α·π + β·recency + γ·score/10 blend) +
+  `last_episode_seq` (persisted top-level scalar, `advance_last_episode_seq`).
+- `interface/briefing.py` — `compose_briefing`: candidates from open focus
+  threads (last span per subject) and insights since the last briefing;
+  ranked by `retrieval_scores`; `select_greedy_submodular` (§3.9, the
+  Nemhauser-Wolsey-Fisher greedy bound) picks ≤ `briefing_max_items` while
+  penalising neighbourhood-Jaccard similarity to what's already picked;
+  renders a `Moment` whose evidence is exactly the union of what was selected.
+- `Scheduler._catch_up_episode_watermark` — every tick, `since(last_episode_seq)`;
+  a `focus_span`/`idle_span` row replays `GraphMemory.mark_seen` (the one
+  mutation safe to redo idempotently — V-10, never touches `relevance_score`
+  or an edge weight), then the watermark advances to the newest row's
+  `episode_seq`. Proven directly: a span written to the store with the graph's
+  own `mark_seen` deliberately *not* called (simulating a dropped bus event)
+  is healed by exactly one `_tick()` call
+  (`test_episode_watermark.py::test_forced_drop_self_heals_within_one_tick`);
+  a second tick with nothing new is a no-op, not a re-replay.
+- `panic` needed no code change — `episodes.sqlite` lives under the same
+  `data/` directory `panic` already wipes by clearing every entry in
+  `Path(config.graph_db_path).parent` (`interface/offline.py`).
+
+**Proof.** 28 new tests across five files (`test_episodes.py`,
+`test_ppr.py`, `test_episodic_writer.py`, `test_briefing.py`,
+`test_episode_watermark.py`): span/fact round-trips and bi-temporal
+supersession; PPR against the power-iteration reference, convergence,
+seed-sensitivity, hub damping, cost independence; span reconstruction from
+synthetic switch streams including an unresolvable switch that still closes
+what was open; briefing composition returning grounded evidence or `None`
+(never a hollow item), greedy selection respecting `k` and preferring a
+diverse candidate over a near-duplicate; the watermark self-heal and its
+idempotence. `ruff check .`, `ruff format --check .`, `mypy` all clean; full
+suite green at 915 passed, 3 pre-existing skips.
+
+**Rejected.** Wiring `EpisodicWriter` through `orchestration/modules.py`'s
+`ModuleBuilder` (would have widened that function's signature — and every
+test that calls it directly — for one module that is conditional on a config
+flag `build_modules`'s other callers don't need to know about; registered
+directly in `NeuroPACAOrchestrator.initialize()` instead, the same way a
+manually-`register_module()`-ed module is threaded through). Defaulting
+`episodes_enabled = true`: the first attempt did, and broke
+`test_base_module.py`'s exact-module-count assertion along with leaking a
+writer task past test teardown — a brand-new subsystem should arrive opt-in,
+like `activity_enabled` and `raw_metrics_csv_path` before it, not silently
+change what every existing `Config()` boots.
+
+**What is left**
+- **Full decay-consistent watermark replay.** The tick above replays
+  `mark_seen` only — real, safe, idempotent, but not the Hebbian
+  reinforcement (`wire_coactivation`) a live `APP_SWITCH` handler elsewhere
+  would also have done. Replaying that correctly needs to know it is *not*
+  double-applying an update the live path already made, which this session's
+  budget did not allow doing carefully. The weekly/`repair-graph` full
+  rebuild — replay the entire log into a fresh graph using
+  `decay_cooccurrence_edges`'s elapsed-time-from-episode-timestamps rather
+  than the wall clock — is not built at all yet; it is the harder, rarer,
+  correctness-critical half of §0's "graph-store consistency" risk and needs
+  its own session.
+- **The daemon-side briefing trigger and delivery.** `compose_briefing` and
+  `should_brief_now` are pure functions, callable and tested directly, but
+  nothing yet subscribes to the bus to call them once per trigger and publish
+  the result as `MOMENT_PROPOSED` (A0's own pattern) or answers
+  `neuropaca briefing` over the L9 socket. `interface/layer.py` gained no new
+  op this session.
+- **The volume projection against the real gate log**, and therefore whether
+  `episode_retention_days = 90` is the right default — not measured.
+- **Every S0 exit-checklist item that needs days of real use**: 20
+  hand-written "what was I doing when" queries against a *real* store; the
+  7-day dogfood briefing precision; retrieval latency and DB growth in the
+  soak. None of this is evidence yet, only the mechanism and its unit tests
+  are — the same honest gap A0's chapter left, one phase up.
+- `scripts/_provenance.py` has not stamped any of S0's new files — needs
+  `PROV_SECRET`, not available to this session.
+
+---
+
+### 21.15 S0 follow-up · the briefing trigger, the deterministic rebuild, and the volume projection
+
+| | |
+| --- | --- |
+| **Branch** | `s0-episodic-stream-attention-briefing` (continuing §21.14, same branch) |
+| **Outcome** | Full suite (`-m ""`): 918 → **936 collected, 933 passed**, 3 pre-existing skips. `EventType` +2 (`BRIEFING_REQUEST`/`_REPORT`, the on-demand bridge). No graph schema bump. `ruff check .`, `ruff format --check .`, `mypy src/` all clean. |
+
+**In plain words.** §21.14 shipped the mechanism — the store, attention, and a
+briefing function you could call directly. This closes three of the four gaps
+that chapter named as unfinished: something now actually *decides when* to
+brief and delivers it, `neuropaca briefing` answers on demand, a `repair-graph`
+command exists and is proven to reproduce the live Hebbian mesh exactly (not
+approximately), and the volume question has a real number behind it instead
+of a placeholder default. The fourth gap — the full week of dogfood evidence —
+still needs actual days passing, which no session can manufacture.
+
+**1. The briefing trigger and on-demand delivery.**
+`interface/briefing.py` gained `BriefingComposer(BaseModule)`: it is the only
+module that tracks focus history (the last four focused nodes, for §3.4's PPR
+seeds) and calls `should_brief_now` on every `APP_SWITCH` / `ACTIVITY_DETECTED`.
+A fire finds nothing to say about as often as it finds something — both count
+as "briefed" for the day/gap, so a quiet morning does not re-check on every
+single event. Two paths out, mirroring A0's own pattern and L9's existing
+health bridge respectively:
+- proactive: `MOMENT_PROPOSED` then a description-only `ACTION_PROPOSAL`
+  `notification` (A3 does not exist yet, same as A0);
+- on demand: `EventType.BRIEFING_REQUEST` in, `BRIEFING_REPORT` out —
+  `InterfaceLayer._request_briefing` publishes and awaits a report keyed by
+  `request_id` (never a broadcast like health's, since a briefing report
+  legitimately differs request to request), and `neuropaca briefing` renders
+  the result or "nothing to brief right now".
+
+*A found-and-fixed test bug, worth recording because it nearly became a
+production one.* The first version of the interface test used a 5-second
+client-side read timeout against `_BRIEFING_TIMEOUT = 5.0` — the identical
+value, a dead-even race with no margin. Under pytest specifically the client
+consistently lost that race (a `TimeoutError` on the client side, not the
+server), and because the abandoned `writer.close()` never ran, the server's
+`_handle_client` task blocked forever on that connection's next `readline()` —
+which then hung `InterfaceLayer.stop()` forever too, since Python 3.12's
+`Server.wait_closed()` waits for every open connection to finish. The fix
+(`tests/test_interface.py`'s `_Wired.request`) is now `try/finally: writer.close()`
+plus an 8-second client timeout — a margin over every server timeout the file
+tests, not a tie with the tightest one. The lesson generalises past this test:
+any client of L9 that abandons a connection without closing it can wedge a
+live daemon's shutdown the same way; that half of the finding is a latent
+characteristic of `_handle_client`, not something this session touched.
+
+**2. `CoactivationWindow` — extracted, not duplicated.**
+`core/coactivation.py` pulls the Hebbian "recently focused" state/math
+(`_reinforce_coactivation`'s deque, per-pair refractory map, dwell-cap
+extension, linear credit falloff) straight out of `diagnosis/correlator.py`,
+unchanged, into its own pure-Python class. `SignalCorrelator` now holds one
+`CoactivationWindow` instead of the two raw collections it used to manage
+itself. This was not cosmetic: it is the only way `core/graph_rebuild.py`'s
+replay can *guarantee* it reproduces the live wiring rather than merely
+approximating it with a second, hand-copied implementation that could drift
+the next time either one changed. Every existing correlator test
+(`test_cooccurrence_window.py`, `test_diagnosis*.py`, the B2.5/B3 fixture
+suites — 51 tests) still passes unchanged; one test that reached into the
+private `_coactive` deque now reads `corr._window.coactive` instead.
+
+**3. The deterministic full rebuild.** `core/graph_rebuild.rebuild_graph`
+replays `EpisodeStore.since(0)` into a brand-new `GraphMemory`, reusing
+`wire_coactivation` and `decay_cooccurrence_edges` (production math, not a
+reimplementation) driven by episode timestamps rather than the wall clock.
+Two real bugs surfaced and were fixed building the parity test
+(`test_rebuild_reproduces_the_live_hebbian_mesh`), each worth naming because
+each would have silently produced a *slightly wrong* graph rather than an
+obviously broken one:
+- **epoch-scale floating point.** The first version fed `datetime.timestamp()`
+  (~1.7e9 for 2026) as the coactivation window's "now". A float64 has ~15-17
+  significant digits, so an epoch-scale value leaves only ~6-7 of them after
+  the decimal point — enough to turn a should-be-exact credit of `1.0` into
+  `0.99863...` and the resulting saturating Hebbian step into `0.189877`
+  instead of the correlator's own `0.19`. Fixed by making every "now" relative
+  to the log's own first timestamp (an anchor near zero, like the live
+  correlator's `CLOCK_BOOTTIME`), not an absolute epoch float.
+- **decay applied to the wrong interval.** The first version decayed by the
+  gap between one row's *end* and the next row's *end* — which double-counts a
+  focus span's own duration as if it were idle time. A focus span's duration
+  is usage, not a decay-worthy gap; an idle span's duration *is* one. Fixed by
+  decaying (a) the dead time between one row ending and the next starting
+  (always), and (b) an idle span's own duration (only for idle spans) — never
+  a focus span's own duration. Both fixes are exact, not approximations —
+  `0.5**a * 0.5**b == 0.5**(a+b)`, so slicing the elapsed time into as many
+  small steps as there are episodes reproduces precisely the factor one big
+  step over the same total time would have.
+
+**Scope, stated plainly (not silently narrower than it sounds).** The rebuild
+reproduces the focus-driven Hebbian mesh and sightings exactly — proven, not
+claimed. It does **not** reproduce `domain:*` / browser `PART_OF` structure
+(that comes from `app_map`/`webapp_map` classification at focus time, which a
+`focus_span` episode does not carry today) or `insight:` / `idle:` nodes
+(model output, not a deterministic function of the log). Widening the episode
+schema to carry classification is the natural next step, not attempted here —
+attempting it without the schema change would mean guessing at domain
+membership from the subject id alone, which is exactly the kind of silent
+approximation this chapter's two bug-fixes above were about *not* shipping.
+
+**4. `neuropaca repair-graph`.** A fourth offline verb (`interface/offline.py`,
+alongside `doctor` / `export` / `panic` — none need the daemon running,
+deliberately, since a drifted graph might be *why* it will not start). Refuses
+without `episodes_enabled`; refuses without an existing episode store; asks
+for a typed confirmation (`REBUILD`) unless `--yes`; **quarantines the current
+graph first** (`quarantine_path`, never deletes in place — rules.md §5.7) so
+a bad rebuild is a `cp` away from undone; reports node/edge/episode counts;
+warns if a live daemon is running with the old graph still in memory (a
+restart is needed to pick up the rebuilt file — no in-process hot-swap of the
+running singleton was attempted this session).
+
+**5. The volume projection, from real numbers.** The soak gate log
+(`data/soak_gate_20260911T170701Z.log`) already measured 39 app switches per
+hour during active use — the number VISION_PHASES.md's spike cited but this
+build had not yet checked against `EpisodeStore` itself. A direct measurement
+(insert 5,000 synthetic focus-span rows, `PRAGMA wal_checkpoint(FULL)` +
+`VACUUM`, read the file size) gives ~256 bytes per row on disk with the
+current schema and its two indexes. At ~8 active hours/day that projects to
+~330 focus-span rows/day, ~85 KiB/day, ~2.5 MiB/month — `episode_retention_days
+= 90` (≈ 8 MiB) is comfortably generous, not a real disk concern. (A second,
+independent number from the *live* soak's own `samples.jsonl` — 0.55
+switches/hour averaged across a 10.8-hour window that includes long overnight
+idle stretches — is the honest reminder that "39/h" is an *active-use* rate,
+not an all-day one; the projection above uses the active-hours framing on
+purpose, not the diluted all-day average, because retention has to cover the
+busy days.)
+
+**Rejected.** Reimplementing the coactivation math a second time inside
+`core/graph_rebuild.py` "for isolation" — the whole point of a rebuild
+guarantee is that it cannot drift from the live path, which only holds if
+there is exactly one implementation, not two that happen to agree today.
+Making the client-side interface test's read timeout match the server's
+exactly "for a tight test" — demonstrated live to be a race, not a margin, the
+moment it ran under a different scheduler (pytest's) than the one used to
+write it. An in-process hot-swap of the live `GraphMemory` singleton from the
+offline `repair-graph` verb — the verb is explicitly offline (no daemon
+required, no socket touched), and reaching into a *running* daemon's memory
+from a separate process is a different, riskier feature than "rebuild the
+file on disk", not attempted here.
+
+**What is left**
+- Widening the episode schema so a rebuild can also reproduce `domain:*` /
+  webapp `PART_OF` structure — the one dimension of "matches the live graph
+  node-for-node" this session did not close.
+- A live daemon's in-process hot-reload of a freshly rebuilt graph, so
+  `repair-graph` does not require a restart to take effect.
+- The full decay-consistent *watermark* replay (the scheduler's per-tick
+  self-heal still only replays `mark_seen`, per §21.14) — the full rebuild
+  above is the correctness-critical rare path; the common per-tick path is
+  still the conservative one.
+- Every S0 exit-checklist item that needs real days of use, unchanged from
+  §21.14's own list.
+- `scripts/_provenance.py` has not stamped any of this session's new/changed
+  files either — still needs `PROV_SECRET`.
+
+---
+
+### 21.16 S0 follow-up 2 · structural rebuild, hot-reload, a smarter self-heal, and doctor prep
+
+| | |
+| --- | --- |
+| **Branch** | `s0-episodic-stream-attention-briefing` (continuing §21.14/§21.15) |
+| **Outcome** | Full suite (`-m ""`): 936 → **951 collected, 948 passed**, 3 pre-existing skips. `ruff check .`, `ruff format --check .`, `mypy src/` all clean. No schema bump — `EpisodeRecord.object`/`attrs["browser"]` are existing, previously-unused columns; `GraphMemory.warm_activity_peers` is a new read method, not a stored field. |
+
+**In plain words.** §21.15 named four gaps. This closes three of them and
+prepares the fourth: `EpisodicWriter` now records enough for a rebuild to
+recreate `domain:*`/browser structure, not just the Hebbian mesh; a rebuilt
+graph can be picked up by a running daemon without a restart; the scheduler's
+per-tick self-heal does real Hebbian re-learning instead of only `mark_seen`;
+and `neuropaca doctor` now reports the episode store, so turning
+`episodes_enabled` on for real use (the gap that only real days can close)
+has monitoring in place from day one.
+
+**1. `EpisodicWriter` records domain and browser at focus time.** It gained
+its own `AppMap` (the same classification `SignalCorrelator._classify_into_graph`
+uses) and now writes a `focus_span`'s `object` as the domain the subject was
+classified into, and — for a webapp — `attrs["browser"]` as its browser's
+node id. Both columns already existed (`core/episodes.py`'s schema, unused
+until now); no migration needed. `core/graph_rebuild.py` reads them back and
+wires `PART_OF` edges exactly once per subject — proven directly (a new pair
+of tests wires a bare app to its domain and a webapp to both its browser and
+its own domain, plus a revisit test confirming no duplicate edge, which would
+have reset the edge's weight per T7).
+
+**2. Hot-reload, no restart.** `GraphMemory.load()` already fully replaces
+`self._graph` in place — BL-2's boot-recovery path re-enters it for exactly
+that reason — so "pick up a rebuilt graph live" needed no new mechanism, only
+a way to ask for it: a `reload-graph` op on `InterfaceLayer` (internal — not
+a `neuropaca` verb of its own, only `repair-graph`'s caller). `repair-graph`
+now checks whether a daemon is listening and, if so, sends the op over the
+socket automatically; a failed hot-reload only warns ("restart it to load the
+rebuilt one"), it never undoes the rebuild that already succeeded. Tested
+with a real Unix-socket stand-in daemon (not a mock of the client) so the
+JSONL round trip is exercised for real, both on success and on failure.
+
+**3. The scheduler's per-tick self-heal now re-learns, not just re-sights.**
+The honest limit §21.14 named — "only `mark_seen` is replayed" — is narrowed:
+a missed `focus_span` now gets `core/graph_rebuild.catch_up_focus_span`,
+which redoes the node, its structure (via the same idempotent-by-existence-
+check helper item 1 uses), and a Hebbian coactivation bump. The bump is
+**not** a byte-for-byte replay like the full rebuild's — it cannot be,
+because `SignalCorrelator`'s own in-memory `CoactivationWindow` is private
+state this module has no business reaching into (rules.md §0). Instead it
+derives "who was recently active" from the *graph's own* persisted
+`last_seen_at` — real, already-available, honestly approximate — via a new
+`GraphMemory.warm_activity_peers()`. That distinction (exact rebuild vs
+reasonable immediate self-heal) is the actual design point of §0's two-tier
+repair story, not a corner cut.
+
+*A performance number, not a guess.* The first version of
+`warm_activity_peers`-equivalent logic built a `Node` dataclass per candidate
+(the same cost `top_nodes_by_score`'s own docstring already warned about) and
+measured 72.4 ms at 10,000 nodes — over the 50 ms retrieval budget. Rewritten
+to read raw attribute dicts, matching `top_nodes_by_score`'s own pattern
+exactly, it dropped under 10 ms; a perf test at 10k nodes guards the number,
+not just the behaviour.
+
+**4. `neuropaca doctor` now reports the episode store.** Row count, on-disk
+size, schema version, newest row — read directly (no daemon needed, matching
+`doctor`'s own `graph.json` report) so turning `episodes_enabled` on has the
+same visibility the graph has always had. An unreadable store is a reported
+problem (non-zero exit), not a silent gap.
+
+**Rejected.** A `neuropaca reload-graph` verb of its own — the only caller is
+`repair-graph` immediately after a successful rebuild; a second, independent
+entry point for "swap the live graph out from under the daemon" is a feature
+this session was not asked for and did not need. An exact `CoactivationWindow`
+replay inside the scheduler's per-tick path — would require sharing live,
+in-process state across modules (rules.md §0), a materially different and
+riskier change than "derive warmth from what is already persisted"; the full
+rebuild stays the one place that guarantee is made, and is made honestly.
+
+**What is left**
+- Everything §21.15 already listed and did not close: the full decay/rebuild
+  path stays the exact-match one by design, not by omission, but the
+  scheduler's own catch-up is still an approximation, documented as one.
+- Turning `episodes_enabled` on for a real dogfood window — monitoring is now
+  in place (`doctor`), the decision and the days themselves are not something
+  a build session can supply.
+- `scripts/_provenance.py` — still needs `PROV_SECRET`.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.

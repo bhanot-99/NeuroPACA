@@ -39,6 +39,7 @@ _ALIASES = {
 _QUIT = {"quit", "exit", "q", ":q"}
 _HELP = {"help", "h", "?", "--help", "-h"}
 _KNOWN_VERBS = {
+    "briefing",
     "confirm",
     "confirmations",
     "doctor",
@@ -48,6 +49,7 @@ _KNOWN_VERBS = {
     "notifications",
     "overview",
     "panic",
+    "repair-graph",
     "run",
     "tell",
     *_ALIASES,
@@ -158,6 +160,7 @@ def print_help() -> None:
                 'run [--backup] "<cmd>"',
                 "hand a command to the action layer (confirmation still required)",
             ),
+            ("briefing", "what's waiting, on demand (S0)"),
         ],
     )
     _section(
@@ -166,6 +169,7 @@ def print_help() -> None:
             ("doctor", "offline health report — config, graph, socket, disk"),
             ("export <path> [--force]", "dump the graph out of data/"),
             ("panic [--yes]", "kill the daemon and wipe all local state"),
+            ("repair-graph [--yes]", "rebuild the graph from the episode log (S0)"),
         ],
     )
     _section(
