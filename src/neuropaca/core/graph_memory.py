@@ -108,6 +108,14 @@ _BRIDGE_MIN_WEIGHT = 0.1  # ~ one full-credit co-use at the default hebbian_delt
 # nodes are minted by focus switches and probes, not in bursts. Past it the
 # oldest entry is evicted and the DMN's whole-graph sweep catches it instead.
 _UNLINKED_LEDGER_CAP = 512
+# S0 · Forward Push PPR (§3.4). `_PPR_MAX_PUSHES` is a hard ceiling on top of
+# the eps/alpha bound — a guard against a pathological input, not the normal
+# stopping condition. `_PPR_MIN_EDGE_WEIGHT` lets a structural edge (weight
+# 0.0) still carry some walk mass; `_PPR_HUB_DAMPING` keeps a routing hub from
+# soaking up the walk just because every node structurally reaches one.
+_PPR_MAX_PUSHES = 200_000
+_PPR_MIN_EDGE_WEIGHT = 0.05
+_PPR_HUB_DAMPING = 0.1
 _DERIVED_PREFIXES: tuple[str, ...] = (*_FACT_PREFIXES, "action:")
 # `labels.py` is stdlib-only (the graph window loads it by path), so the
 # kind -> NodeType half of the table lives here.
@@ -206,6 +214,11 @@ class GraphMemory:
         self._lock = asyncio.Lock()
         self._dirty = False
         self._last_save: datetime | None = None
+        # S0 · the watermark against the episode store's `episode_seq` (§0's
+        # "graph-store consistency"): how far the graph's projection of the log
+        # has been replayed. Persisted as a top-level scalar beside the graph —
+        # not a schema bump, an absent key on load just means "never replayed".
+        self._last_episode_seq = 0
         self._ref_name = ref_namer(self._lookup)  # B18 · names refs inside labels
         # V-6 · ids of nodes created in this process that have never had an
         # edge. `_add_edge_unsafe` discharges an id the moment one lands, so
@@ -240,6 +253,21 @@ class GraphMemory:
     @property
     def dirty(self) -> bool:
         return self._dirty
+
+    @property
+    def last_episode_seq(self) -> int:
+        """S0 · how far this graph's projection of the episode log has been
+        replayed. Read without the lock — a plain int, like `dirty`."""
+        return self._last_episode_seq
+
+    async def advance_last_episode_seq(self, seq: int) -> None:
+        """Move the watermark forward. Never backward — `since()` replay is
+        idempotent-by-construction only if the watermark it advances from is
+        monotonic; a caller racing an older `seq` must not rewind it."""
+        async with self._lock:
+            if seq > self._last_episode_seq:
+                self._last_episode_seq = seq
+                self._dirty = True
 
     @property
     def node_ids(self) -> list[str]:
@@ -933,6 +961,111 @@ class GraphMemory:
         ranked = sorted(hits.values(), key=lambda n: (-n.relevance_score, n.label))
         return ranked[:limit]
 
+    # ------------------------------------------------------------------ S0 · attention
+    def personalized_pagerank(
+        self,
+        seeds: dict[str, float],
+        *,
+        eps: float = 1e-4,
+        alpha: float = 0.15,
+    ) -> dict[str, float]:
+        """§3.4 · Forward Push approximate Personalized PageRank (Andersen,
+        Chung & Lang, FOCS 2006), seeded on `seeds` (node id -> non-negative
+        weight, need not sum to 1 — normalised here). Work is bounded by
+        O(1/(eps*alpha)) pushes — independent of graph size, proportional only
+        to the local density around the seeds, which is what makes this cheap
+        however large the graph grows (unlike global power iteration).
+
+        Mass spreads over the *undirected* neighbourhood (`_succ` union
+        `_pred`, `_ppr_neighbours_unsafe`): an association edge often exists in
+        only the direction it happened to be created, but the affinity it
+        records is symmetric. A routing hub (`YOU` / `domain:*`) gets a damped
+        share of any push landing on it, so it never soaks up the walk — every
+        node structurally reaches a hub, and undamped that swamps the real
+        signal (§3.4's "so YOU does not soak up the mass"). Read-only, no lock
+        (the same convention as `find_related` / `search_by_label`) — a
+        concurrent mutation mid-walk is picked up or missed the way any other
+        best-effort read is.
+        """
+        total = sum(max(0.0, w) for w in seeds.values())
+        if total <= 0.0:
+            return {}
+        residual: dict[str, float] = {
+            n: max(0.0, w) / total for n, w in seeds.items() if n in self._graph and w > 0.0
+        }
+        estimate: dict[str, float] = {}
+        pushes = 0
+        while pushes < _PPR_MAX_PUSHES:
+            v = next((n for n, val in residual.items() if val > eps), None)
+            if v is None:
+                break
+            pushes += 1
+            mass = residual[v]
+            residual[v] = 0.0
+            estimate[v] = estimate.get(v, 0.0) + alpha * mass
+            spread = (1.0 - alpha) * mass
+            neighbours = self._ppr_neighbours_unsafe(v)
+            weight_total = sum(neighbours.values())
+            if weight_total <= 0.0:
+                continue
+            for u, w in neighbours.items():
+                residual[u] = residual.get(u, 0.0) + spread * (w / weight_total)
+        return estimate
+
+    def _ppr_neighbours_unsafe(self, v: str) -> dict[str, float]:
+        """`v`'s undirected neighbours with a transition weight each: the
+        larger of its parallel edges' Hebbian `weight` (0 for a purely
+        structural edge), floored at `_PPR_MIN_EDGE_WEIGHT` so structure alone
+        (a `PART_OF` edge with no Hebbian weight yet) still carries the walk —
+        an association graph is not only its learned weights. A hub endpoint is
+        damped by `_PPR_HUB_DAMPING` (§3.4)."""
+        if v not in self._graph:
+            return {}
+        graph = self._graph
+        weights: dict[str, float] = {}
+        for other, keyed in (*graph._succ[v].items(), *graph._pred[v].items()):
+            w = max((float(d.get("weight", 0.0)) for d in keyed.values()), default=0.0)
+            weights[other] = weights.get(other, 0.0) + max(w, _PPR_MIN_EDGE_WEIGHT)
+        for hub in HUB_NODE_IDS:
+            if hub in weights:
+                weights[hub] *= _PPR_HUB_DAMPING
+        return weights
+
+    def retrieval_scores(
+        self,
+        seeds: dict[str, float],
+        candidates: Sequence[str],
+        *,
+        now: datetime,
+        alpha: float,
+        beta: float,
+        gamma: float,
+        recency_half_life_seconds: float = 86400.0,
+        eps: float = 1e-4,
+        ppr_alpha: float = 0.15,
+    ) -> dict[str, float]:
+        """§3.4's blend: r(v) = alpha*pi(v) + beta*e^(-lambda*age) +
+        gamma*score(v)/10 — "starting from what you are doing, what else in
+        your life is lit up?" `pi` is `personalized_pagerank`; recency decays
+        with a half-life rather than a bare rate constant, matching
+        `Node.activity` elsewhere in this file. A candidate absent from the
+        graph is silently skipped (a caller can pass episode-only ids)."""
+        pagerank = self.personalized_pagerank(seeds, eps=eps, alpha=ppr_alpha)
+        lam = math.log(2.0) / max(recency_half_life_seconds, 1e-9)
+        scores: dict[str, float] = {}
+        for node_id in candidates:
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            age_seconds = max(0.0, (now - node.last_accessed).total_seconds())
+            recency = math.exp(-lam * age_seconds)
+            scores[node_id] = (
+                alpha * pagerank.get(node_id, 0.0)
+                + beta * recency
+                + gamma * (node.relevance_score / 10.0)
+            )
+        return scores
+
     # --------------------------------------------------------------- persistence
     def _read_payload(self) -> Any:
         """BLOCKING — read + decode the graph file. Runs in a worker thread."""
@@ -991,6 +1124,11 @@ class GraphMemory:
                     ) from exc
             if self._graph.number_of_nodes() == 0:
                 self._seed_hubs_unsafe()
+            self._last_episode_seq = (
+                int(payload.get("last_episode_seq", 0))
+                if isinstance(payload, dict)
+                else self._last_episode_seq
+            )
             self._dirty = False
             if needs_fact_migration:
                 self._migrate_v4_facts_unsafe()
@@ -1050,7 +1188,13 @@ class GraphMemory:
         self._last_save = _utcnow()
 
     async def _serialise_streamed(self) -> str:
-        parts: list[str] = ['{"schema_version": ', str(_SCHEMA_VERSION), ', "nodes": [']
+        parts: list[str] = [
+            '{"schema_version": ',
+            str(_SCHEMA_VERSION),
+            ', "last_episode_seq": ',
+            str(self._last_episode_seq),
+            ', "nodes": [',
+        ]
         node_ids = list(self._graph.nodes)  # sync id snapshot, no await
         sep = ""
         for start in range(0, len(node_ids), self._SAVE_CHUNK):

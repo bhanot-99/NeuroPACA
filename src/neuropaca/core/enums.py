@@ -70,6 +70,25 @@ class EventType(StrEnum):
     MOMENT_FEEDBACK = auto()
 
 
+class EpisodeKind(StrEnum):
+    """The kind of row in the S0 `EpisodeStore` (VISION_PHASES.md, §3.3).
+
+    A row is either a **span** (`t_start`/`t_end` set, `t_valid`/`t_invalid`
+    null) or a **fact** (`t_valid`/`t_invalid` set, `t_start`/`t_end` null) —
+    `core/episodes.py`'s `record_span` / `assert_fact` write one or the other,
+    never both. `TOPIC_FACT` / `PROJECT_STATE_FACT` are written from A2 / S2
+    respectively; defined now so the closed set never needs a schema bump when
+    those writers land (the same reasoning as `EventType.MOMENT_DELIVERED`)."""
+
+    FOCUS_SPAN = auto()
+    IDLE_SPAN = auto()
+    INSIGHT = auto()
+    MOMENT_DELIVERED = auto()
+    MOMENT_FEEDBACK = auto()
+    TOPIC_FACT = auto()
+    PROJECT_STATE_FACT = auto()
+
+
 class NodeType(StrEnum):
     """The kind of thing a graph node represents (Architecture.md §3.6)."""
 

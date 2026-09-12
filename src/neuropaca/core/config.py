@@ -221,6 +221,34 @@ class Config:
     welcome_enabled: bool = True
     welcome_min_idle_minutes: int = 20
     welcome_daily_cap: int = 6
+    # S0 · the episodic stream (VISION_PHASES.md §3.3-§3.9). `episodes_db_path`
+    # is a separate sqlite file beside the graph, not a table inside it — the
+    # spike's reason: the graph is one JSON document rewritten whole on every
+    # save, sqlite is append-friendly under a 20k-event storm. `episode_retention_days`
+    # is the default the spike's volume projection sized against (open question
+    # 2 in VISION.md §11 unresolved fields default to 90 days here).
+    # Off by default like every other brand-new S0-and-later subsystem
+    # (`activity_enabled`, `raw_metrics_csv_path`) — existing installs, and
+    # every test that builds a bare `Config()`, see no new module until this
+    # is turned on.
+    episodes_enabled: bool = False
+    episodes_db_path: str = "data/episodes.sqlite"
+    episode_retention_days: int = 90
+    # §3.4's blend r(v) = alpha*pi(v) + beta*recency + gamma*score(v)/10, and the
+    # Forward Push parameters pi is computed with. attention_recency_half_life_seconds
+    # is the exponential half-life the recency term decays over.
+    attention_alpha: float = 0.5
+    attention_beta: float = 0.3
+    attention_gamma: float = 0.2
+    attention_recency_half_life_seconds: float = 86400.0
+    attention_ppr_eps: float = 1e-4
+    attention_ppr_alpha: float = 0.15
+    # S0's briefing core (§3.9): k<=5 items, greedy submodular with a
+    # redundancy penalty mu on neighbourhood-Jaccard similarity between two
+    # candidates already selected.
+    briefing_max_items: int = 5
+    briefing_similarity_mu: float = 0.5
+    briefing_idle_gap_hours: float = 6.0
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -353,9 +381,28 @@ class Config:
             "max_ephemeral_nodes",
             "welcome_min_idle_minutes",
             "welcome_daily_cap",
+            "episode_retention_days",
+            "briefing_max_items",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        for name in (
+            "attention_alpha",
+            "attention_beta",
+            "attention_gamma",
+            "attention_recency_half_life_seconds",
+            "attention_ppr_eps",
+            "briefing_idle_gap_hours",
+        ):
+            if getattr(self, name) <= 0:
+                errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+        if not 0.0 < self.attention_ppr_alpha < 1.0:
+            errs.append(
+                f"attention_ppr_alpha must be in (0.0, 1.0), got {self.attention_ppr_alpha}"
+            )
+        if self.briefing_similarity_mu < 0.0:
+            errs.append(f"briefing_similarity_mu must be >= 0, got {self.briefing_similarity_mu}")
 
         if self.dmn_candidate_pool_k < self.dmn_top_k:
             # V-4 · the sample cannot be wider than the pool it is drawn from.

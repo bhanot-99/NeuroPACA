@@ -17,14 +17,21 @@ import asyncio
 import logging
 
 from neuropaca.core.config import Config
+from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.graph_memory import GraphMemory
 
 _log = logging.getLogger(__name__)
 
 
 class Scheduler:
-    def __init__(self, graph_memory: GraphMemory, config: Config) -> None:
+    def __init__(
+        self,
+        graph_memory: GraphMemory,
+        config: Config,
+        episode_store: EpisodeStore | None = None,
+    ) -> None:
         self._graph_memory = graph_memory
+        self._episode_store = episode_store
         self._interval = float(config.graph_save_interval_seconds)
         self._task: asyncio.Task[None] | None = None
         self._running = False
@@ -63,11 +70,34 @@ class Scheduler:
             linked = await self._graph_memory.link_new_orphans()
             if linked:
                 _log.debug("V-6: linked %d new orphan node(s) to YOU", linked)
+            await self._catch_up_episode_watermark()
             if self._graph_memory.dirty:
                 await self._graph_memory.save()
             await self._graph_memory.recalculate_importance()
         except Exception:
             _log.exception("scheduler tick failed")
+
+    async def _catch_up_episode_watermark(self) -> None:
+        """S0 · graph-store consistency (VISION_PHASES.md). The bus drops
+        events under backpressure by design, so a handler that never ran can
+        leave the graph's projection of the log behind. `since()` past the
+        graph's own watermark is O(1) in the normal case (zero or one missed
+        row) — the self-heal, not a detect-and-alert check. Only `mark_seen`
+        is replayed here: it is the one graph mutation that is safe to redo
+        idempotently for a span already applied by its live handler (V-10 —
+        it never touches `relevance_score` or an edge weight). A full,
+        decay-consistent Hebbian replay is the weekly/`repair-graph` rebuild's
+        job, not this tick's."""
+        if self._episode_store is None:
+            return
+        rows = await self._episode_store.since(self._graph_memory.last_episode_seq)
+        if not rows:
+            return
+        for row in rows:
+            if row.kind in ("focus_span", "idle_span") and row.t_end is not None:
+                await self._graph_memory.mark_seen(row.subject, row.t_end)
+        await self._graph_memory.advance_last_episode_seq(rows[-1].episode_seq)
+        _log.debug("S0: replayed %d missed episode(s) past the graph's watermark", len(rows))
 
 
 # gen-ref: f388ac1f

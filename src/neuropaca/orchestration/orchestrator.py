@@ -30,8 +30,11 @@ from typing import TYPE_CHECKING
 from neuropaca.core import logging as np_logging
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
+from neuropaca.core.clock import SystemClock
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType
+from neuropaca.core.episodes import EpisodeStore
+from neuropaca.core.episodic_writer import EpisodicWriter
 from neuropaca.core.errors import GraphMemoryError
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
@@ -78,6 +81,7 @@ class NeuroPACAOrchestrator:
         self._event_bus: EventBus | None = None
         self._graph_memory: GraphMemory | None = None
         self._bitnet_runtime: BitNetRuntime | None = None
+        self._episode_store: EpisodeStore | None = None
         self._scheduler: Scheduler | None = None
         self._modules: list[BaseModule] = []
         self._initialized = False
@@ -113,6 +117,11 @@ class NeuroPACAOrchestrator:
             raise RuntimeError("orchestrator not initialised — call initialize() first")
         return self._bitnet_runtime
 
+    @property
+    def episode_store(self) -> EpisodeStore | None:
+        """S0's bi-temporal log — `None` when `episodes_enabled = false`."""
+        return self._episode_store
+
     # ------------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
         if self._initialized:
@@ -129,11 +138,26 @@ class NeuroPACAOrchestrator:
         )
         await self._load_graph_with_recovery()
         await self._canonicalise_app_nodes()
-        self._scheduler = Scheduler(self._graph_memory, self._config)
+        if self._config.episodes_enabled:
+            # S0 · the durable bi-temporal log beside the graph (VISION_PHASES.md).
+            # Started before the modules so `EpisodicWriter` never misses an
+            # early event; stopped after the graph is saved (mirrors GraphMemory).
+            self._episode_store = EpisodeStore(self._config.episodes_db_path)
+            await self._episode_store.start()
+        self._scheduler = Scheduler(self._graph_memory, self._config, self._episode_store)
         if self._module_builder is not None:
             self._modules.extend(
                 self._module_builder(
                     self._config, self._event_bus, self._graph_memory, self._bitnet_runtime
+                )
+            )
+        if self._episode_store is not None:
+            # Not through `module_builder` (rules.md §0's "no module imports
+            # another" is unaffected — this only avoids widening every
+            # `ModuleBuilder` call site for one conditional module).
+            self._modules.append(
+                EpisodicWriter(
+                    self._event_bus, self._config, self._episode_store, clock=SystemClock()
                 )
             )
         # A6 · the L9 health bridge — L9 cannot import L10, so it asks over the bus.
@@ -285,6 +309,9 @@ class NeuroPACAOrchestrator:
 
         if self._graph_memory is not None:
             await self._graph_memory.save()
+
+        if self._episode_store is not None:
+            await self._episode_store.stop()
 
         if self._bitnet_runtime is not None:
             self._bitnet_runtime.unload_model()

@@ -4389,6 +4389,150 @@ races ahead of the spell closing).
 
 ---
 
+### 21.14 S0 · Episodic stream, attention, and the briefing core
+
+| | |
+| --- | --- |
+| **Branch** | `s0-episodic-stream-attention-briefing` (off `main` after A0) |
+| **Outcome** | Full suite (`-m ""`): 890 → **918 collected, 915 passed**, 3 pre-existing skips unrelated to this change. No graph schema bump (`_last_episode_seq` is a new *top-level* scalar next to `schema_version`, not a node/edge field — an absent key on load just means "never replayed"). New closed-set member: `EpisodeKind` (7 values, `core/enums.py`) and one new sqlite file, `data/episodes.sqlite` (own `episodes_schema_version() == 1`), off by default (`episodes_enabled = false`) so no existing install or test sees a new module until it is turned on. |
+
+**In plain words.** The graph knew *what goes with what* but not *when* — S0
+gives it a memory of time (a durable log beside the graph), the ability to
+tell what is relevant *right now* (Forward Push Personalized PageRank seeded
+on current focus), and the first thing built on both: a morning briefing that
+picks 2-5 items and never says anything it can't point at.
+
+**Spike, answered:**
+- *Store — sqlite3 WAL vs JSONL?* Went with sqlite3 per the design's own
+  expectation, without re-litigating it against a JSONL prototype this
+  session: the exit criterion that actually mattered under the time budget was
+  "20k-switch storm, no loop lag" — proven directly against the sqlite
+  implementation (`test_episodes.py::test_20k_switch_storm_batches_without_dropping`),
+  not against a comparison. `record_span`/`assert_fact` are non-blocking
+  `put_nowait`s (mirroring `EventBus.publish`); one writer task batches
+  whatever is already queued into a single `asyncio.to_thread` transaction —
+  20,000 spans wrote and flushed with zero drops in well under a second.
+- *Bi-temporal semantics.* A **span** (`t_start`/`t_end`) is an episode that
+  happened; a **fact** (`t_valid`/`t_invalid`) is something that was true until
+  superseded. `assert_fact` closes the old interval (`t_invalid = valid_from`)
+  rather than deleting it — proven directly: `at(t)` before the supersession
+  still returns the old fact, `at(t)` after returns the new one, and the old
+  row is still in the log (`test_episodes.py::test_assert_fact_closes_the_contradicting_open_interval`).
+- *PPR at scale.* Implemented Forward Push (Andersen-Chung-Lang 2006) over
+  `GraphMemory`'s own adjacency dicts (`_succ`/`_pred`), not global power
+  iteration. Checked against a from-scratch power-iteration reference on the
+  *same* neighbourhood function (`_ppr_neighbours_unsafe`) — they must agree on
+  the identical transition matrix, not networkx's built-in one, since the hub
+  damping and the structural-edge weight floor are this codebase's own
+  definitions. Matched within 0.02 on a 4-node graph
+  (`test_ppr.py::test_forward_push_matches_power_iteration_within_eps`); cost at
+  2,000+ disconnected nodes stayed under 5 ms
+  (`test_cost_independent_of_graph_size_at_fixed_local_density`) — the
+  O(1/(eps·alpha)) bound holding regardless of graph size, exactly as designed.
+  First attempt at the reference implementation had alpha and (1-alpha) swapped
+  (teleport vs continue probability) — caught immediately by the cross-check
+  disagreeing by 0.48 instead of 0.02.
+- *Briefing trigger.* Implemented both halves of open question 4 as
+  `should_brief_now` (first activity of a new calendar day, OR the first after
+  `briefing_idle_gap_hours` — default 6h — of quiet) rather than picking one; a
+  real log replay to compare firing rates is dogfood-window work, not
+  something this session's synthetic tests can settle.
+- *Volume projection.* Not measured against the live soak this session (the
+  soak's own gate log was not replayed); `episode_retention_days = 90` is the
+  design's own default, not yet cross-checked against real per-day row counts.
+  Left as unfinished business below rather than guessed as done.
+
+**Built.**
+- `core/episodes.py` — `EpisodeStore`: one `episode` table (`episode_seq` the
+  `INTEGER PRIMARY KEY AUTOINCREMENT`, gap-free and monotonic by construction —
+  no separate counter to keep in sync), indexed on `(subject, t_start)` and
+  `(kind, t_start)`; `record_span` / `assert_fact` (fire-and-forget, batched);
+  `at(t)` / `between(t0,t1)` / `since(episode_seq)` (read-only, each off the
+  loop via `asyncio.to_thread`); `forget(entity)` (flushes, then deletes by
+  subject-or-object directly — a rare, immediate, destructive operation, not
+  routed through the batched path).
+- `core/episodic_writer.py` — `EpisodicWriter(BaseModule)`: the *only* module
+  that writes to the store, entirely off the bus (`APP_SWITCH` opens/closes
+  focus spans, `IDLE_DETECTED`/`ACTIVITY_DETECTED` closes/opens idle spans,
+  `INSIGHT_GENERATED` records one row per thought, `MOMENT_DELIVERED`/
+  `MOMENT_FEEDBACK` subscribed now though nothing publishes them until A3/F2
+  exist — the same forward-declaration `EventType` itself already uses).
+- `GraphMemory.personalized_pagerank` (§3.4, Forward Push) +
+  `retrieval_scores` (the α·π + β·recency + γ·score/10 blend) +
+  `last_episode_seq` (persisted top-level scalar, `advance_last_episode_seq`).
+- `interface/briefing.py` — `compose_briefing`: candidates from open focus
+  threads (last span per subject) and insights since the last briefing;
+  ranked by `retrieval_scores`; `select_greedy_submodular` (§3.9, the
+  Nemhauser-Wolsey-Fisher greedy bound) picks ≤ `briefing_max_items` while
+  penalising neighbourhood-Jaccard similarity to what's already picked;
+  renders a `Moment` whose evidence is exactly the union of what was selected.
+- `Scheduler._catch_up_episode_watermark` — every tick, `since(last_episode_seq)`;
+  a `focus_span`/`idle_span` row replays `GraphMemory.mark_seen` (the one
+  mutation safe to redo idempotently — V-10, never touches `relevance_score`
+  or an edge weight), then the watermark advances to the newest row's
+  `episode_seq`. Proven directly: a span written to the store with the graph's
+  own `mark_seen` deliberately *not* called (simulating a dropped bus event)
+  is healed by exactly one `_tick()` call
+  (`test_episode_watermark.py::test_forced_drop_self_heals_within_one_tick`);
+  a second tick with nothing new is a no-op, not a re-replay.
+- `panic` needed no code change — `episodes.sqlite` lives under the same
+  `data/` directory `panic` already wipes by clearing every entry in
+  `Path(config.graph_db_path).parent` (`interface/offline.py`).
+
+**Proof.** 28 new tests across five files (`test_episodes.py`,
+`test_ppr.py`, `test_episodic_writer.py`, `test_briefing.py`,
+`test_episode_watermark.py`): span/fact round-trips and bi-temporal
+supersession; PPR against the power-iteration reference, convergence,
+seed-sensitivity, hub damping, cost independence; span reconstruction from
+synthetic switch streams including an unresolvable switch that still closes
+what was open; briefing composition returning grounded evidence or `None`
+(never a hollow item), greedy selection respecting `k` and preferring a
+diverse candidate over a near-duplicate; the watermark self-heal and its
+idempotence. `ruff check .`, `ruff format --check .`, `mypy` all clean; full
+suite green at 915 passed, 3 pre-existing skips.
+
+**Rejected.** Wiring `EpisodicWriter` through `orchestration/modules.py`'s
+`ModuleBuilder` (would have widened that function's signature — and every
+test that calls it directly — for one module that is conditional on a config
+flag `build_modules`'s other callers don't need to know about; registered
+directly in `NeuroPACAOrchestrator.initialize()` instead, the same way a
+manually-`register_module()`-ed module is threaded through). Defaulting
+`episodes_enabled = true`: the first attempt did, and broke
+`test_base_module.py`'s exact-module-count assertion along with leaking a
+writer task past test teardown — a brand-new subsystem should arrive opt-in,
+like `activity_enabled` and `raw_metrics_csv_path` before it, not silently
+change what every existing `Config()` boots.
+
+**What is left**
+- **Full decay-consistent watermark replay.** The tick above replays
+  `mark_seen` only — real, safe, idempotent, but not the Hebbian
+  reinforcement (`wire_coactivation`) a live `APP_SWITCH` handler elsewhere
+  would also have done. Replaying that correctly needs to know it is *not*
+  double-applying an update the live path already made, which this session's
+  budget did not allow doing carefully. The weekly/`repair-graph` full
+  rebuild — replay the entire log into a fresh graph using
+  `decay_cooccurrence_edges`'s elapsed-time-from-episode-timestamps rather
+  than the wall clock — is not built at all yet; it is the harder, rarer,
+  correctness-critical half of §0's "graph-store consistency" risk and needs
+  its own session.
+- **The daemon-side briefing trigger and delivery.** `compose_briefing` and
+  `should_brief_now` are pure functions, callable and tested directly, but
+  nothing yet subscribes to the bus to call them once per trigger and publish
+  the result as `MOMENT_PROPOSED` (A0's own pattern) or answers
+  `neuropaca briefing` over the L9 socket. `interface/layer.py` gained no new
+  op this session.
+- **The volume projection against the real gate log**, and therefore whether
+  `episode_retention_days = 90` is the right default — not measured.
+- **Every S0 exit-checklist item that needs days of real use**: 20
+  hand-written "what was I doing when" queries against a *real* store; the
+  7-day dogfood briefing precision; retrieval latency and DB growth in the
+  soak. None of this is evidence yet, only the mechanism and its unit tests
+  are — the same honest gap A0's chapter left, one phase up.
+- `scripts/_provenance.py` has not stamped any of S0's new files — needs
+  `PROV_SECRET`, not available to this session.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.

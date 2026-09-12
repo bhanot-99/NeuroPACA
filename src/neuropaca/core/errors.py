@@ -37,6 +37,11 @@ class GraphMemoryError(NeuroPACAError):
     """L1 GraphMemory failure — corrupt store, failed atomic save, schema drift."""
 
 
+class EpisodeStoreError(NeuroPACAError):
+    """S0 `EpisodeStore` failure — corrupt sqlite file or unreadable schema
+    version (VISION_PHASES.md)."""
+
+
 class InferenceError(NeuroPACAError):
     """The BitNet runtime failed: load failure, timeout, or a broken backend.
 
