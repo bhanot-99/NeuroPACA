@@ -31,8 +31,8 @@ async def _tracker(clock: FakeClock | None = None) -> tuple[PresenceTracker, Eve
 
 def _state(tracker: PresenceTracker) -> PresenceState:
     detail = tracker.health().detail
-    raw = dict(pair.split("=", 1) for pair in detail.split())
-    return PresenceState(raw["state"])
+    # Detail is "state=<value> · <N> errors"; pull the state= prefix.
+    return PresenceState(detail.split()[0].split("=", 1)[1])
 
 
 async def test_starts_awake_with_nothing_known_yet() -> None:
@@ -123,13 +123,48 @@ async def test_events_after_stop_are_ignored() -> None:
     await bus.stop()
 
 
-async def test_health_detail_is_machine_parseable_key_value_pairs() -> None:
+async def test_health_detail_uses_the_standard_counter_convention() -> None:
+    """The detail must use `<N> errors` (the same convention every other module
+    uses and `soak_probe.py`'s `parse_counters` regex matches), NOT `errors=<N>`
+    (key-value), which the regex silently misses — making real presence errors
+    invisible to the soak probe, dashboard, and pass/fail verdict."""
     tracker, bus = await _tracker()
     try:
         detail = tracker.health().detail
-        parsed = dict(pair.split("=", 1) for pair in detail.split())
-        assert set(parsed) == {"state", "since", "errors"}
-        assert parsed["errors"] == "0"
+        assert detail.startswith("state=")
+        # The ` · <N> errors` suffix must be present and parseable.
+        assert " · " in detail
+        assert detail.endswith(" errors")
+        assert "0 errors" in detail
+        # Must NOT use the key=value format the regex cannot parse.
+        assert "errors=" not in detail
+    finally:
+        await tracker.stop()
+        await bus.stop()
+
+
+async def test_health_detail_never_embeds_a_timestamp() -> None:
+    """Regression: an ISO timestamp ends in digits (a UTC offset like
+    `+05:30`), and a space right before the next `key=value` token makes it
+    parse exactly like `scripts/soak_probe.py`'s generic `"<N> <word>"`
+    counter regex wants — hit live on this tracker's first real soak sample
+    (`... +05:30 errors=0"` read as "30 errors"). `since` belongs in
+    `last_event_at` (a real field), never string-embedded in `detail`."""
+    tracker, bus = await _tracker()
+    try:
+        detail = tracker.health().detail
+        assert "since" not in detail
+        assert ":" not in detail  # no ISO timestamp colon ever sneaks back in
+    finally:
+        await tracker.stop()
+        await bus.stop()
+
+
+async def test_health_last_event_at_carries_since() -> None:
+    tracker, bus = await _tracker()
+    try:
+        health = tracker.health()
+        assert health.last_event_at is not None
     finally:
         await tracker.stop()
         await bus.stop()

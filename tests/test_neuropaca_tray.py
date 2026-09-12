@@ -28,10 +28,19 @@ sys.modules["neuropaca_tray"] = tray
 _spec.loader.exec_module(tray)
 
 
-def _health(*, presence_detail: str | None = None, ok: bool = True) -> dict:
+def _health(
+    *, state: str | None = None, since: str = "2026-09-12T10:00:00+05:30", ok: bool = True
+) -> dict:
     modules = []
-    if presence_detail is not None:
-        modules.append({"name": "presence", "ok": True, "detail": presence_detail})
+    if state is not None:
+        modules.append(
+            {
+                "name": "presence",
+                "ok": True,
+                "detail": f"state={state} · 0 errors",
+                "last_event_at": since,
+            }
+        )
     return {"ok": ok, "modules": modules}
 
 
@@ -56,7 +65,7 @@ def test_read_health_returns_none_when_the_top_level_is_not_an_object(tmp_path: 
 
 def test_read_health_reads_a_real_dump(tmp_path: Path) -> None:
     dump = tmp_path / "health.json"
-    dump.write_text(json.dumps(_health(presence_detail="state=idle since=x")), encoding="utf-8")
+    dump.write_text(json.dumps(_health(state="idle")), encoding="utf-8")
     health = tray.read_health(dump)
     assert health is not None
     assert health["ok"] is True
@@ -88,7 +97,7 @@ def test_none_health_is_asleep_not_a_crash() -> None:
 
 
 def test_stale_health_is_asleep_with_its_own_reason() -> None:
-    view = tray.compute_tray_view(_health(presence_detail="state=idle since=x"), stale=True)
+    view = tray.compute_tray_view(_health(state="idle"), stale=True)
     assert view.state == "asleep"
     assert view.error == "health dump is stale"
 
@@ -113,24 +122,21 @@ def test_each_real_state_maps_to_its_own_icon() -> None:
         ("idle", tray.ICON_IDLE),
         ("awake", tray.ICON_AWAKE),
     ]:
-        view = tray.compute_tray_view(
-            _health(presence_detail=f"state={state} since=2026-09-12T10:00:00+05:30"),
-            stale=False,
-        )
+        view = tray.compute_tray_view(_health(state=state), stale=False)
         assert view.state == state
         assert view.icon_name == icon
         assert view.label == state.capitalize()
 
 
-def test_since_is_carried_through() -> None:
+def test_since_is_carried_through_from_last_event_at_not_detail() -> None:
     view = tray.compute_tray_view(
-        _health(presence_detail="state=focused since=2026-09-12T10:00:00+05:30"), stale=False
+        _health(state="focused", since="2026-09-12T10:00:00+05:30"), stale=False
     )
     assert view.since == "2026-09-12T10:00:00+05:30"
 
 
 def test_unknown_state_falls_back_to_the_awake_icon() -> None:
-    view = tray.compute_tray_view(_health(presence_detail="state=bogus since=x"), stale=False)
+    view = tray.compute_tray_view(_health(state="bogus"), stale=False)
     assert view.icon_name == tray.ICON_AWAKE
 
 
@@ -143,9 +149,7 @@ def test_menu_header_shows_the_error_when_present() -> None:
 
 
 def test_menu_header_is_plain_when_healthy() -> None:
-    view = tray.compute_tray_view(
-        _health(presence_detail="state=idle since=x"), stale=False
-    )
+    view = tray.compute_tray_view(_health(state="idle"), stale=False)
     header = tray.menu_header(view)
     assert "Idle" in header
     assert "(" not in header

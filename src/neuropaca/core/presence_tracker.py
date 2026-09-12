@@ -13,9 +13,13 @@ so it shows up in `orchestration/orchestrator.py`'s periodic health-dump file
 (`config.health_dump_path`) exactly like every other module's counters.
 `scripts/neuropaca_tray.py` reads it from there.
 
-`detail` is a small `key=value` string, the same convention every other
-module's `health()` already uses (`scripts/soak_probe.py` parses those with a
-permissive regex) — `state=thinking since=2026-09-12T10:00:00+05:30`.
+`detail` is `"state=<value> · <N> errors"` — the `state=` token is this
+module's own `key=value` extension (`scripts/neuropaca_tray.py` reads it);
+the `<N> errors` suffix is the plain `"<N> <word>"` convention every other
+module's `health()` already uses, so `scripts/soak_probe.py`'s generic regex
+still counts a real presence error instead of silently missing it. `since`
+is never string-embedded — see `health()`'s own docstring for the bug that
+taught this the hard way.
 """
 
 from __future__ import annotations
@@ -79,11 +83,25 @@ class PresenceTracker(BaseModule):
         self.event_bus.unsubscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
 
     def health(self) -> ModuleHealth:
+        """Two format rules, both learned from real soak bugs:
+
+        1. `since` does NOT appear in `detail` — an ISO timestamp's UTC offset
+           (like `+05:30`) ends in digits, and a space before the next token
+           makes `soak_probe.py`'s regex read the offset as a counter value
+           (`+05:30 errors=0` → "30 errors").  `last_event_at` carries `since`
+           as a structured field instead.
+
+        2. The error count uses the `<N> <word>` convention (`0 errors`), not
+           `key=value` (`errors=0`).  `soak_probe.py`'s `parse_counters` regex
+           only matches `<N> <word>`, so `errors=0` would silently read as zero
+           even when there were real errors — the count would be invisible to
+           the soak probe, the dashboard, and the pass/fail verdict.
+        """
         state, since = self._compute()
         return ModuleHealth(
             name=self.name,
             ok=self.is_running,
-            detail=f"state={state.value} since={since.isoformat()} errors={self._errors}",
+            detail=f"state={state.value} · {self._errors} errors",
             last_event_at=since,
         )
 

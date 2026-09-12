@@ -151,10 +151,12 @@ def _find_module(health: dict[str, Any], name: str) -> dict[str, Any] | None:
 
 
 def _parse_kv(detail: str) -> dict[str, str]:
-    """`"state=thinking since=2026-09-12T10:00:00+05:30 errors=0"` -> a dict.
-    Permissive by construction, same reasoning as `soak_probe.py`'s own
-    `parse_counters`: a token it does not recognise is simply dropped, never
-    a raised exception over a cosmetic rewording of a health detail string."""
+    """`"state=thinking · 0 errors"` -> `{"state": "thinking"}` — only the
+    `key=value` tokens are picked up; `·`, `0`, and `errors` have no `=` and
+    are silently skipped. Permissive by construction, same reasoning as
+    `soak_probe.py`'s own `parse_counters`: a token it does not recognise is
+    simply dropped, never a raised exception over a cosmetic rewording of a
+    health detail string."""
     parsed: dict[str, str] = {}
     for token in detail.split():
         if "=" in token:
@@ -207,11 +209,17 @@ def compute_tray_view(health: dict[str, Any] | None, *, stale: bool) -> TrayView
         )
     parsed = _parse_kv(str(presence.get("detail", "")))
     state = parsed.get("state", "awake")
+    # `since` is a real, structured field (`last_event_at`), not part of
+    # `detail` — a timestamp ending in digits right before the next
+    # `key=value` token would otherwise look exactly like
+    # `soak_probe.py`'s generic counter regex wants (see
+    # `core/presence_tracker.py`'s `health()` docstring for the bug this
+    # avoids).
     return TrayView(
         state=state,
         icon_name=_ICON_BY_STATE.get(state, ICON_AWAKE),
         label=state.capitalize(),
-        since=parsed.get("since", ""),
+        since=str(presence.get("last_event_at") or ""),
         error=None,
     )
 

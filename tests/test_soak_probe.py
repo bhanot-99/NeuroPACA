@@ -109,6 +109,49 @@ def test_errors_are_summed_across_every_module_not_a_hand_listed_few() -> None:
     assert probe.build_sample(health)["errors"] == 3
 
 
+def test_a_timestamp_shaped_detail_does_not_get_misread_as_errors() -> None:
+    """Regression, caught live on the first real 7-day soak sample this
+    session: `core/presence_tracker.py` used to put an ISO timestamp in
+    `detail` right before `errors=0` — `"... +05:30 errors=0"` — and the
+    generic `"<N> <word>"` counter regex read the `30` off the end of the
+    UTC offset as thirty errors.
+
+    Fixed two ways (belt-and-suspenders):
+    1. `presence_tracker.health()` now uses the standard `<N> errors` counter
+       convention and keeps `since` in `last_event_at` only.
+    2. `parse_counters`' regex has a lookbehind that rejects digits preceded
+       by `:` (timestamps), `.` (decimals), or `=` (key-value pairs).
+
+    Both are tested here: the *current* format, and the *old* format the
+    running daemon may still emit until restarted."""
+    # The CURRENT format after the fix:
+    health_new = {
+        "modules": [
+            {
+                "name": "presence",
+                "ok": True,
+                "detail": "state=focused · 0 errors",
+                "last_event_at": "2026-09-12T18:53:43.837310+05:30",
+            }
+        ]
+    }
+    assert probe.build_sample(health_new)["errors"] == 0
+
+    # The OLD format (with the timestamp) — the hardened regex must also
+    # handle this correctly, since the running daemon emits it until restarted.
+    health_old = {
+        "modules": [
+            {
+                "name": "presence",
+                "ok": True,
+                "detail": "state=focused since=2026-09-12T18:53:43.837310+05:30 errors=0",
+                "last_event_at": "2026-09-12T18:53:43.837310+05:30",
+            }
+        ]
+    }
+    assert probe.build_sample(health_old)["errors"] == 0
+
+
 def test_a_degraded_module_is_named_in_the_sample() -> None:
     health = {
         "modules": [

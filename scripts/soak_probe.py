@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_COUNTER = re.compile(r"(\d+)\s+([a-z][a-z-]*)")
+_COUNTER = re.compile(r"(?<![:\d.=])(\d+)\s+([a-z][a-z-]*)")
 
 
 def default_health_dump_path() -> str:
@@ -69,6 +69,11 @@ def parse_counters(detail: str) -> dict[str, int]:
     reworded, and a sampler that raised on a rewording would end a soak on day
     four over a cosmetic change. Anything it fails to recognise simply does not
     appear, and the missing key reads as zero.
+
+    The lookbehind `(?<![:\\d.=])` stops digits embedded in timestamps (the
+    `30` in a `+05:30` UTC offset), decimals, or `key=value` pairs from being
+    read as counter values — a real bug that reported 30 phantom errors for the
+    entire first soak session.
     """
     return {word: int(value) for value, word in _COUNTER.findall(detail)}
 

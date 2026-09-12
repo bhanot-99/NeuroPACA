@@ -83,7 +83,7 @@ PROBE="${REPO}/scripts/soak_probe.py"
 import json, sys
 sample = json.load(sys.stdin)
 if not sample.get("daemon_up"):
-    sys.exit("the daemon's health dump is missing or stale")
+    sys.exit("the health dump reports the daemon as not up")
 if "activity" in sample.get("degraded", []):
     sys.exit("the activity collector reports itself degraded -- it self-disabled")
 if not sample.get("window_ok"):
