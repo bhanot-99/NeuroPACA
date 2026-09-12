@@ -12,15 +12,20 @@ from B4 on.
 L9 (`InterfaceLayer`, the socket/CLI/tray-facing "terminal accessibility"
 surface) was removed by user decision: a text/CLI control surface will not be
 maintained going forward, superseded by a future voice interface. Every
-module below still publishes exactly what it always did (`MOMENT_PROPOSED`,
+producer still publishes exactly what it always did (`MOMENT_PROPOSED`,
 `ACTION_PROPOSAL`, `ACTION_CONFIRMATION_REQUEST`, `DMN_CYCLE_STARTED`/`_ENDED`,
 the `BRIEFING_REQUEST`/`MIRROR_REQUEST`/`SYSTEM_HEALTH_REQUEST` bridges) —
 none of that is "terminal", it is the general "ask without importing"
-pattern (rules.md §0) any future interface reuses. There is simply no
-subscriber on the other end of any of it right now — except `presence`
-(`PresenceTracker`, below), reintroduced as a passive, socket-free module so
-`scripts/neuropaca_tray.py` still has a real state to show, read from the
-health-dump file rather than a live request.
+pattern (rules.md §0) any future interface reuses.
+
+A3 (`Guardian`, below) is now the subscriber on the other end of
+`MOMENT_PROPOSED`: it decides deliver/hold/drop and is the sole publisher of
+the notification `ACTION_PROPOSAL` and of `MOMENT_DELIVERED`.
+`NotificationDispatcher` turns a delivered moment into a real desktop
+notification (`notify-send`) and is the sole publisher of `MOMENT_FEEDBACK`
+(F2, VISION_PHASES.md). `presence` (`PresenceTracker`) remains the one
+passive, socket-free module reporting through the health-dump file rather
+than a live request, for `scripts/neuropaca_tray.py`.
 """
 
 from __future__ import annotations
@@ -36,9 +41,11 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.presence_tracker import PresenceTracker
 from neuropaca.diagnosis.correlator import SignalCorrelator
+from neuropaca.drive.guardian import Guardian
 from neuropaca.drive.pressure import PressureAccumulator
 from neuropaca.idle.dmn import DefaultModeNetwork
 from neuropaca.interface.moments import MomentComposer
+from neuropaca.interface.notifier import NotificationDispatcher
 from neuropaca.learning.plasticity import BitNetPlasticity
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
@@ -97,6 +104,15 @@ def build_modules(
         episode_store=episode_store,
     )
     moments = MomentComposer(event_bus, config, graph_memory, clock=SystemClock())
+    # A3 · the guardian (VISION.md §3.6). The sole subscriber of
+    # `MOMENT_PROPOSED` from here on — `moments`/`MirrorComposer`/
+    # `BriefingComposer` no longer deliver straight through. `episode_store`
+    # is optional (like `idle_cognition`'s) — posteriors just don't survive a
+    # restart without it.
+    guardian = Guardian(event_bus, config, clock=SystemClock(), episode_store=episode_store)
+    # F2 · turns a delivered moment into a real desktop notification and
+    # captures the reaction (`notify-send --wait`, `interface/notifier.py`).
+    notifier = NotificationDispatcher(event_bus, config, clock=SystemClock())
     # A1 · presence, minus L9 (RESEARCH_DOSSIER.md §21.20/21.21). No socket, no
     # write-back — just the state machine, reported through the normal
     # `health()` path so it lands in the periodic health-dump file
@@ -132,6 +148,9 @@ def build_modules(
     modules.append(idle_cognition)
     if config.welcome_enabled:
         modules.append(moments)
+    if config.guardian_enabled:
+        modules.append(guardian)
+        modules.append(notifier)
     modules.append(presence)
     return modules
 

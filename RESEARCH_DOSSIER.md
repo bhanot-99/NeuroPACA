@@ -5251,6 +5251,124 @@ real desktop time, not a code review.
 
 ---
 
+### 21.22 A3 · The guardian, and F2's feedback channel rebuilt
+
+| | |
+| --- | --- |
+| **Branch** | `a3-the-guardian` |
+| **Outcome** | Full suite: 909 → **931 collected, 924 passed**, 7 pre-existing skips (+22 new tests: 13 guardian, 8 notifier, 1 episodic-writer). `EpisodeKind` +1 (`GUARDIAN_POSTERIOR`, 7 → 8; no `EventType` change — `MOMENT_DELIVERED`/`MOMENT_FEEDBACK` already existed, unused). `ruff`/`mypy` clean. Live-verified in isolation (below) — not yet against the running 7-day soak daemon, which stays untouched. |
+
+**In plain words.** Two real gaps surfaced before this phase could even
+start, both from the same afternoon's terminal removal (§21.20): nothing
+published `MOMENT_FEEDBACK` any more (its only source, `interface/layer.py`'s
+tray buttons, was deleted with the terminal), and nothing turned a
+`NotificationAction` into an actual popup either
+(`NotificationAction.execute()` does nothing on purpose — "L9 owns
+delivery," and L9 was gone). A3 could not be built as a pure decision layer
+on top of a channel that no longer existed; F2 had to be rebuilt first,
+in the same phase.
+
+**Spike.** `gdbus call ... org.freedesktop.Notifications.GetCapabilities`
+confirmed `cosmic-notifications` (`0.1.0`) advertises `actions`. Two manual
+`notify-send --wait --action=...` probes both hit their own timeout with no
+observed click — inconclusive from the terminal alone. An isolated smoke
+script (`Guardian` + `NotificationDispatcher` wired to a real `EventBus`, no
+daemon, no `data/` path touched) produced a real, visible desktop
+notification — user-confirmed: **the popup renders, but with no Keep/Dismiss
+buttons at all**. `cosmic-notifications` advertises the actions capability
+without actually implementing it. The design does not fail on this: the
+same `notify-send --wait` call simply never returns until our own
+`moment.expires_at` timeout, which F2 already defines as **ignored** — a
+real, already-handled outcome, not an error. Confirmed via the same smoke
+script: `MOMENT_FEEDBACK: outcome='ignored'` published cleanly at the 20 s
+mark. The practical consequence: until a fallback exists, every delivered
+moment on this machine reads as `ignored`, which only ever nudges an arm's
+`b` by the small `_IGNORED_B_INCREMENT` (0.2) — real learning signal, just
+weak and one-directional (see What is left).
+
+**Built — the decision (`drive/guardian.py`, VISION.md §3.6).**
+`Guardian(BaseModule)` is now the sole subscriber of `MOMENT_PROPOSED` from
+every producer (`MomentComposer`, `MirrorComposer`, `BriefingComposer` all
+lost their "straight through until A3 exists" `ACTION_PROPOSAL` publish —
+they now only ever publish `MOMENT_PROPOSED`) and the sole publisher of both
+the notification `ACTION_PROPOSAL` and `MOMENT_DELIVERED`. Per-`(moment.kind,
+bucket)` Beta(1, 3) arms, `bucket = focus × hour × recent_dismissals` (36 per
+kind, exactly the spike's own sizing): `focus` is `focused` (mid-session —
+always **held**, unconditionally, never sampled — "a context override, not a
+cold-start fix") / `just_ended` (within `guardian_just_ended_minutes` of the
+last `ACTIVITY_DETECTED` — exactly when A0's welcome-back fires) / `normal`
+(idle right now, not `just_ended`), derived from `IDLE_DETECTED`/
+`ACTIVITY_DETECTED` alone, no new sensing. Below `guardian_burn_in_n`
+observations, `_p_hat` returns the deterministic posterior mean; at or above
+it, a real `random.Random.betavariate` draw — exactly §3.6's burn-in.
+`interrupt_cost_focus`/`interrupt_cost_normal` are the only two cost tiers
+the vision doc actually names (`just_ended` shares `_normal` — the 3-way
+focus split is for which arm learns, not a third cost). A daily budget
+(`nudge_daily_budget`) caps deliveries; exhausting it is a plain drop, not a
+hold — a losing coin flip needs no memory. Held moments are a bounded
+`deque` (cap 20; overflow drops the newest, never evicts one already
+waiting), each keeping the proposer's own `expires_at`, replayed in full,
+oldest first, the instant `IDLE_DETECTED` ends the session — an
+already-expired held moment is dropped silently (never delivered, so never
+trains an arm; correct bandit behaviour, you only learn about a pulled arm).
+Decay (`guardian_decay`, default 0.98/day) is lazy and on-touch, the same
+idiom `drive/pressure.py` already uses for its own decay — `n` (the burn-in
+counter) never decays, it counts real observations. **No separate in-flight
+correlation table**: the bucket a delivery decision used is baked straight
+into the delivered `Moment`'s own `context` (`dataclasses.replace`, since
+`Moment` is frozen) — `on_moment_feedback` recomputes the identical key from
+whatever comes back on `MOMENT_FEEDBACK`, however long the round trip.
+Posteriors persist via `EpisodeStore.assert_fact` (new `EpisodeKind.
+GUARDIAN_POSTERIOR`, one fact per arm, subject `guardian:<kind>:<bucket>`,
+replaced whole on every touch) and rehydrate once at `initialize()` from
+`EpisodeStore.at(now)` — optional, like `DefaultModeNetwork`'s
+`episode_store`; posteriors just don't survive a restart without one.
+
+**Built — delivery + feedback in one call (`interface/notifier.py`, F2).**
+`NotificationDispatcher(BaseModule)` subscribes `MOMENT_DELIVERED` only —
+it does not decide anything, it is L9's one-job replacement. `notify-send
+--expire-time=0 --wait --action=keep=Keep --action=dismiss=Dismiss` (`-t 0`
+so the notification daemon's own auto-hide never competes with our timeout)
+via `asyncio.create_subprocess_exec`, bounded by `asyncio.wait_for(...,
+timeout=until moment.expires_at)`. Delivery and feedback fall out of the
+same one subprocess call rather than needing two channels: `"keep"` on
+stdout → **accepted**; any other early return (closed without a labelled
+click — the only outcome actually reachable on this machine, see Spike) →
+**dismissed**; our own timeout with no return at all → **ignored** (kills
+the subprocess). `notify-send` missing entirely degrades the same way,
+immediately, never raised.
+
+**Rejected.** A separate in-flight correlation dict keyed by `proposal_id`
+to route `MOMENT_FEEDBACK` back to the arm that earned it — unnecessary
+once the bucket travels inside the `Moment` itself. A pop-up window with a
+text-input box for feedback (the user's own first proposal) — rejected in
+favour of the lighter `cosmic-notifications` action-button fit, which the
+phase doc already spiked for exactly this reason; a modal input box would
+have been an interruption in the name of avoiding interruptions. A third
+`interrupt_cost_just_ended` config field — the doc only ever names two cost
+fields; a third would have been invented, not specified.
+
+**What is left**
+- **The tray-menu fallback F2's own doc names** ("if no: the tray menu
+  carries it") is now a real, not hypothetical, follow-up — confirmed this
+  session that `cosmic-notifications` never renders the action buttons, so
+  every delivered moment reads as `ignored` until it exists. Needs a
+  write-back channel from `scripts/neuropaca_tray.py` to the daemon, which
+  is exactly the thing §21.21 confirmed does not exist yet for any purpose.
+- Every exit criterion needing a real dogfood window (zero moments
+  mid-focus over two weeks, a falling dismissal rate, H2's alternate-week
+  protocol) needs real elapsed time this session cannot produce.
+- Not yet run against the live 7-day soak daemon — deliberately: that
+  daemon's own measurement window was not interrupted for this. Turning
+  `guardian_enabled` on there is the user's call, same as every prior
+  A-series config flip.
+- `interrupt_cost_focus`/`interrupt_cost_normal`/`nudge_daily_budget` are
+  reasoned defaults (0.9, 0.1, 10/day), not calibrated against any real
+  acceptance data — the same "first thing to recalibrate once real days
+  accumulate" caveat every A2/A3 threshold in this dossier already carries.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.

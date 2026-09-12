@@ -198,8 +198,8 @@ async def test_module_proposes_a_moment_on_first_ever_trigger(tmp_path) -> None:
     assert len(proposed) == 1
     moment = proposed[0].payload["moment"]
     assert isinstance(moment, Moment) and moment.kind == "briefing"
-    assert len(actions) == 1
-    assert actions[0].payload["action_type"] == "notification"
+    # A3: the guardian, not this composer, decides delivery now.
+    assert actions == []
     await store.stop()
     await bus.stop()
 

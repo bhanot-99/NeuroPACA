@@ -146,8 +146,8 @@ async def test_module_proposes_a_moment_on_the_first_evening_idle(tmp_path) -> N
     assert len(proposed) == 1
     moment = proposed[0].payload["moment"]
     assert isinstance(moment, Moment) and moment.kind == "mirror"
-    assert len(actions) == 1
-    assert actions[0].payload["trigger"] == "mirror"
+    # A3: the guardian, not this composer, decides delivery now.
+    assert actions == []
     await store.stop()
     await bus.stop()
 

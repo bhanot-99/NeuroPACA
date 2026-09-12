@@ -15,8 +15,8 @@ to graph or episode evidence.
 module that tracks focus history (the last few focused nodes, for §3.4's PPR
 seeds) and decides *when* to call `compose_briefing` — on `should_brief_now`'s
 rule, checked on every `APP_SWITCH` / `ACTIVITY_DETECTED`. Two paths out:
-- **proactive** — publishes `MOMENT_PROPOSED` and, until A3's guardian exists,
-  an `ACTION_PROPOSAL` `notification` straight through (A0's own pattern).
+- **proactive** — publishes `MOMENT_PROPOSED`; A3's `Guardian` decides
+  whether it is ever turned into an `ACTION_PROPOSAL` `notification`.
 - **on demand** (`neuropaca briefing`) — L9 cannot import this module
   (rules.md §0), so it asks over the bus: `BRIEFING_REQUEST` in,
   `BRIEFING_REPORT` out, the same request/report shape as L9's own health
@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
@@ -422,21 +421,6 @@ class BriefingComposer(BaseModule):
         self.event_bus.publish(
             Event(
                 event_type=EventType.MOMENT_PROPOSED, source="briefing", payload={"moment": moment}
-            )
-        )
-        # A3 does not exist yet — deliver straight through, exactly A0's path
-        # (D-16's description-only `ACTION_PROPOSAL`; L7 owns the gate).
-        self.event_bus.publish(
-            Event(
-                event_type=EventType.ACTION_PROPOSAL,
-                source="briefing",
-                payload={
-                    "proposal_id": uuid4().hex[:12],
-                    "action_type": "notification",
-                    "kwargs": {"text": moment.text, "node_ids": list(moment.evidence)},
-                    "reason": "morning briefing",
-                    "trigger": "briefing",
-                },
             )
         )
 

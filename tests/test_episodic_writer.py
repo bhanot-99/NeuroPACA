@@ -132,6 +132,32 @@ async def test_moment_feedback_is_recorded(tmp_path) -> None:
     await bus.stop()
 
 
+async def test_moment_delivered_is_recorded(tmp_path) -> None:
+    """A3's `Guardian` is now the real publisher of `MOMENT_DELIVERED`
+    (VISION_PHASES.md) — this contract was previously exercised only by
+    hand-constructing the event, as above."""
+    writer, bus, store = await _writer(tmp_path)
+    moment = Moment(
+        kind="welcome_back",
+        text="Welcome back.",
+        evidence=("app:code",),
+        value=1.0,
+        context={"focus_bucket": "normal", "hour_bucket": "afternoon", "dismissal_bucket": "0"},
+        expires_at=_NOW,
+    )
+    await writer.on_moment_delivered(
+        Event(event_type=EventType.MOMENT_DELIVERED, payload={"moment": moment})
+    )
+    await store.flush()
+
+    rows = await store.since(0)
+    assert len(rows) == 1
+    assert rows[0].kind == "moment_delivered"
+    assert rows[0].subject == "moment:welcome_back"
+    await store.stop()
+    await bus.stop()
+
+
 async def test_focus_span_records_the_app_map_domain(tmp_path) -> None:
     clock = FakeClock(wall=_NOW)
     app_map = AppMap.from_dict({"app_id": {"code": "engineering"}})

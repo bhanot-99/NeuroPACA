@@ -9,8 +9,7 @@ that decides *when* to run it and turns a surprising `MirrorResult` into a
 - **proactive** — the day's first `IDLE_DETECTED` at or after
   `mirror_evening_hour` runs `compute_mirror` over today (midnight to now)
   against the trailing baseline; a surprising result becomes a
-  `MOMENT_PROPOSED` + straight-through `ACTION_PROPOSAL` (A0's pattern, A3's
-  guardian does not exist yet).
+  `MOMENT_PROPOSED` — A3's `Guardian` decides whether it is ever delivered.
 - **on demand** (`neuropaca mirror`) — L9 cannot import this module
   (rules.md §0), so it asks over the bus: `MIRROR_REQUEST` in,
   `MIRROR_REPORT` out — and answers even when there is nothing surprising to
@@ -21,7 +20,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
@@ -182,20 +180,6 @@ class MirrorComposer(BaseModule):
                     event_type=EventType.MOMENT_PROPOSED,
                     source="mirror",
                     payload={"moment": moment},
-                )
-            )
-            # A3 does not exist yet — deliver straight through (A0's own pattern).
-            self.event_bus.publish(
-                Event(
-                    event_type=EventType.ACTION_PROPOSAL,
-                    source="mirror",
-                    payload={
-                        "proposal_id": uuid4().hex[:12],
-                        "action_type": "notification",
-                        "kwargs": {"text": moment.text, "node_ids": list(moment.evidence)},
-                        "reason": "evening mirror",
-                        "trigger": "mirror",
-                    },
                 )
             )
         except Exception as exc:  # a handler never raises (rules.md §2)

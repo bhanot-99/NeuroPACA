@@ -293,6 +293,25 @@ class Config:
     mirror_kl_threshold: float = 0.5
     mirror_evening_hour: int = 18
     mirror_top_contributors: int = 3
+    # A3 · the guardian (VISION.md §3.6, VISION_PHASES.md). Thompson sampling
+    # per (moment kind, context bucket) arm — deliver iff the posterior mean
+    # (below `guardian_burn_in_n` observations) or a Beta sample (at or above
+    # it) times the moment's own value beats the interrupt cost, and the
+    # daily budget still allows it. `interrupt_cost_focus` applies while a
+    # focus session is active (nothing gets through, regardless of the
+    # sample — the guardian holds it instead and re-evaluates once the
+    # session ends); `interrupt_cost_normal` applies otherwise, including
+    # `just_ended` — that bucket exists for the arms to learn separately,
+    # not for a third cost tier the doc never names.
+    # `guardian_just_ended_minutes` is how long after `ACTIVITY_DETECTED`
+    # a moment still counts as "just ended" rather than "focused".
+    guardian_enabled: bool = True
+    nudge_daily_budget: int = 10
+    interrupt_cost_focus: float = 0.9
+    interrupt_cost_normal: float = 0.1
+    guardian_decay: float = 0.98
+    guardian_burn_in_n: int = 5
+    guardian_just_ended_minutes: int = 5
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -457,6 +476,9 @@ class Config:
             "health_dump_interval_seconds",
             "mirror_baseline_days",
             "mirror_top_contributors",
+            "nudge_daily_budget",
+            "guardian_burn_in_n",
+            "guardian_just_ended_minutes",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
@@ -468,6 +490,8 @@ class Config:
             "attention_recency_half_life_seconds",
             "attention_ppr_eps",
             "briefing_idle_gap_hours",
+            "interrupt_cost_focus",
+            "interrupt_cost_normal",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
@@ -492,6 +516,8 @@ class Config:
             errs.append(
                 f"dmn_curiosity_epsilon must be in [0.0, 1.0], got {self.dmn_curiosity_epsilon}"
             )
+        if not 0.0 < self.guardian_decay <= 1.0:
+            errs.append(f"guardian_decay must be in (0.0, 1.0], got {self.guardian_decay}")
         if self.mirror_baseline_half_life_days <= 0.0:
             errs.append(
                 "mirror_baseline_half_life_days must be > 0, got "

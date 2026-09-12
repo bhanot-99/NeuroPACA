@@ -571,7 +571,17 @@ a little more careful about that kind of moment in that kind of situation.
 **Needs:** A0 (moments), A1 (a feedback channel). **Delivers:** Level 3 complete.
 
 **Spike**
-1. Notification actions on `cosmic-notifications` (F2).
+1. Notification actions on `cosmic-notifications` (F2). **Result (2026-09-12,
+   confirmed by the user against a real isolated notification):
+   `cosmic-notifications` advertises the D-Bus `actions` capability but does
+   not actually render the buttons — a notification pops up, with no
+   Keep/Dismiss to click.** `notify-send --wait` therefore never returns
+   early; it always runs to the caller's own timeout. This is handled, not
+   worked around: F2's own "ignored — expired untouched" outcome is exactly
+   this case, so every delivered moment on this machine currently reads as
+   `ignored` until the tray-menu fallback F2 already names ("if no: the tray
+   menu carries it") is built — a real follow-up now, not a hypothetical one
+   (RESEARCH_DOSSIER.md §21.22).
 2. Context buckets: focus state {focused, normal, just-ended} × hour {night,
    morning, afternoon, evening} × recent dismissals {0, 1, 2+} = 36 buckets per
    moment kind — enough to learn, few enough to fill.

@@ -94,11 +94,9 @@ async def test_a_full_spell_proposes_one_grounded_welcome_back(tmp_path) -> None
     assert "Code" in moment.text
     assert set(moment.evidence) == {"idle:q1", "app:code"}
 
-    assert len(actions) == 1
-    kwargs = actions[0].payload["kwargs"]
-    assert actions[0].payload["action_type"] == "notification"
-    assert kwargs["text"] == moment.text
-    assert set(kwargs["node_ids"]) == {"idle:q1", "app:code"}
+    # A3: the guardian, not this composer, decides whether a proposed moment
+    # is ever turned into an `ACTION_PROPOSAL` notification.
+    assert actions == []
     await bus.stop()
 
 

@@ -121,6 +121,11 @@ class EpisodeKind(StrEnum):
     MOMENT_FEEDBACK = auto()
     TOPIC_FACT = auto()
     PROJECT_STATE_FACT = auto()
+    # A3 · one fact per (moment kind, context bucket) arm, replaced on every
+    # update (`assert_fact` closes the old one) so the guardian's Beta(a, b)
+    # posteriors survive a daemon restart. `object` is a small JSON blob
+    # ({"a", "b", "n", "updated_at"}); `subject` is `guardian:<kind>:<bucket>`.
+    GUARDIAN_POSTERIOR = auto()
 
 
 class NodeType(StrEnum):

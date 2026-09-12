@@ -17,17 +17,15 @@ independently when it has nothing grounded to say; a spell with no thought
 still yields the "you were in..." line, and a spell with neither produces
 silence, never a hollow greeting.
 
-Until A3 (the guardian) exists, a proposed moment is delivered straight away as
-an `ACTION_PROPOSAL` `notification` — the same publisher-agnostic path L8 uses
-(Architecture.md §11b, D-16): a description only, never a live action; L7
-instantiates and gates it.
+A proposed moment only ever reaches `MOMENT_PROPOSED` from here — A3's
+`Guardian` (`drive/guardian.py`) is the sole thing that decides whether it
+is ever turned into an `ACTION_PROPOSAL` `notification`.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
@@ -220,23 +218,6 @@ class MomentComposer(BaseModule):
                 event_type=EventType.MOMENT_PROPOSED,
                 source="moments",
                 payload={"moment": moment},
-            )
-        )
-        # A3 does not exist yet — deliver straight through as a `notification`
-        # ACTION_PROPOSAL, the same description-only path L8 uses (D-16). L7
-        # owns the class registry, the gate, and the audit log; nothing here
-        # can bypass any of them.
-        self.event_bus.publish(
-            Event(
-                event_type=EventType.ACTION_PROPOSAL,
-                source="moments",
-                payload={
-                    "proposal_id": uuid4().hex[:12],
-                    "action_type": "notification",
-                    "kwargs": {"text": text, "node_ids": list(evidence)},
-                    "reason": "welcome back",
-                    "trigger": "welcome_back",
-                },
             )
         )
 
