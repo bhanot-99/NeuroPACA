@@ -72,3 +72,6 @@ def _latest(a: datetime | None, b: datetime | None) -> datetime | None:
     if b is None:
         return a
     return max(a, b)
+
+
+# gen-ref: 776a804c

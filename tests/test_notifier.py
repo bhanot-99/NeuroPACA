@@ -192,3 +192,6 @@ async def test_end_to_end_publishes_moment_feedback(monkeypatch) -> None:
     assert feedback[0].payload["outcome"] == "ignored"
     assert feedback[0].payload["moment"] is moment
     await bus.stop()
+
+
+# gen-ref: f6b4260f

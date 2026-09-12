@@ -196,3 +196,6 @@ def compute_mirror(
         top=top_contributors(q, p, top_n),
         missing=missing_contributors(q_raw, p_raw, top_n),
     )
+
+
+# gen-ref: ea0a3d1e

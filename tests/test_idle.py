@@ -439,3 +439,6 @@ async def test_stop_cancels_an_in_flight_cycle(tmp_path) -> None:
 
     assert dmn._idle_task is None
     await bus.stop()
+
+
+# gen-ref: a0673894

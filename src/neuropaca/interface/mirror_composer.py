@@ -212,3 +212,6 @@ class MirrorComposer(BaseModule):
         self.event_bus.publish(
             system_error_event(module="mirror", exception=str(exc), severity="handler")
         )
+
+
+# gen-ref: ec3f9cb4

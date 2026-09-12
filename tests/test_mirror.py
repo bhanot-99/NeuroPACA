@@ -276,3 +276,6 @@ def test_no_mirror_with_no_activity_today() -> None:
     rows = [_span("app:code", _DAY0 - timedelta(days=1) + timedelta(hours=9), 3600)]
     result = compute_mirror(rows, _DAY0, **_cfg())
     assert not result.surprising
+
+
+# gen-ref: 81b32440

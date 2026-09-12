@@ -360,3 +360,6 @@ async def test_posteriors_survive_a_restart_via_the_episode_store(tmp_path) -> N
 
     await store.stop()
     await bus.stop()
+
+
+# gen-ref: ea8879d1

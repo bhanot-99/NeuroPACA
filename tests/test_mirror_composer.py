@@ -279,3 +279,6 @@ async def test_on_mirror_request_works_even_before_the_evening_hour(tmp_path) ->
     assert isinstance(reports[0].payload["moment"], Moment)
     await store.stop()
     await bus.stop()
+
+
+# gen-ref: c1ba95ec

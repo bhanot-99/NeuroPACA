@@ -166,3 +166,6 @@ def test_default_health_dump_path_honours_the_env_override(monkeypatch) -> None:
 def test_default_health_dump_path_falls_back_to_the_repo_data_dir(monkeypatch) -> None:
     monkeypatch.delenv("NEUROPACA_HEALTH_DUMP", raising=False)
     assert tray.default_health_dump_path() == tray.REPO / "data" / "health.json"
+
+
+# gen-ref: b50d3aca
