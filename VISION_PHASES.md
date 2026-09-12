@@ -444,8 +444,25 @@ GTK (the soak-tray split); the tray survives the daemon restarting ("asleep" sta
 
 **Exit**
 - [ ] State matches the daemon within one poll, verified against the log over a day.
-- [ ] Pause silences every moment until it expires.
-- [ ] No measurable CPU when idle; no memory growth over 24 h.
+- [x] Pause silences every moment until it expires — proven directly
+      (`test_pause_silences_the_desktop_popup_but_not_the_notification_queue`):
+      a paused live `ACTION_PROPOSAL` notification never reaches
+      `_deliver_to_desktop`, still lands in `neuropaca notifications`, and the
+      pause itself expires and clears on its own.
+- [ ] No measurable CPU when idle; no memory growth over 24 h — needs a real
+      day running, not something one build session can produce. Built, ran
+      live against the real daemon without crashing (`scripts/neuropaca_tray.py`,
+      system `python3`); the 24 h figure itself is unmeasured.
+
+**Built, honestly scoped.** The `presence` / `pause` / `feedback` ops (all
+computed synchronously in L9 from state it already tracks — no bus round
+trip, no timeout risk, unlike `briefing`'s); `DMN_CYCLE_STARTED`/`_ENDED` so
+L9 can see "thinking" without importing `idle/dmn.py`; the state machine
+itself as a pure, directly-tested function (`core/presence.py`); the tray
+script with the same pure-logic/GTK-glue split `soak_tray.py` established.
+**Deferred to A2**, not built: the "what did you learn today" menu item —
+its backend (the mirror, §3.8) does not exist yet, and a menu item with
+nothing behind it is worse than no menu item.
 
 ---
 
