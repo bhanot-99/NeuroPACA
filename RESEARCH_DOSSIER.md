@@ -5256,7 +5256,7 @@ real desktop time, not a code review.
 | | |
 | --- | --- |
 | **Branch** | `a3-the-guardian` |
-| **Outcome** | Full suite: 909 → **931 collected, 924 passed**, 7 pre-existing skips (+22 new tests: 13 guardian, 8 notifier, 1 episodic-writer). `EpisodeKind` +1 (`GUARDIAN_POSTERIOR`, 7 → 8; no `EventType` change — `MOMENT_DELIVERED`/`MOMENT_FEEDBACK` already existed, unused). `ruff`/`mypy` clean. Live-verified in isolation (below) — not yet against the running 7-day soak daemon, which stays untouched. |
+| **Outcome** | Full suite: 909 → **929 collected, 922 passed**, 7 pre-existing skips (+20 new tests: 13 guardian, 6 notifier, 1 episodic-writer). `EpisodeKind` +1 (`GUARDIAN_POSTERIOR`, 7 → 8; no `EventType` change — `MOMENT_DELIVERED`/`MOMENT_FEEDBACK` already existed, unused). `ruff`/`mypy` clean. Live-verified in isolation (below) — not yet against the running 7-day soak daemon, which stays untouched. |
 
 **In plain words.** Two real gaps surfaced before this phase could even
 start, both from the same afternoon's terminal removal (§21.20): nothing
@@ -5268,23 +5268,38 @@ delivery," and L9 was gone). A3 could not be built as a pure decision layer
 on top of a channel that no longer existed; F2 had to be rebuilt first,
 in the same phase.
 
-**Spike.** `gdbus call ... org.freedesktop.Notifications.GetCapabilities`
-confirmed `cosmic-notifications` (`0.1.0`) advertises `actions`. Two manual
-`notify-send --wait --action=...` probes both hit their own timeout with no
-observed click — inconclusive from the terminal alone. An isolated smoke
-script (`Guardian` + `NotificationDispatcher` wired to a real `EventBus`, no
-daemon, no `data/` path touched) produced a real, visible desktop
-notification — user-confirmed: **the popup renders, but with no Keep/Dismiss
-buttons at all**. `cosmic-notifications` advertises the actions capability
-without actually implementing it. The design does not fail on this: the
-same `notify-send --wait` call simply never returns until our own
-`moment.expires_at` timeout, which F2 already defines as **ignored** — a
-real, already-handled outcome, not an error. Confirmed via the same smoke
-script: `MOMENT_FEEDBACK: outcome='ignored'` published cleanly at the 20 s
-mark. The practical consequence: until a fallback exists, every delivered
-moment on this machine reads as `ignored`, which only ever nudges an arm's
-`b` by the small `_IGNORED_B_INCREMENT` (0.2) — real learning signal, just
-weak and one-directional (see What is left).
+**Spike — three rounds, each correcting the last.** (1) `gdbus call ...
+GetCapabilities` confirmed `cosmic-notifications` (`0.1.0`) advertises
+`actions`. Two manual `notify-send --wait --action=...` probes both hit
+their own timeout with no observed click. (2) An isolated smoke script
+(`Guardian` + `NotificationDispatcher` on a real `EventBus`, no daemon, no
+`data/` touched) produced a real, visible popup — user-confirmed: **it
+renders with no Keep/Dismiss buttons at all**, timing out to `ignored`
+exactly as F2 defines. Read at the time as "actions just don't render, but
+the design degrades safely." (3) A follow-up demo run then resolved as
+**`accepted`** — with the user confirming, directly, that they had clicked
+*nothing*. That contradicted round 2 and could not be explained by "no
+buttons": something was reporting a false accept. Reproduced by hand
+(`notify-send --wait --action=keep=Keep --action=dismiss=Dismiss`,
+untouched, no click) — resolved on its own, once in 84 s, once in under a
+second, always printing `keep`. Traced to the actual source with
+`dbus-monitor`, calling `org.freedesktop.Notifications.Notify` directly
+(bypassing `notify-send` entirely) and watching the raw signals:
+`cosmic-notifications` itself fires `ActionInvoked(id, "keep")` followed by
+`NotificationClosed(id, reason=2)` ("dismissed by the user") **within
+seconds of every notification, unconditionally** — it fabricates the accept
+signal at the protocol level. This rules out a client-side D-Bus fix
+(listening to the raw signals directly reproduces the exact same fabricated
+sequence, since the daemon that would deliver them is the thing lying);
+the unreliability is inside `cosmic-notifications`, not in how anything
+talks to it. **Decision (user's, given the evidence): stop trusting any
+outcome `notify-send` reports.** `interface/notifier.py`'s `_show` no longer
+reads stdout at all — every completed run, real close or our own timeout
+alike, reports `ignored`, matching F2's already-defined "expired untouched"
+outcome rather than inventing a fourth. The practical consequence: until a
+fallback exists, every delivered moment on this machine reads as `ignored`,
+nudging only `b` by the small `_IGNORED_B_INCREMENT` (0.2) — real learning
+signal, just weak and one-directional (see What is left).
 
 **Built — the decision (`drive/guardian.py`, VISION.md §3.6).**
 `Guardian(BaseModule)` is now the sole subscriber of `MOMENT_PROPOSED` from
@@ -5346,15 +5361,22 @@ favour of the lighter `cosmic-notifications` action-button fit, which the
 phase doc already spiked for exactly this reason; a modal input box would
 have been an interruption in the name of avoiding interruptions. A third
 `interrupt_cost_just_ended` config field — the doc only ever names two cost
-fields; a third would have been invented, not specified.
+fields; a third would have been invented, not specified. **A direct D-Bus
+client** (`Notify()` + subscribe `ActionInvoked`/`NotificationClosed`
+instead of shelling out to `notify-send`) — the user's own first choice once
+round-2's "no buttons" surfaced, but round 3's `dbus-monitor` trace proved
+the fabricated signals originate inside `cosmic-notifications` itself, so a
+direct listener would receive the identical false `ActionInvoked("keep")` —
+new dependency, more code, no correctness gained; correctly abandoned once
+the evidence came back, not before.
 
 **What is left**
 - **The tray-menu fallback F2's own doc names** ("if no: the tray menu
-  carries it") is now a real, not hypothetical, follow-up — confirmed this
-  session that `cosmic-notifications` never renders the action buttons, so
-  every delivered moment reads as `ignored` until it exists. Needs a
-  write-back channel from `scripts/neuropaca_tray.py` to the daemon, which
-  is exactly the thing §21.21 confirmed does not exist yet for any purpose.
+  carries it") is now the *only* real path to a genuine accept/dismiss
+  signal on this system — round 3 proved the D-Bus layer itself cannot be
+  trusted, not just that buttons fail to render. Needs a write-back channel
+  from `scripts/neuropaca_tray.py` to the daemon, which is exactly the thing
+  §21.21 confirmed does not exist yet for any purpose.
 - Every exit criterion needing a real dogfood window (zero moments
   mid-focus over two weeks, a falling dismissal rate, H2's alternate-week
   protocol) needs real elapsed time this session cannot produce.

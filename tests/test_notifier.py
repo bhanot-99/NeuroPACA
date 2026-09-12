@@ -4,9 +4,16 @@
 """F2 · `NotificationDispatcher` (VISION_PHASES.md).
 
 `notify-send` itself is never actually invoked — `asyncio.create_subprocess_exec`
-is monkeypatched to a fake process, so these tests exercise the outcome mapping
-(accepted/dismissed/ignored) and the timeout/kill path without touching the
-real desktop (rules.md §8's spirit: no real external dependency in a unit test).
+is monkeypatched to a fake process, so these tests exercise the (confirmed-safe)
+"every outcome reads as ignored" behaviour and the timeout/kill path without
+touching the real desktop (rules.md §8's spirit: no real external dependency in
+a unit test).
+
+Every case below resolves to `"ignored"` — that is not a bug in the test, it is
+the module's actual, deliberate behaviour: `cosmic-notifications` was confirmed
+this session to fabricate an "accepted" signal on its own, so nothing
+`notify-send` reports is trusted any more (`interface/notifier.py`'s own
+docstring has the full D-Bus evidence).
 """
 
 from __future__ import annotations
@@ -36,21 +43,20 @@ def _moment(*, expires_in_minutes: float = 10.0) -> Moment:
 
 
 class _FakeProcess:
-    def __init__(self, stdout: bytes = b"", *, hang: bool = False) -> None:
-        self._stdout = stdout
+    def __init__(self, *, hang: bool = False) -> None:
         self._hang = hang
         self.killed = False
 
-    async def communicate(self) -> tuple[bytes, bytes]:
-        if self._hang:
+    async def wait(self) -> int:
+        # A real `kill()` makes any subsequent `wait()` return promptly once
+        # the OS reaps the process — the second, unwrapped `await proc.wait()`
+        # in `_show()` (reaping after a timeout) relies on exactly that.
+        if self._hang and not self.killed:
             await asyncio.sleep(3600.0)
-        return self._stdout, b""
+        return -9 if self.killed else 0
 
     def kill(self) -> None:
         self.killed = True
-
-    async def wait(self) -> int:
-        return 0
 
 
 async def _notifier(
@@ -82,24 +88,12 @@ def _collect(sink: list[Event]):
     return _cb
 
 
-async def test_keep_clicked_is_accepted(monkeypatch) -> None:
-    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess(stdout=b"keep\n"))
+async def test_a_normal_close_still_reads_as_ignored(monkeypatch) -> None:
+    """The confirmed-safe behaviour: even a clean, fast process exit is never
+    read as "accepted" — cosmic-notifications proved that signal fabricated."""
+    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess())
     outcome = await notifier._show(_moment())
-    assert outcome == "accepted"
-    await bus.stop()
-
-
-async def test_dismiss_clicked_is_dismissed(monkeypatch) -> None:
-    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess(stdout=b"dismiss\n"))
-    outcome = await notifier._show(_moment())
-    assert outcome == "dismissed"
-    await bus.stop()
-
-
-async def test_closed_without_a_labelled_action_is_dismissed(monkeypatch) -> None:
-    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess(stdout=b""))
-    outcome = await notifier._show(_moment())
-    assert outcome == "dismissed"
+    assert outcome == "ignored"
     await bus.stop()
 
 
@@ -134,7 +128,7 @@ async def test_subprocess_launch_failure_is_ignored_not_raised(monkeypatch) -> N
 
 
 async def test_end_to_end_publishes_moment_feedback(monkeypatch) -> None:
-    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess(stdout=b"keep\n"))
+    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess())
     feedback: list[Event] = []
     bus.subscribe(EventType.MOMENT_FEEDBACK, _collect(feedback))
 
@@ -147,6 +141,6 @@ async def test_end_to_end_publishes_moment_feedback(monkeypatch) -> None:
     await bus.join()
 
     assert len(feedback) == 1
-    assert feedback[0].payload["outcome"] == "accepted"
+    assert feedback[0].payload["outcome"] == "ignored"
     assert feedback[0].payload["moment"] is moment
     await bus.stop()

@@ -572,16 +572,20 @@ a little more careful about that kind of moment in that kind of situation.
 
 **Spike**
 1. Notification actions on `cosmic-notifications` (F2). **Result (2026-09-12,
-   confirmed by the user against a real isolated notification):
-   `cosmic-notifications` advertises the D-Bus `actions` capability but does
-   not actually render the buttons — a notification pops up, with no
-   Keep/Dismiss to click.** `notify-send --wait` therefore never returns
-   early; it always runs to the caller's own timeout. This is handled, not
-   worked around: F2's own "ignored — expired untouched" outcome is exactly
-   this case, so every delivered moment on this machine currently reads as
-   `ignored` until the tray-menu fallback F2 already names ("if no: the tray
-   menu carries it") is built — a real follow-up now, not a hypothetical one
-   (RESEARCH_DOSSIER.md §21.22).
+   confirmed at the D-Bus level, not just observed): worse than "no
+   buttons" — `cosmic-notifications 0.1.0` fabricates
+   `ActionInvoked(id, "keep")` + `NotificationClosed(id, reason=2)` within
+   seconds of every notification, unconditionally, with zero human
+   interaction (`dbus-monitor`, calling `Notify()` directly, no
+   `notify-send` in the loop at all).** Listening to the raw D-Bus signals
+   directly instead of shelling out would not fix this — it reproduces the
+   identical fabricated sequence, since the daemon supplying the signals is
+   the thing lying, not the client. Decision: `interface/notifier.py` no
+   longer trusts anything `notify-send` reports; every completed run — real
+   close or our own timeout alike — reads as F2's own "ignored — expired
+   untouched" outcome. The tray-menu fallback F2 already names ("if no: the
+   tray menu carries it") is now the only real path to a genuine
+   accept/dismiss signal on this system (RESEARCH_DOSSIER.md §21.22).
 2. Context buckets: focus state {focused, normal, just-ended} × hour {night,
    morning, afternoon, evening} × recent dismissals {0, 1, 2+} = 36 buckets per
    moment kind — enough to learn, few enough to fill.

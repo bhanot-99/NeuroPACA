@@ -12,23 +12,30 @@ for exactly that one job, and nothing else: it does not decide *whether* to
 speak (that's `drive/guardian.py`) or run any inference — it subscribes
 `MOMENT_DELIVERED` only, and turns each one into a real notification.
 
-**Delivery + feedback are one subprocess call**, not two channels:
-`notify-send --wait --action=keep=Keep --action=dismiss=Dismiss` blocks
-until the user clicks a button, closes the bubble, or our own timeout
-(`moment.expires_at`) fires — so F2's three outcomes fall out for free:
-`"keep"` on stdout -> **accepted**; anything else notify-send returns
-(closed without a labelled click) -> **dismissed**; our own timeout with no
-process return at all -> **ignored**, matching F2's own definition
-("expired untouched"). `-t 0` disables the notification daemon's own
-auto-hide so the *only* timeout in play is `moment.expires_at`.
-
-Spike result (this session): `cosmic-notifications` advertises the
-`actions` D-Bus capability, but two manual tests both hit the timeout with
-no observed click. If it turns out this daemon never actually renders the
-buttons, every delivered moment simply reads as `ignored` — a real, already
--handled F2 outcome, not a crash or a hang. A tray-menu fallback (F2's own
-documented second path, "if no: the tray menu carries it") is a follow-up
-if that turns out to be the case, not a blocker for this module.
+**Every outcome reads as `ignored`, on purpose — this is not the design,
+it's a confirmed workaround.** `notify-send --wait --action=keep=Keep
+--action=dismiss=Dismiss` still shows the popup (`-t 0` disables the
+notification daemon's own auto-hide so `moment.expires_at` is the only
+timeout in play), but its result is never trusted. Verified directly at the
+D-Bus level this session (bypassing `notify-send`, calling `Notify()` and
+watching the raw signals): `cosmic-notifications 0.1.0` fires
+`ActionInvoked(id, "keep")` followed by `NotificationClosed(id, reason=2)`
+("dismissed by the user") **within seconds of every notification, with zero
+human interaction** — it fabricates the accept signal itself. This is not a
+`notify-send` bug and listening to the D-Bus signals directly instead of
+shelling out would not fix it (that was tried, first, and produces the same
+fabricated signals) — the unreliability is inside `cosmic-notifications`
+itself, not in how this module talks to it. Trusting `"keep"` on stdout
+would make the guardian believe every single moment was enthusiastically
+accepted, which is worse than no signal at all — so nothing from
+`notify-send`'s exit is interpreted; every completed run (real close,
+fabricated close, or our own timeout) reports `ignored`, matching F2's own
+"expired untouched" outcome, which already accounts for "no real signal
+available". Revisit if `cosmic-notifications` ever implements actions
+correctly upstream — until then this is the honest answer, not a stopgap
+that quietly returns wrong data. The tray-menu fallback F2 already names
+("if no: the tray menu carries it") is the real path to a genuine
+accept/dismiss signal on this system.
 
 `notify-send` missing entirely (e.g. a bare CI container) degrades the same
 way: `ignored`, immediately, never raised.
@@ -152,18 +159,22 @@ class NotificationDispatcher(BaseModule):
         ]
         try:
             proc = await asyncio.create_subprocess_exec(
-                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+                *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
             )
         except OSError:
             return "ignored"
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=remaining)
+            await asyncio.wait_for(proc.wait(), timeout=remaining)
         except TimeoutError:
             proc.kill()
-            with contextlib.suppress(ProcessLookupError):
-                await proc.wait()
-            return "ignored"
-        return "accepted" if stdout.decode(errors="replace").strip() == "keep" else "dismissed"
+        with contextlib.suppress(ProcessLookupError):
+            await proc.wait()
+        # `cosmic-notifications` fabricates `ActionInvoked("keep")` +
+        # `NotificationClosed(reason=2)` within seconds of every notification
+        # regardless of interaction (confirmed at the D-Bus level) — nothing
+        # notify-send's exit reports is trustworthy, so every completed run,
+        # real close or our own timeout alike, reads as `ignored`.
+        return "ignored"
 
     def _on_error(self, exc: Exception) -> None:
         self._errors += 1
