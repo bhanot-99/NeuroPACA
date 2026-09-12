@@ -1,0 +1,113 @@
+# NeuroPACA mail fetcher — systemd --user unit (S1 · Correspondence).
+#
+# Install:
+#   IMAP_HOST="mail.example.com"
+#   # systemd's IPAddressAllow requires literal IP addresses or CIDRs, not hostnames.
+#   # Resolve the IMAP host at installation time:
+#   IMAP_IP="$(getent ahostsv4 "$IMAP_HOST" | awk '{print $1; exit}')"
+#   sed -e "s|__REPO__|$PWD|g" \
+#       -e "s|__IMAP_HOST__|$IMAP_HOST|g" \
+#       -e "s|__IMAP_HOST_IP__|$IMAP_IP|g" \
+#       -e "s|__IMAP_USER__|user@example.com|g" \
+#       -e "s|__PASSWORD_CMD__|pass show mail|g" \
+#       scripts/systemd/neuropaca-mail.service \
+#     > ~/.config/systemd/user/neuropaca-mail.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-mail
+#
+# NOTE ON IPADDRESSALLOW:
+# systemd's IPAddressAllow/IPAddressDeny directives only accept literal IP addresses
+# or CIDR prefixes, not DNS hostnames. If the mail provider rotates or changes IP
+# addresses, re-run this installation step to refresh the allowed IP in the unit.
+#
+# NOTE ON DNS: the fetcher still connects with the IMAP *hostname*
+# (`--host=__IMAP_HOST__`, not the IP), so TLS certificate verification keeps
+# checking against the real hostname instead of a bare IP — `imaplib` ties
+# hostname-for-connecting and hostname-for-SNI/cert-verification together, and
+# splitting them apart is a much easier way to introduce a TLS bug than it is
+# to fix one. That means the fetcher still performs its own DNS lookup at
+# connect time, and `man systemd.resource-control` is explicit that "the
+# loopback interface is not treated in any special way, you have to configure
+# it explicitly" — so IPAddressDeny=any blocks that lookup unless the
+# resolver is itself allow-listed. `127.0.0.53/32` below is systemd-resolved's
+# stub resolver, the default on most current distros (check with
+# `resolvectl status` or `cat /etc/resolv.conf`). If this machine's resolver
+# is configured differently, replace that line with whatever `nameserver`
+# line /etc/resolv.conf actually shows.
+#
+# ARCHITECTURAL FACT (rules.md §6, VISION_PHASES.md S1):
+# The core daemon (`neuropacad.service`) runs with PrivateNetwork=true and AF_UNIX only.
+# It CANNOT open network sockets to mail servers or anywhere else.
+#
+# This fetcher service runs OUTSIDE the daemon as a separate, host-scoped process.
+# Its egress is restricted via IPAddressAllow to the configured mail host IP plus
+# the local DNS stub resolver (needed to resolve that host's hostname at connect
+# time) — nothing else, and its filesystem writes are strictly confined to the
+# mail spool directory.
+# Passwords are never stored in plaintext config files — they are fetched dynamically
+# via secret managers (pass / secret-tool / gpg).
+
+[Unit]
+Description=NeuroPACA mail fetcher (S1 correspondence ingestion)
+Documentation=file://__REPO__/README.md
+After=network-online.target
+Wants=network-online.target
+
+# Limit crash loops
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+ExecStart=__REPO__/.venv/bin/python __REPO__/plugins/mail/fetcher.py --host=__IMAP_HOST__ --user=__IMAP_USER__ --password-cmd=__PASSWORD_CMD__ --spool-dir=__REPO__/data/plugins/mail/spool
+
+Restart=on-failure
+RestartSec=60
+
+KillSignal=SIGTERM
+TimeoutStopSec=30
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=neuropaca-mail
+
+# Resource limits: lightweight fetcher
+MemoryMax=512M
+MemoryHigh=256M
+CPUWeight=10
+IOWeight=10
+Nice=15
+
+# Sandboxing & Hardening
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+# Fetcher writes ONLY to the mail spool directory
+ReadWritePaths=__REPO__/data/plugins/mail/spool
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+NoNewPrivileges=true
+
+# Network scoping:
+# PrivateNetwork is FALSE so it can reach IMAP, but AF_INET/AF_INET6 are gated,
+# AF_UNIX is allowed for local secret storage (pass/gpg-agent/secret-tool),
+# and IP filtering restricts network traffic strictly to the IMAP host IP.
+PrivateNetwork=false
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressAllow=__IMAP_HOST_IP__ 127.0.0.53/32
+IPAddressDeny=any
+
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=default.target

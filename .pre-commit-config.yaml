@@ -30,7 +30,10 @@ repos:
     hooks:
       - id: mypy
         # Match the pyproject config: type-check the package, not tests/spikes.
-        files: ^src/neuropaca/
+        # S1: `plugins/` (the external mail fetcher) is in pyproject's
+        # `[tool.mypy] files` too — without it here, a commit touching only
+        # `plugins/` would never trigger this hook at all.
+        files: ^(src/neuropaca/|plugins/)
         pass_filenames: false
         # Runtime deps the daemon imports must resolve in the hook's isolated
         # venv. Keep in lockstep with pyproject [project.dependencies].

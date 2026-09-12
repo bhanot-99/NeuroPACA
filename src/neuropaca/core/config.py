@@ -329,6 +329,21 @@ class Config:
     # reports real clicks (e.g. replacing it with `dunst` or
     # `swaync` — `SwayNotificationCenter` was confirmed correct this way).
     guardian_trust_notification_actions: bool = False
+    # S1 · correspondence / mail (VISION_PHASES.md).
+    mail_enabled: bool = False
+    mail_spool_dir: str = "data/plugins/mail/spool"
+    mail_resolved_after_days: int = 21
+    mail_overdue_days: int = 3
+    mail_retain_subject: bool = False
+    mail_snippet_chars: int = 0
+    mail_poll_interval_seconds: float = 60.0
+    mail_imap_host: str = ""
+    mail_imap_port: int = 993
+    mail_imap_user: str = ""
+    mail_imap_ssl: bool = True
+    mail_password_command: str = ""
+    mail_folders: list[str] = field(default_factory=lambda: ["INBOX", "Sent"])
+    mail_user_address: str = ""
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -496,9 +511,17 @@ class Config:
             "nudge_daily_budget",
             "guardian_burn_in_n",
             "guardian_just_ended_minutes",
+            "mail_resolved_after_days",
+            "mail_overdue_days",
+            "mail_poll_interval_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if self.mail_snippet_chars < 0:
+            errs.append(f"mail_snippet_chars must be >= 0, got {self.mail_snippet_chars}")
+        if self.mail_enabled and not self.mail_spool_dir:
+            errs.append("mail_spool_dir must not be empty when mail_enabled is on")
 
         for name in (
             "attention_alpha",

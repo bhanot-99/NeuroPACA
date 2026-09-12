@@ -102,7 +102,12 @@ known-first-party = ["neuropaca"]
 # ------------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
-files = ["src/neuropaca"]
+# S1: `plugins/` (the external mail fetcher) is deliberately outside
+# `src/neuropaca` — see rules.md §6 — but that must not mean it is outside
+# the project's own quality gate too; it went unchecked until this line was
+# added, which is how three real type errors in `plugins/mail/fetcher.py`
+# went unnoticed.
+files = ["src/neuropaca", "plugins"]
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true

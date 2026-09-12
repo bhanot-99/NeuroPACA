@@ -314,6 +314,10 @@ class EpisodeStore:
         `since(last_episode_seq)` replays any missed rows")."""
         return await asyncio.to_thread(self._since_blocking, episode_seq)
 
+    async def for_entity(self, entity: str) -> list[EpisodeRecord]:
+        """Every span or fact naming `entity` as subject or object, ascending."""
+        return await asyncio.to_thread(self._for_entity_blocking, entity)
+
     # ------------------------------------------------------------ writer task
     async def _writer_loop(self) -> None:
         while True:
@@ -463,6 +467,17 @@ class EpisodeStore:
             rows = conn.execute(
                 "SELECT * FROM episode WHERE episode_seq > ? ORDER BY episode_seq ASC",
                 (episode_seq,),
+            ).fetchall()
+            return [EpisodeRecord._from_row(r) for r in rows]
+        finally:
+            conn.close()
+
+    def _for_entity_blocking(self, entity: str) -> list[EpisodeRecord]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM episode WHERE subject = ? OR object = ? ORDER BY episode_seq ASC",
+                (entity, entity),
             ).fetchall()
             return [EpisodeRecord._from_row(r) for r in rows]
         finally:

@@ -241,7 +241,7 @@ def leaf_name(node_id: str, label: str) -> str:
     prefix, _, bare = node_id.partition(":")
     if prefix == "domain":
         return pretty_slug(bare)
-    if prefix in ("app", "webapp"):
+    if prefix in ("app", "webapp", "person"):
         return pretty_slug(label or bare)
     first = label.strip().splitlines()[0].strip() if label.strip() else ""
     return first or node_id

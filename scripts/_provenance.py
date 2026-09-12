@@ -35,7 +35,10 @@ ROOT = Path(__file__).resolve().parent.parent
 SELF = Path(__file__).resolve()
 
 # Directories walked for *.py sources.
-SCAN_ROOTS = ("src", "tests", "scripts")
+# S1 added `plugins/` (the external mail fetcher, deliberately outside
+# `src/` — rules.md §6) as a new top-level first-party source tree; it was
+# missing here, so its files were silently never stamped.
+SCAN_ROOTS = ("src", "tests", "scripts", "plugins")
 
 # Any path segment in this set excludes the file (generated bindings, caches,
 # build trees, virtualenvs, VCS metadata).

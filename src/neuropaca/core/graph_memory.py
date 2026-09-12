@@ -89,7 +89,9 @@ from neuropaca.core.models import Edge, Node
 # A v7 file converts losslessly: the census wrote ram, cpu, first/last-seen as
 # one NodeSpec and never below `process_min_rss_mb`, so a stored ram of 0.0 was
 # always "never measured", and `last_seen_at` was exactly the reading's time.
-_SCHEMA_VERSION = 8
+# v9 (S1): NodeType.THREAD added for email correspondence threads (precedent:
+# B14 NodeType.WEBAPP).
+_SCHEMA_VERSION = 9
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
 
 # V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.
