@@ -868,4 +868,190 @@ async def test_pending_insights_are_bounded_when_nothing_drains_them(tmp_path) -
         await _teardown(w)
 
 
+# --------------------------------------------------------------------------- A1 · presence
+
+
+async def test_presence_defaults_to_awake(tmp_path) -> None:
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        resp = await w.request({"op": "presence"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["state"] == "awake"
+    assert resp["thoughts_today"] == []
+    assert resp["last_moment"] is None
+    assert resp["paused_until"] is None
+
+
+async def test_presence_tracks_focus_idle_and_thinking_in_precedence_order(tmp_path) -> None:
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        await w.layer.on_app_switch(Event(event_type=EventType.APP_SWITCH, payload={}))
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "focused"
+
+        await w.layer.on_idle_detected(Event(event_type=EventType.IDLE_DETECTED))
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "idle"
+
+        await w.layer.on_dmn_cycle_started(Event(event_type=EventType.DMN_CYCLE_STARTED))
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "thinking"  # thinking beats an open idle spell too
+
+        await w.layer.on_dmn_cycle_ended(Event(event_type=EventType.DMN_CYCLE_ENDED))
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "idle"  # back to idle, not focused — the spell never closed
+
+        await w.layer.on_activity_detected(Event(event_type=EventType.ACTIVITY_DETECTED))
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "focused"
+    finally:
+        await _teardown(w)
+
+
+async def test_presence_shows_noticed_after_a_moment_then_expires(tmp_path) -> None:
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        moment = Moment(
+            kind="welcome_back",
+            text="Welcome back.",
+            evidence=("app:webpack",),
+            value=1.0,
+            context={},
+            expires_at=clock.now(),
+        )
+        await w.layer.on_moment_proposed(
+            Event(event_type=EventType.MOMENT_PROPOSED, payload={"moment": moment})
+        )
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "noticed"
+        assert resp["last_moment"]["text"] == "Welcome back."
+
+        await clock.advance(601.0)  # past the 10-minute window
+        resp = await w.request({"op": "presence"})
+        assert resp["state"] == "awake"
+        assert resp["last_moment"]["text"] == "Welcome back."  # still remembered, just not "now"
+    finally:
+        await _teardown(w)
+
+
+async def test_presence_thoughts_today_collects_idle_thoughts_and_resets_daily(tmp_path) -> None:
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        thought = _insight("idle:q1", category="proactive")
+        thought = Insight(
+            category="proactive",
+            cited_node_ids=thought.cited_node_ids,
+            source_signal=thought.source_signal,
+            confidence=thought.confidence,
+            snapshot_count=thought.snapshot_count,
+            node_id="idle:q1",
+            label="why was app:webpack busy?",
+        )
+        await w.layer.on_insight_generated(_insight_event(thought))
+        resp = await w.request({"op": "presence"})
+        assert resp["thoughts_today"] == [
+            {
+                "text": "why was app:webpack busy?",
+                "node_id": "idle:q1",
+                "at": resp["thoughts_today"][0]["at"],
+            }
+        ]
+
+        await clock.advance(24 * 3600.0)  # a new day
+        resp = await w.request({"op": "presence"})
+        assert resp["thoughts_today"] == []
+    finally:
+        await _teardown(w)
+
+
+async def test_pause_silences_the_desktop_popup_but_not_the_notification_queue(tmp_path) -> None:
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        resp = await w.request({"op": "pause", "minutes": 60})
+        assert resp["ok"] is True
+
+        w.layer.event_bus.publish(
+            Event(
+                event_type=EventType.ACTION_TRIGGERED,
+                payload={
+                    "ok": True,
+                    "dry_run": False,
+                    "intent": {"kind": "notification", "text": "paused test", "node_ids": []},
+                },
+            )
+        )
+        await w.bus.join()
+
+        assert w.layer._desktop_task is None  # never scheduled — the pause caught it
+        drained = await w.request({"op": "notifications"})
+        assert len(drained["notifications"]) == 1  # still queued for the terminal
+
+        await clock.advance(3601.0)  # past paused_until
+        presence = await w.request({"op": "presence"})
+        assert presence["paused_until"] is None
+    finally:
+        await _teardown(w)
+
+
+async def test_feedback_publishes_moment_feedback_for_the_last_moment(tmp_path) -> None:
+    clock = FakeClock()
+    w = await _wired(tmp_path, clock=clock)
+    try:
+        seen: list[Event] = []
+
+        async def _collect(e: Event) -> None:
+            seen.append(e)
+
+        w.bus.subscribe(EventType.MOMENT_FEEDBACK, _collect)
+        moment = Moment(
+            kind="welcome_back",
+            text="hi",
+            evidence=(),
+            value=1.0,
+            context={},
+            expires_at=clock.now(),
+        )
+        await w.layer.on_moment_proposed(
+            Event(event_type=EventType.MOMENT_PROPOSED, payload={"moment": moment})
+        )
+
+        resp = await w.request({"op": "feedback", "outcome": "accepted"})
+        await w.bus.join()
+
+        assert resp["ok"] is True
+        assert len(seen) == 1
+        assert seen[0].payload["outcome"] == "accepted"
+        assert seen[0].payload["moment"] is moment
+    finally:
+        await _teardown(w)
+
+
+async def test_feedback_without_a_moment_yet_is_a_clean_refusal(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request({"op": "feedback", "outcome": "accepted"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False
+
+
+async def test_presence_survives_being_asked_before_the_daemon_finished_booting(tmp_path) -> None:
+    """Regression guard: `presence` must never require a bus round trip — every
+    other new op this session (`briefing`) needed one and can time out; this
+    one is computed synchronously from state `InterfaceLayer` already holds."""
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request({"op": "presence"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+
+
 # gen-ref: 4a221db1

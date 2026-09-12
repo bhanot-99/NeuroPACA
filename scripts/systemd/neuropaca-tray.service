@@ -1,0 +1,64 @@
+# NeuroPACA · living presence -- the L9 tray. systemd --user unit.
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-tray.service \
+#     > ~/.config/systemd/user/neuropaca-tray.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-tray
+#
+# WHAT THIS IS
+#
+# A1 (VISION_PHASES.md, "Living presence"): a tray icon showing whether
+# NeuroPACA is thinking, has noticed something, is watching you focus, is
+# idle, or is just awake -- polled from the daemon's own `presence` op over
+# its L9 socket every few seconds. See scripts/neuropaca_tray.py for the
+# state machine and why it survives the daemon restarting.
+#
+# NOT scripts/systemd/neuropaca-soak-tray.service -- that is a throwaway
+# B9-hardening diagnostic for one 7-day soak (reads two files off disk, no
+# daemon coupling) and is meant to be deleted once its soak completes. This
+# unit is the permanent one; the two are independent, deliberately.
+#
+# Uses SYSTEM python3, not __REPO__/.venv -- PyGObject/AyatanaAppIndicator3
+# are desktop-shell bindings (apt: gir1.2-ayatanaappindicator3-0.1), and the
+# project venv has no system site-packages. See neuropaca_tray.py's docstring.
+#
+# graphical-session.target, not default.target: the compositor's session
+# environment (WAYLAND_DISPLAY, the tray host's D-Bus name) has to already be
+# imported, or there is no panel to put an icon in yet -- same reasoning as
+# neuropacad.service and neuropaca-soak-tray.service.
+#
+# Not Requires=neuropacad.service: the tray should stay up and show "asleep"
+# rather than disappear if the daemon is down -- that is itself useful
+# information, and matches neuropaca_tray.py's own request()->None handling.
+#
+# Enabling this is the user's own call -- nothing in the daemon or its
+# installer starts it automatically (VISION_PHASES.md's A1 design note).
+
+[Unit]
+Description=NeuroPACA living presence -- the tray
+Documentation=file://__REPO__/VISION_PHASES.md
+After=graphical-session.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/python3 __REPO__/scripts/neuropaca_tray.py
+
+Restart=on-failure
+RestartSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=neuropaca-tray
+
+Nice=10
+CPUWeight=10
+MemoryMax=256M
+
+[Install]
+WantedBy=graphical-session.target

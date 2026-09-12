@@ -12,6 +12,7 @@ directly with a zero budget.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -320,6 +321,52 @@ async def test_cycle_respects_the_inference_budget(tmp_path) -> None:
     assert dmn._thoughts == 2  # capped, not 5
     assert len([nid for nid in gm.node_ids if nid.startswith("idle:")]) == 2
     await bus.stop()
+
+
+async def test_dmn_cycle_started_and_ended_bracket_a_normal_cycle(tmp_path) -> None:
+    """A1 · the tray's "thinking" state (VISION_PHASES.md) — L9 cannot import
+    this module, so it watches for these two events instead."""
+    dmn, bus, _gm = await _dmn(tmp_path)
+    seen: list[EventType] = []
+
+    async def _collect(event: Event) -> None:
+        seen.append(event.event_type)
+
+    bus.subscribe(EventType.DMN_CYCLE_STARTED, _collect)
+    bus.subscribe(EventType.DMN_CYCLE_ENDED, _collect)
+    try:
+        await dmn.on_idle_detected(Event(event_type=EventType.IDLE_DETECTED))
+        await dmn._idle_task
+        await bus.join()
+        assert seen == [EventType.DMN_CYCLE_STARTED, EventType.DMN_CYCLE_ENDED]
+    finally:
+        await dmn.stop()
+        await bus.stop()
+
+
+async def test_dmn_cycle_ended_still_fires_when_the_cycle_is_cancelled(tmp_path) -> None:
+    """`_ENDED` is published from a `finally` — the tray must never see
+    "thinking" get stuck forever just because you came back mid-cycle."""
+    dmn, bus, gm = await _dmn(tmp_path)
+    for i in range(60):  # keep consolidate() mid-flight long enough to cancel
+        await gm.add_node(f"d{i}", NodeType.APP, {"label": "dup"})
+    seen: list[EventType] = []
+
+    async def _collect(event: Event) -> None:
+        seen.append(event.event_type)
+
+    bus.subscribe(EventType.DMN_CYCLE_STARTED, _collect)
+    bus.subscribe(EventType.DMN_CYCLE_ENDED, _collect)
+    try:
+        await dmn.on_idle_detected(Event(event_type=EventType.IDLE_DETECTED))
+        await asyncio.sleep(0)
+        await dmn.on_activity_detected(Event(event_type=EventType.ACTIVITY_DETECTED))
+        with contextlib.suppress(asyncio.CancelledError):
+            await dmn._idle_task
+        await bus.join()
+        assert seen == [EventType.DMN_CYCLE_STARTED, EventType.DMN_CYCLE_ENDED]
+    finally:
+        await bus.stop()
 
 
 async def test_activity_cancels_the_cycle_within_one_tick_without_corruption(tmp_path) -> None:

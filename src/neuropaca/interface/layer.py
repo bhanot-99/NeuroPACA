@@ -9,8 +9,10 @@ Shape (B5, re-scoped in B12):
   one JSON request per line, one JSON response per line). The thin CLI
   (`interface/cli.py`) is the only client. Ops: `health`, `insights`,
   `notifications`, `confirmations`, `confirm`, `run`, `explain`, `briefing`,
-  `reload-graph` (internal — `interface/offline.py`'s `repair-graph` verb is
-  the only caller, not a `neuropaca` verb of its own).
+  `presence`, `pause`, `feedback` (A1, VISION_PHASES.md — `scripts/neuropaca_tray.py`
+  is the only caller of these three today), `reload-graph` (internal —
+  `interface/offline.py`'s `repair-graph` verb is the only caller, not a
+  `neuropaca` verb of its own).
 - the terminal is a **read-only project guide** now: `neuropaca tell` / `overview`
   answer deterministically on the client side (`interface/describe.py`) and never
   reach this module. There is no natural-language query of the behavioural graph
@@ -41,7 +43,7 @@ import json
 import logging
 import os
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -57,6 +59,7 @@ from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.logging import redact
 from neuropaca.core.models import Event, Moment, system_error_event
+from neuropaca.core.presence import PresenceInputs, compute_presence_state
 from neuropaca.interface import desktop
 from neuropaca.interface.message import Message
 from neuropaca.learning.insight import Insight
@@ -166,6 +169,20 @@ class InterfaceLayer(BaseModule):
         self._queries = 0
         self._errors = 0
         self._interactive_disabled = False  # set once the interactive model is proven absent
+        # A1 · the tray's presence state (VISION_PHASES.md, `core/presence.py`).
+        # `_awake_since` is stamped in `start()` — the daemon's own boot time,
+        # the fallback "since" when nothing more specific is known yet.
+        self._awake_since: datetime = self._clock.now()
+        self._dmn_thinking = False
+        self._dmn_thinking_since: datetime | None = None
+        self._idle_since: datetime | None = None
+        self._focused_since: datetime | None = None
+        self._last_moment: Moment | None = None
+        self._last_moment_at: datetime | None = None
+        self._last_insight_at: datetime | None = None
+        self._thoughts_today: list[dict[str, Any]] = []
+        self._thoughts_cap_day: date | None = None
+        self._paused_until: datetime | None = None
 
     # ------------------------------------------------------------ lifecycle
     async def initialize(self) -> None:
@@ -178,6 +195,13 @@ class InterfaceLayer(BaseModule):
         self.event_bus.subscribe(
             EventType.ACTION_CONFIRMATION_REQUEST, self.on_confirmation_request
         )
+        # A1 · presence (VISION_PHASES.md) — the state machine's five inputs.
+        self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
+        self.event_bus.subscribe(EventType.IDLE_DETECTED, self.on_idle_detected)
+        self.event_bus.subscribe(EventType.ACTIVITY_DETECTED, self.on_activity_detected)
+        self.event_bus.subscribe(EventType.DMN_CYCLE_STARTED, self.on_dmn_cycle_started)
+        self.event_bus.subscribe(EventType.DMN_CYCLE_ENDED, self.on_dmn_cycle_ended)
+        self.event_bus.subscribe(EventType.MOMENT_PROPOSED, self.on_moment_proposed)
         # PATTERN_DETECTED / MEMORY_UPDATED are intentionally NOT subscribed (B6).
 
     async def start(self) -> None:
@@ -192,6 +216,7 @@ class InterfaceLayer(BaseModule):
         with contextlib.suppress(OSError):
             os.chmod(self._socket_path, 0o600)  # owner-only (rules.md §6 spirit)
         self._rehydrate_surfaced_ids()
+        self._awake_since = self._clock.now()
         self.is_running = True
         _log.info("L9 interface listening on %s", self._socket_path)
 
@@ -227,6 +252,12 @@ class InterfaceLayer(BaseModule):
         self.event_bus.unsubscribe(
             EventType.ACTION_CONFIRMATION_REQUEST, self.on_confirmation_request
         )
+        self.event_bus.unsubscribe(EventType.APP_SWITCH, self.on_app_switch)
+        self.event_bus.unsubscribe(EventType.IDLE_DETECTED, self.on_idle_detected)
+        self.event_bus.unsubscribe(EventType.ACTIVITY_DETECTED, self.on_activity_detected)
+        self.event_bus.unsubscribe(EventType.DMN_CYCLE_STARTED, self.on_dmn_cycle_started)
+        self.event_bus.unsubscribe(EventType.DMN_CYCLE_ENDED, self.on_dmn_cycle_ended)
+        self.event_bus.unsubscribe(EventType.MOMENT_PROPOSED, self.on_moment_proposed)
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -299,6 +330,16 @@ class InterfaceLayer(BaseModule):
         if len(self._pending_insights) > _MAX_PENDING_INSIGHTS:
             del self._pending_insights[:-_MAX_PENDING_INSIGHTS]
 
+        # A1 · presence's "noticed" input (any surfaceable insight); the
+        # tray's own "today's thoughts" menu only wants the idle-thought half.
+        now = self._clock.now()
+        self._last_insight_at = now
+        if insight.category == "proactive":
+            self._roll_thoughts_today(now)
+            self._thoughts_today.append(
+                {"text": insight.label, "node_id": insight.node_id, "at": now.isoformat()}
+            )
+
         # Stamp the graph so surface-once survives a restart (schema v2). The
         # mutating module publishes MEMORY_UPDATED, never GraphMemory (D-5.3).
         # `upsert_node` protects `node_type` on an existing node, so passing the
@@ -315,6 +356,123 @@ class InterfaceLayer(BaseModule):
                 source="interface",
                 payload={"node_ids": [insight.node_id], "operation": "insight_surfaced"},
             )
+        )
+
+    def _roll_thoughts_today(self, now: datetime) -> None:
+        today = now.date()
+        if today != self._thoughts_cap_day:
+            self._thoughts_cap_day = today
+            self._thoughts_today = []
+
+    # --------------------------------------------------------- A1 · presence
+    async def on_app_switch(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            if self._idle_since is None:  # a switch during an open idle spell is not a return
+                self._focused_since = self._clock.now()
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            self._on_presence_error(exc)
+
+    async def on_idle_detected(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            self._idle_since = self._clock.now()
+            self._focused_since = None
+        except Exception as exc:
+            self._on_presence_error(exc)
+
+    async def on_activity_detected(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            self._idle_since = None
+            self._focused_since = self._clock.now()
+        except Exception as exc:
+            self._on_presence_error(exc)
+
+    async def on_dmn_cycle_started(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            self._dmn_thinking = True
+            self._dmn_thinking_since = self._clock.now()
+        except Exception as exc:
+            self._on_presence_error(exc)
+
+    async def on_dmn_cycle_ended(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            self._dmn_thinking = False
+        except Exception as exc:
+            self._on_presence_error(exc)
+
+    async def on_moment_proposed(self, event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            moment = event.payload.get("moment")
+            if isinstance(moment, Moment):
+                self._last_moment = moment
+                self._last_moment_at = self._clock.now()
+        except Exception as exc:
+            self._on_presence_error(exc)
+
+    def _is_paused(self, now: datetime) -> bool:
+        return self._paused_until is not None and now < self._paused_until
+
+    def _presence_payload(self) -> dict[str, Any]:
+        now = self._clock.now()
+        self._roll_thoughts_today(now)
+        state, since = compute_presence_state(
+            PresenceInputs(
+                now=now,
+                awake_since=self._awake_since,
+                dmn_thinking=self._dmn_thinking,
+                dmn_thinking_since=self._dmn_thinking_since,
+                last_moment_at=self._last_moment_at,
+                last_insight_at=self._last_insight_at,
+                idle_since=self._idle_since,
+                focused_since=self._focused_since,
+            )
+        )
+        paused_until = self._paused_until if self._is_paused(now) else None
+        return {
+            "ok": True,
+            "state": str(state),
+            "since": since.isoformat(),
+            "thoughts_today": list(self._thoughts_today),
+            "last_moment": _moment_to_dict(self._last_moment) if self._last_moment else None,
+            "paused_until": paused_until.isoformat() if paused_until is not None else None,
+        }
+
+    def _pause(self, minutes: float) -> dict[str, Any]:
+        now = self._clock.now()
+        self._paused_until = now + timedelta(minutes=max(0.0, minutes))
+        return {"ok": True, "paused_until": self._paused_until.isoformat()}
+
+    def _submit_feedback(self, outcome: str) -> dict[str, Any]:
+        """F2's minimal first mover: the tray is the first thing that ever
+        actually publishes `MOMENT_FEEDBACK` — `EpisodicWriter` (S0) has been
+        able to record it since it was built, nothing before A1 ever sent one."""
+        if self._last_moment is None:
+            return {"ok": False, "error": "no moment to give feedback on yet"}
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.MOMENT_FEEDBACK,
+                source="interface",
+                payload={"moment": self._last_moment, "outcome": outcome},
+            )
+        )
+        return {"ok": True, "outcome": outcome}
+
+    def _on_presence_error(self, exc: Exception) -> None:
+        self._errors += 1
+        _log.exception("interface presence handler failed")
+        self.event_bus.publish(
+            system_error_event(module="interface", exception=str(exc), severity="handler")
         )
 
     def _deliver_to_desktop(self, text: str, node_ids: list[str]) -> None:
@@ -384,8 +542,12 @@ class InterfaceLayer(BaseModule):
                 # audit log is the complete record; this is only the tail.
                 del self._pending_notifications[:-_MAX_PENDING_NOTIFICATIONS]
             # V-12 · a live intent also reaches the desktop. Never a dry-run one:
-            # "would have told you" on screen is an effect, and dry-run causes none.
-            if not bool(event.payload.get("dry_run")):
+            # "would have told you" on screen is an effect, and dry-run causes
+            # none. A1's pause also blocks it — still queued above, so
+            # `neuropaca notifications` still shows it, but the popup is
+            # silenced until `paused_until` (VISION_PHASES.md's exit criterion:
+            # "pause silences every moment until it expires").
+            if not bool(event.payload.get("dry_run")) and not self._is_paused(self._clock.now()):
                 self._deliver_to_desktop(text, [str(n) for n in intent.get("node_ids", [])])
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._errors += 1
@@ -534,6 +696,12 @@ class InterfaceLayer(BaseModule):
             return await self._request_briefing()
         if op == "reload-graph":
             return await self._reload_graph()
+        if op == "presence":
+            return self._presence_payload()
+        if op == "pause":
+            return self._pause(float(req.get("minutes", 60.0)))
+        if op == "feedback":
+            return self._submit_feedback(str(req.get("outcome", "")))
         return {"ok": False, "error": f"unknown op: {op!r}"}
 
     async def _reload_graph(self) -> dict[str, Any]:

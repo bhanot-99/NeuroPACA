@@ -4776,6 +4776,62 @@ rebuild stays the one place that guarantee is made, and is made honestly.
 
 ---
 
+### 21.17 A1 · Living presence — the tray mind
+
+| | |
+| --- | --- |
+| **Branch** | `a1-living-presence-tray-mind` |
+| **Outcome** | Full suite (`-m ""`): 951 → **985 collected, 982 passed**, 3 pre-existing skips. `EventType` +2 (`DMN_CYCLE_STARTED`/`_ENDED`); new closed set `PresenceState` (5 members). `ruff`/`mypy` clean. Live-verified: `presence` answers correctly against the real running daemon; `scripts/neuropaca_tray.py` runs under system `python3` (real `gi`/AyatanaAppIndicator3) without crashing. |
+
+**In plain words.** A glance at the tray now tells you what NeuroPACA is
+doing — thinking, noticed something, focused on your work, idle, or just
+awake — and the same click surface lets you pause it for an hour or say
+whether its last message was worth saying.
+
+**Built.** `core/presence.py` — `compute_presence_state`, a pure function
+encoding the one precedence order `THINKING > NOTICED > FOCUSED > IDLE >
+AWAKE`; `InterfaceLayer` tracks the five inputs from events it now also
+subscribes to (`APP_SWITCH`, `IDLE_DETECTED`, `ACTIVITY_DETECTED`,
+`MOMENT_PROPOSED`, and two new ones) and answers `presence` / `pause` /
+`feedback` synchronously — no bus round trip, unlike `briefing`'s
+request/report bridge, so there is no timeout failure mode to test for.
+`idle/dmn.py` publishes `DMN_CYCLE_STARTED` at the top of `_run_idle_cycle`
+and `DMN_CYCLE_ENDED` from a `finally`, so "thinking" clears correctly on a
+cancelled or timed-out cycle, not just a clean one — proven directly
+(`test_dmn_cycle_ended_still_fires_when_the_cycle_is_cancelled`).
+`scripts/neuropaca_tray.py` mirrors `soak_tray.py`'s pure-logic/GTK-glue split
+exactly, duplicated rather than imported (that script is marked for deletion
+once its soak completes; this one is permanent). Pause is real, not
+cosmetic: `on_action_triggered`'s desktop-delivery gate now also checks
+`_is_paused`, so a paused moment still reaches `neuropaca notifications` but
+never pops up.
+
+**Rejected.** Deriving "focused" from `PATTERN_DETECTED`'s `FocusSessionPattern`
+— L9 has deliberately not subscribed to `PATTERN_DETECTED`/`MEMORY_UPDATED`
+since B6, and a bare "not idle since the last switch" signal already gives a
+correct, simpler "focused" without reopening that decision. A stub "what did
+you learn today" menu item — A2's mirror does not exist yet; a button with
+nothing behind it is worse than no button, so it is left out and named in
+A1's own exit section rather than silently missing.
+
+**What is left**
+- The two exit criteria that need real elapsed time: state matching the
+  daemon over a real day, and 24 h of flat memory. Neither is something a
+  single session can produce; both are written down as open, not assumed.
+- `scripts/systemd/neuropaca-tray.service` is written but — per the phase's
+  own design note — not installed or enabled; that stays the user's call.
+- **A recurring, unexplained bug, unrelated to A1's own code**: the live
+  daemon's L9 socket file disappeared from `/run/user/1000/` three times in
+  this session alone, each time with the process still running and nothing
+  logged. Not caused by anything A1 touches (no change here alters socket
+  setup beyond stamping `_awake_since`), and not explained by the system's
+  own `systemd-tmpfiles-clean.timer` (it last ran hours before one of the
+  disappearances). Worked around each time with a plain restart; the actual
+  cause is still unknown and deserves its own investigation before a 7-day
+  unattended soak is trusted around it again.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.

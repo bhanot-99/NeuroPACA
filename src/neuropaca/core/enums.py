@@ -74,6 +74,27 @@ class EventType(StrEnum):
     # and `BriefingComposer` answers with whatever it composes right now.
     BRIEFING_REQUEST = auto()
     BRIEFING_REPORT = auto()
+    # A1 · Idle Cognition (VISION_PHASES.md). The tray's "thinking" state needs
+    # to know a DMN cycle is running, and L9 cannot import `idle/dmn.py`
+    # (rules.md §0) — so the DMN publishes its own cycle boundary, the same
+    # request/report-adjacent pattern as the health bridge, but fire-and-forget
+    # since nothing needs to *answer* it. `_ENDED` always fires, success,
+    # timeout, or cancellation alike (a `finally`, not a bare `except`).
+    DMN_CYCLE_STARTED = auto()
+    DMN_CYCLE_ENDED = auto()
+
+
+class PresenceState(StrEnum):
+    """A1 · the tray's state machine (VISION_PHASES.md). Precedence, highest
+    first: `THINKING` > `NOTICED` > `FOCUSED` > `IDLE` > `AWAKE` —
+    `core/presence.py`'s `compute_presence_state` is the one place that order
+    is encoded; nothing else may re-derive it."""
+
+    THINKING = auto()
+    NOTICED = auto()
+    FOCUSED = auto()
+    IDLE = auto()
+    AWAKE = auto()
 
 
 class EpisodeKind(StrEnum):

@@ -171,6 +171,11 @@ class DefaultModeNetwork(BaseModule):
     # --------------------------------------------------------------- the cycle
     async def _run_idle_cycle(self) -> None:
         self._cycles += 1
+        # A1 · the tray's "thinking" state (VISION_PHASES.md) — L9 cannot import
+        # this module (rules.md §0), so the boundary is a bus event. `_ENDED`
+        # is published from `finally`, so it fires on success, timeout, *and*
+        # cancellation alike — never a state the tray could get stuck in.
+        self.event_bus.publish(Event(event_type=EventType.DMN_CYCLE_STARTED, source="idle"))
         try:
             async with asyncio.timeout(self.config.dmn_cycle_wall_clock_seconds):
                 reminiscence = await self._reminiscence()
@@ -199,6 +204,8 @@ class DefaultModeNetwork(BaseModule):
             self.event_bus.publish(
                 system_error_event(module="idle", exception=str(exc), severity="handler")
             )
+        finally:
+            self.event_bus.publish(Event(event_type=EventType.DMN_CYCLE_ENDED, source="idle"))
 
     async def _reminiscence(self) -> str:
         merged = await self._graph.consolidate()
