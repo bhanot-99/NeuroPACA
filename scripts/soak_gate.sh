@@ -83,23 +83,36 @@ PROBE="${REPO}/scripts/soak_probe.py"
 import json, sys
 sample = json.load(sys.stdin)
 if not sample.get("daemon_up"):
-    sys.exit("the daemon did not answer on the L9 socket")
+    sys.exit("the daemon's health dump is missing or stale")
 if "activity" in sample.get("degraded", []):
     sys.exit("the activity collector reports itself degraded -- it self-disabled")
 if not sample.get("window_ok"):
     sys.exit("window is not live (window not ok) -- the B15 focus sensor is deaf right now")
 ' || fail "the activity collector is not healthy (see above)"
-echo "ok: the activity collector reports healthy, window✓ live over the socket"
+echo "ok: the activity collector reports healthy, window✓ live"
 
-# --- 4. the CLI works under the hardened unit (BL-1) --------------------------
-# ProtectSystem=strict made $XDG_RUNTIME_DIR read-only, so the L9 socket could
-# not be bound and every verb died — `confirm` included, which is the only
-# approval path for a dangerous action. Prove the socket is live before spending
-# a week soaking a daemon nobody can talk to.
-"${REPO}/.venv/bin/neuropaca" health >/dev/null \
-  || fail "\`neuropaca health\` failed — the L9 socket is not reachable under the
-  unit (check ReadWritePaths=%t in neuropacad.service)"
-echo "ok: neuropaca health answers over the socket"
+# --- 4. the daemon's own health dump is fresh (BL-1, post-terminal-removal) ---
+# The L9 socket / CLI this check used to prove (`neuropaca health`) was removed
+# by user decision — no terminal control surface, superseded eventually by
+# voice. What this check actually protects is unchanged: prove the daemon's own
+# account of itself is reachable before spending a week soaking one nobody can
+# read. That account is now a file (`config.health_dump_path`,
+# `orchestration/orchestrator.py`'s `_health_dump_loop`), written under the same
+# `ProtectSystem=strict` + `ReadWritePaths=__REPO__/data` the unit already
+# grants — no new hardening exception needed. A gate pass needs the file to
+# exist AND be fresher than twice its own write interval; a stale file with the
+# daemon otherwise up is exactly the class of silent failure this gate exists
+# to catch.
+HEALTH_DUMP="${REPO}/data/health.json"
+[ -f "$HEALTH_DUMP" ] || fail "no health dump at $HEALTH_DUMP — is health_dump_path set in the daemon's config, and has it started at least once since?"
+AGE=$(( $(date +%s) - $(stat -c %Y "$HEALTH_DUMP") ))
+[ "$AGE" -le 60 ] || fail "health dump at $HEALTH_DUMP is ${AGE}s old — the daemon is not refreshing it (check health_dump_interval_seconds and that the daemon is actually running)"
+"${REPO}/.venv/bin/python" -c '
+import json, sys
+health = json.load(open(sys.argv[1]))
+sys.exit(0 if health.get("ok") else "the health dump reports ok=false")
+' "$HEALTH_DUMP" || fail "the health dump reports the daemon as unhealthy"
+echo "ok: the daemon's health dump is fresh and reports ok"
 
 # --- 5. the post-B15 sensing bar over the window -----------------------------
 # The counters are cumulative, so the question is whether they MOVED across the

@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
 """B6 · Idle Cognition (L6) — DefaultModeNetwork, graph consolidation / pruning,
-the proactive idle-thought grammar, and L9 surfacing (D-13).
+and the proactive idle-thought grammar (D-13).
 
 No test loads a real model (`FakeInferenceBackend`, rules.md §8). No test sleeps
 on a poll interval — the one wall-clock-budget test drives `asyncio.timeout`
@@ -23,12 +23,11 @@ from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import FakeClock
 from neuropaca.core.config import Config
 from neuropaca.core.context import build_aliased_context, build_context_from_nodes, format_node_line
-from neuropaca.core.enums import EventType, NodeType, RelationType, SignalType
+from neuropaca.core.enums import EventType, NodeType, RelationType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import HUB_NODE_IDS, GraphMemory
 from neuropaca.core.models import Event, Node
 from neuropaca.idle.dmn import DefaultModeNetwork
-from neuropaca.interface.layer import InterfaceLayer
 from neuropaca.learning.insight import Insight
 from neuropaca.learning.prompts import (
     PROACTIVE_TEMPLATES,
@@ -440,74 +439,3 @@ async def test_stop_cancels_an_in_flight_cycle(tmp_path) -> None:
 
     assert dmn._idle_task is None
     await bus.stop()
-
-
-# ============================================================ 4 · L9 surfacing
-
-
-async def _interface(tmp_path):
-    bus = EventBus.get_instance()
-    await bus.start()
-    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "g.json"))
-    await gm.load()
-    layer = InterfaceLayer(
-        bus,
-        Config(inference_backend="fake"),
-        gm,
-        BitNetRuntime.get_instance(),
-        clock=FakeClock(wall=_NOW),
-        socket_path=str(tmp_path / "np.sock"),
-    )
-    await layer.initialize()
-    await layer.start()
-    return layer, bus, gm
-
-
-def _thought(node_id: str, text: str) -> Insight:
-    return Insight(
-        category="proactive",
-        cited_node_ids=("app:esbuild",),
-        source_signal=SignalType.IDLE,
-        confidence=0.8,
-        snapshot_count=0,
-        node_id=node_id,
-        template="how_does_x_affect_y",
-        label=text,  # B18: what the graph rendered on store
-    )
-
-
-async def test_proactive_thought_surfaces_once_and_survives_restart(tmp_path) -> None:
-    layer, bus, gm = await _interface(tmp_path)
-    text = "How does esbuild affect api?"
-    await gm.add_node("idle:abc123", NodeType.IDLE_THOUGHT, {"label": text})
-    thought = _thought("idle:abc123", text)
-
-    await layer.on_insight_generated(
-        Event(event_type=EventType.INSIGHT_GENERATED, payload={"insight": thought})
-    )
-    await bus.join()
-
-    drained = await layer._route({"op": "insights"})
-    assert drained["ok"]
-    assert drained["insights"][0]["text"] == "How does esbuild affect api?"
-    assert drained["insights"][0]["category"] == "proactive"
-
-    node = gm.get_node("idle:abc123")
-    assert node is not None and node.surfaced_at is not None  # stamped, schema v2
-    assert node.node_type is NodeType.IDLE_THOUGHT  # upsert kept the real type
-
-    await layer.stop()
-
-    # a fresh InterfaceLayer over the same graph must treat it as already seen
-    layer2, bus2, _gm = await _interface(tmp_path)
-    assert "idle:abc123" in layer2._surfaced_ids
-    await layer2.on_insight_generated(
-        Event(event_type=EventType.INSIGHT_GENERATED, payload={"insight": thought})
-    )
-    again = await layer2._route({"op": "insights"})
-    assert again["insights"] == []  # surface-once held across the restart
-    await layer2.stop()
-    await bus2.stop()
-
-
-# gen-ref: a0673894

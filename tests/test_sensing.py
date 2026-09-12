@@ -256,8 +256,10 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     runtime = BitNetRuntime.get_instance()
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
-    # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> A0 -> L9 (B8, D-16; Architecture.md
-    # §10 A7; VISION_PHASES.md A0 adds `moments` before the final L9 interface).
+    # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> A0 (B8, D-16; Architecture.md §10
+    # A7; VISION_PHASES.md A0 adds `moments`). L9 interface was removed (no
+    # terminal/CLI control surface going forward, superseded by voice);
+    # `presence` (A1's state machine, socket-free) took its place at the tail.
     assert [m.name for m in modules] == [
         "sensing",
         "diagnosis",
@@ -267,7 +269,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "agents",
         "idle",
         "moments",
-        "interface",
+        "presence",
     ]
     assert isinstance(modules[0], XMetricCollector)
     # B13-B2: ProcessCollector is on by default (process_collector_enabled).
@@ -298,7 +300,7 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "agents",
         "idle",
         "moments",
-        "interface",
+        "presence",
     ]
     assert with_activity[0]._emit_idle_from_cpu is False
 
@@ -316,7 +318,6 @@ async def test_orchestrator_runs_sensing_via_build_modules(tmp_path) -> None:
         graph_db_path=str(tmp_path / "graph.json"),
         action_log_path=str(tmp_path / "actions.jsonl"),
         graph_save_interval_seconds=3600,
-        interface_socket_path=str(tmp_path / "np.sock"),
     )
     orch = NeuroPACAOrchestrator(config, module_builder=build_modules)
 

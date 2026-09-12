@@ -1,4 +1,4 @@
-# NeuroPACA · living presence -- the L9 tray. systemd --user unit.
+# NeuroPACA · living presence -- the presence tray. systemd --user unit.
 #
 # Install:
 #   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-tray.service \
@@ -9,14 +9,27 @@
 #
 # A1 (VISION_PHASES.md, "Living presence"): a tray icon showing whether
 # NeuroPACA is thinking, has noticed something, is watching you focus, is
-# idle, or is just awake -- polled from the daemon's own `presence` op over
-# its L9 socket every few seconds. See scripts/neuropaca_tray.py for the
-# state machine and why it survives the daemon restarting.
+# idle, or is just awake -- read from the daemon's own periodic health-dump
+# file (config.health_dump_path) every few seconds. See
+# scripts/neuropaca_tray.py for the state machine and why it survives the
+# daemon restarting.
+#
+# REBUILT WITHOUT THE L9 SOCKET -- this used to poll a `presence` op over
+# the L9 socket; that whole socket/CLI surface was removed (no terminal/text
+# control going forward -- voice is the planned replacement), and with it
+# went this tray's `pause` / `feedback` buttons and its on-demand `mirror`
+# item -- those needed to write back to the daemon, and there is no channel
+# left to write through. What is left is read-only: the presence state
+# machine itself, computed by a small always-on module
+# (core/presence_tracker.py) with nowhere to write to, reported through the
+# same health-dump file every other module's counters already go through.
 #
 # NOT scripts/systemd/neuropaca-soak-tray.service -- that is a throwaway
 # B9-hardening diagnostic for one 7-day soak (reads two files off disk, no
 # daemon coupling) and is meant to be deleted once its soak completes. This
-# unit is the permanent one; the two are independent, deliberately.
+# unit is the permanent one; the two are independent, deliberately, and are
+# meant to run side by side: the soak tray for graph/basic-info/refresh, this
+# one for presence.
 #
 # Uses SYSTEM python3, not __REPO__/.venv -- PyGObject/AyatanaAppIndicator3
 # are desktop-shell bindings (apt: gir1.2-ayatanaappindicator3-0.1), and the
@@ -29,10 +42,8 @@
 #
 # Not Requires=neuropacad.service: the tray should stay up and show "asleep"
 # rather than disappear if the daemon is down -- that is itself useful
-# information, and matches neuropaca_tray.py's own request()->None handling.
-#
-# Enabling this is the user's own call -- nothing in the daemon or its
-# installer starts it automatically (VISION_PHASES.md's A1 design note).
+# information, and matches neuropaca_tray.py's own read_health()->None
+# handling.
 
 [Unit]
 Description=NeuroPACA living presence -- the tray

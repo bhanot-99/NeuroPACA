@@ -16,7 +16,10 @@
 #   * every path below lives under ~/.cache/neuropaca-b7-control/ or
 #     $XDG_RUNTIME_DIR — nothing it writes lands inside the repo, so the real
 #     soak's filesystem watcher never sees it;
-#   * its L9 socket is a different name, so the two daemons never collide;
+#   * (this config used to also give it a differently-named L9 socket, so the
+#     two daemons' sockets never collided — the L9 socket/CLI was removed
+#     along with the rest of the terminal interface; `_socket_alive()` in
+#     `scripts/b7_positive_control.py` degrades to its `pgrep` fallback now);
 #   * thresholds, poll intervals, decay, model paths and the dry-run/both-tiers
 #     stance are byte-for-byte the same as neuropaca.soak.toml — the control is
 #     only meaningful if it exercises the *shipped* gradient, not a tuned one.
@@ -34,7 +37,6 @@ inference_backend = "llama"
 graph_db_path = "/home/bhanot/.cache/neuropaca-b7-control/graph.json"
 action_log_path = "/home/bhanot/.cache/neuropaca-b7-control/actions.jsonl"
 quarantine_path = "/home/bhanot/.cache/neuropaca-b7-control/quarantine"
-interface_socket_path = "/run/user/1000/neuropaca-b7-control.sock"
 log_level = "INFO"
 
 # The app_map is read once at startup and never written — safe to share the

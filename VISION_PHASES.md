@@ -8,6 +8,32 @@
 >
 > Written 2026-09-12. Section references like "§3.4" point into `VISION.md`.
 
+> **2026-09-12, later the same day — the terminal/CLI interface was removed.**
+> User decision: no ongoing text/terminal control surface, superseded by a
+> future voice interface. `interface/{layer,cli,repl,describe,offline,message,
+> desktop}.py` and every socket-dependent validation script are gone
+> (RESEARCH_DOSSIER.md's removal chapter has the full list). **The tray was
+> then rebuilt, read-only** (RESEARCH_DOSSIER.md §21.21): `core/presence.py`
+> and `PresenceState` are back, fed by a new small always-on module
+> (`core/presence_tracker.py`, no socket, no write-back) whose state is
+> reported through the daemon's normal health-dump file
+> (`config.health_dump_path`) like every other module's counters;
+> `scripts/neuropaca_tray.py` reads that file. Its `pause`/`feedback` buttons
+> and on-demand `mirror` item did **not** come back — those need to write to
+> the daemon, and there is no channel left to write through. A0/A1/A2 below
+> still describe what was actually built at the time, including their L9
+> wiring — read as history, not as a live surface: `neuropaca briefing`,
+> `neuropaca mirror`, and `--explain`'s interactive-model paraphrase no
+> longer have anything to reach them with. Every "L9 op" named in a
+> **not-yet-built** phase below (A3's
+> confirmation flow, S1+, the `predict` op) should be read as "whatever
+> request/report bridge the eventual voice interface uses" — the underlying
+> event-bus pattern (`_REQUEST`/`_REPORT`, unchanged) is exactly what such an
+> interface would reuse; only the human-facing end of it is gone. The
+> confirmation handshake itself (`ACTION_CONFIRMATION_REQUEST`/`_RESPONSE`,
+> D-14) and the dual inference-backend routing (`BitNetRuntime`, D-12) were
+> deliberately left in place, dormant, for the same reason.
+
 ---
 
 ## 0. How every phase runs

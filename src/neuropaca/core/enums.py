@@ -93,7 +93,9 @@ class PresenceState(StrEnum):
     """A1 · the tray's state machine (VISION_PHASES.md). Precedence, highest
     first: `THINKING` > `NOTICED` > `FOCUSED` > `IDLE` > `AWAKE` —
     `core/presence.py`'s `compute_presence_state` is the one place that order
-    is encoded; nothing else may re-derive it."""
+    is encoded; nothing else may re-derive it. Restored after the terminal/L9
+    removal for `core/presence_tracker.py` — the same pure function, now fed
+    by a small always-on module instead of `InterfaceLayer`."""
 
     THINKING = auto()
     NOTICED = auto()

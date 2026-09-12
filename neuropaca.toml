@@ -22,13 +22,13 @@
 # the soak measures the system that runs, not a tuned variant of it.
 
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
-# B12 · the interactive model is used only by `neuropaca tell <path> --explain`
-# (a plain-words paraphrase of the deterministic file summary). Unset it and
-# `--explain` just shows the deterministic block.
+# B12 · the interactive model backend. Its only caller (`neuropaca tell <path>
+# --explain`) was removed along with the rest of the terminal/CLI interface;
+# the config field and BitNetRuntime's dual-model routing were left in place
+# as infrastructure a future voice interface is expected to reuse. Unsetting
+# this has no effect on anything right now.
 interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
 inference_backend = "llama"
-
-#   explain_temperature = 0.3   # default; the one free-decode L9 call (rules.md §4.1)
 
 graph_db_path = "data/graph.json"
 action_log_path = "data/actions.jsonl"
@@ -40,6 +40,10 @@ log_level = "INFO"
 # analysis scripts can read back from a fixed path after the fact.
 log_to_file = true
 log_file_path = "data/neuropaca.log"
+
+# Post-terminal-removal: what scripts/soak_probe.py reads instead of
+# `neuropaca health` over the (now-removed) L9 socket.
+health_dump_path = "data/health.json"
 
 # L2 · sensing. The real Wayland ActivityCollector (B2.5a/b) — the collector the
 # soak gate checks for, and the one whose silence cost B7 three soaks.

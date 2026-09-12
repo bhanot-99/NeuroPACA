@@ -153,13 +153,6 @@ class Config:
     # is a few hundred tokens, the paraphrase <= EXPLAIN_MAX_TOKENS. A larger
     # n_ctx only inflates the interactive model's resident footprint (B5 finding).
     interactive_model_context_tokens: int = 2048
-    # B5 · L9 IPC. Empty => `$XDG_RUNTIME_DIR/neuropaca.sock` (falls back to the
-    # system temp dir). Tests point this at a `tmp_path` so no test binds a
-    # socket outside its sandbox (rules.md §8).
-    interface_socket_path: str = ""
-    # B12 · temperature for the one free-decode L9 call, `tell --explain`
-    # (rules.md §4.1 carve-out). ~0.3 keeps the paraphrase close to the summary.
-    explain_temperature: float = 0.3
     # B6 · Idle Cognition (L6, D-13). Strict budgets on one DMN idle cycle:
     #   - dmn_cycle_wall_clock_seconds — `asyncio.timeout` ceiling for a whole
     #     cycle (reminiscence + imagination); an overrun is logged, not fatal.
@@ -377,6 +370,16 @@ class Config:
     # (system metrics wide + one row per censused app). Soak / dogfood only;
     # append-only, no rotation — point it somewhere you will sweep.
     raw_metrics_csv_path: str = ""
+    # Post-terminal-removal replacement for what `neuropaca health` used to
+    # answer over the L9 socket (removed — no CLI, no socket, nothing
+    # human-facing). Empty => disabled, same convention as
+    # `raw_metrics_csv_path` above. A path => the orchestrator writes its own
+    # `health_check()` as JSON to this file every `health_dump_interval_seconds`
+    # (atomically — temp file + rename, so a reader never sees a half-written
+    # file). `scripts/soak_probe.py` reads it instead of a socket; nothing else
+    # is a client of it, by design.
+    health_dump_path: str = ""
+    health_dump_interval_seconds: float = 30.0
     watch_paths: list[str] = field(default_factory=list)
     filesystem_ignore_globs: list[str] = field(
         default_factory=lambda: [
@@ -443,6 +446,7 @@ class Config:
             "briefing_max_items",
             "dmn_curiosity_lookback_days",
             "dmn_curiosity_top_pairs",
+            "health_dump_interval_seconds",
             "mirror_baseline_days",
             "mirror_top_contributors",
         ):
@@ -529,11 +533,6 @@ class Config:
             errs.append(
                 f"mem_pressure_sustain_seconds must be > 0, got {self.mem_pressure_sustain_seconds}"
             )
-        if not 0.0 <= self.explain_temperature <= 1.0:
-            errs.append(
-                f"explain_temperature must be in [0.0, 1.0], got {self.explain_temperature}"
-            )
-
         if not 0.0 < self.hebbian_delta <= 1.0:
             errs.append(f"hebbian_delta must be in (0.0, 1.0], got {self.hebbian_delta}")
         if self.hebbian_insight_multiplier < 1.0:

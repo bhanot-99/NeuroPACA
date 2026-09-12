@@ -5065,6 +5065,192 @@ can substitute for.
 
 ---
 
+### 21.20 The terminal accessibility feature — removed
+
+**User decision, 2026-09-12.** No ongoing terminal/text control surface for
+NeuroPACA; a future voice interface is the planned replacement, not built
+yet. Scope, given directly: everything reachable only through the CLI/socket
+(the read-only project guide, `doctor`/`export`/`panic`/`repair-graph`, the
+tray), including the L9 socket module itself.
+
+**Removed, wholesale.** `interface/{layer,cli,repl,describe,offline,message,
+desktop}.py`; `core/presence.py` (and the `PresenceState` enum — used only by
+the deleted `layer.py`'s presence payload); `scripts/neuropaca_tray.py` +
+`scripts/systemd/neuropaca-tray.service` (A1's tray — its `presence`/`pause`/
+`feedback`/`mirror` ops had nothing left to talk to); three standalone
+validation scripts that drove the whole daemon over the socket/`$!`/`$$`/
+`confirm` protocol and can no longer run at all
+(`validate_b5_latency.py`, `validate_b5_privacy.py`,
+`validate_b7_confirmation.py`); the `neuropaca` console-script entry point
+and the now-unused `rich` dependency (`pyproject.toml`); the corresponding
+test files (`test_interface.py`, `test_describe.py`, `test_neuropaca_tray.py`,
+`test_v12_desktop_delivery.py`, `test_presence.py`, `test_repair_graph.py`,
+`test_v11_resilience.py` — the last two were entirely about `offline.py`'s
+`doctor`; the underlying features they also touched, `core/graph_rebuild.py`
+and the Wayland pump retry, keep their own separate test coverage untouched).
+`conftest.py`'s autouse `_no_real_desktop` fixture went with `desktop.py` —
+nothing left to guard.
+
+**Trimmed, not deleted.** `test_idle.py` lost its "L9 surfacing" section (an
+`InterfaceLayer` fixture testing surface-once/restart behaviour that belonged
+to the deleted module, not to the DMN this file is otherwise about).
+`test_b9_hardening.py` lost its BL-7 offline-verb block (doctor/export/panic/
+CLI-dispatch) but kept BL-1/2/3/4 (schema versioning, boot recovery, the log
+sink, the systemd unit's write-access grant) — those are the daemon's own
+resilience, not the terminal's. `test_sensing.py`/`test_core_foundation.py`/
+`test_orchestrator.py` lost the module-name-list assertions and config
+parametrize cases that named the removed `"interface"` module or the removed
+`explain_temperature`/`interface_socket_path` fields.
+
+**Deliberately kept, dormant.** Not everything reachable only via L9 was
+"terminal accessibility" — some of it is the general "ask without importing"
+pattern (rules.md §0) any future interface, voice included, would reuse:
+
+- The event-bus request/report bridges (`BRIEFING_REQUEST`/`_REPORT`,
+  `MIRROR_REQUEST`/`_REPORT`, `SYSTEM_HEALTH_REQUEST`/`_REPORT`,
+  `DMN_CYCLE_STARTED`/`_ENDED`) and their producer-side code
+  (`BriefingComposer`, `MirrorComposer`, the orchestrator's health bridge,
+  `idle/dmn.py`) — all untouched. Only the consumer that lived in `layer.py`
+  is gone; publishing into the void is harmless.
+- `USER_MESSAGE` and the `$!`/`$$` confirmation-gated command relay in
+  `action/executor.py` (D-14) — L7's own architecture, dormant with no
+  current publisher, not rewritten.
+- The `ACTION_CONFIRMATION_REQUEST`/`_RESPONSE` handshake — dangerous
+  actions still cannot run without it; there is simply no interface
+  answering it right now, so silence past the timeout is always a refusal
+  (unchanged behaviour, just permanently exercised).
+- `BitNetRuntime`'s dual-model routing and `interactive_model_path` /
+  `interactive_model_context_tokens` (D-12) — the interactive backend has no
+  current caller (its only one, `--explain`, is gone) but the plumbing stays
+  for whatever phrasing model a voice interface will want.
+- `MOMENT_FEEDBACK` and `EpisodicWriter`'s subscription to it — a general
+  "human reacted to a moment" concept, not terminal-specific, even though its
+  only current publisher (the tray's Keep/Dismiss buttons) is gone too.
+
+`explain_temperature` was the one config field removed outright rather than
+left dormant — it was solely `tell --explain`'s free-decode temperature, with
+no plausible reuse.
+
+**A live consequence, caught and fixed in the same pass: the running 7-day
+soak's own measurement broke.** `scripts/soak_probe.py` fetched
+`neuropaca health` over the L9 socket for its per-minute sample (switches/hour,
+reconnects, pump-errors — the exact numbers the soak's own pass/fail gate is
+built on); `scripts/soak_gate.sh`'s check 4 called the `neuropaca` binary
+directly to prove the socket was reachable before a soak could start. Neither
+depends on any human-facing control — both are automated internal
+measurement — so removing them wholesale would have quietly broken the
+soak's own validity exactly the way B7/B15 already taught this project to
+distrust (RESEARCH_DOSSIER.md §21.3, §21.4): a soak recording nothing and a
+soak recording a healthy system look identical from outside.
+
+Fix: `NeuroPACAOrchestrator` gained a small periodic task
+(`_health_dump_loop`) that writes its own `health_check()` as JSON to
+`config.health_dump_path` every `health_dump_interval_seconds` (default 30 s,
+atomic — temp file + rename), on by default only when the path is set
+(empty = disabled, the same convention as `raw_metrics_csv_path`).
+`soak_probe.py` reads that file instead of opening a socket; `soak_gate.sh`'s
+check 4 now checks the file exists and is fresh (≤ 60 s old) and reports
+`ok`, instead of connecting to anything. Both scripts' output shape is
+unchanged (same `SystemHealth`/`ModuleHealth` fields), so
+`soak_state.py`/`soak_dashboard.py` needed no changes beyond one stale UI
+string. `health_dump_path` was added to the three live-adjacent config files
+(`neuropaca.toml`, `neuropaca.soak.toml`, `neuropaca.b13.toml` — the one the
+running daemon actually reads via its machine-local systemd override).
+
+The currently-running daemon process was unaffected throughout (already
+loaded the old `layer.py` into memory before any file was deleted, so its
+socket kept working for the length of this session) — the fix landed before
+the soak's *next* restart, not as an emergency patch to an already-broken
+one, but the gap existed and is worth naming: removing a human-facing
+interface can break machine-facing infrastructure that happened to reuse the
+same channel, and that is exactly the class of thing that showed up here.
+
+**A near-miss, caught before it did any lasting harm.** While auditing every
+tracked config file for now-invalid fields, `neuropaca.control.toml` (the old
+B7 positive-control throwaway-daemon config) turned out to set
+`interface_socket_path` — a field that no longer exists on `Config`. Since
+`Config.from_file` is `cls(**raw)`, loading this file today would have raised
+`TypeError` immediately, not degraded gracefully. Fixed (the field removed,
+the header comment updated) before it could bite whoever next reaches for
+that old harness. The lesson generalises: removing a `Config` field is not
+just a code change, it is a change to every `.toml` file in the repo — this
+session found one that would have broken and no others by checking every
+tracked file with `Config(**tomllib.load(...))` directly rather than trusting
+a grep for the field's own name.
+
+**Rejected.** Rewriting `Architecture.md`, `phases.md`, and `memory.md`'s
+historical entries to remove their L9/CLI content — these are dated records
+of what was actually built and decided at the time (`memory.md`'s own
+protocol: "append to the completed log; never rewrite history"), not live
+specs; rewriting them would be revisionist, not accurate. Instead,
+`VISION_PHASES.md` (the one document future phases actually read) got a
+single prominent callout at the top explaining the removal and how to read
+every earlier "L9 op" mention in a phase already built (history) versus one
+not yet built (read as "whatever request/report bridge the eventual voice
+interface uses"). `README.md` was rewritten more thoroughly since it is the
+live onboarding doc, not a historical log. Fixing `scripts/b7_positive_control.py`'s
+now-partially-dead socket liveness check (it already falls back to `pgrep`,
+degrading gracefully) — superseded tooling from before B9's soak-harness
+rebuild, not worth the effort for a redundant OR-branch that already fails
+safe.
+
+**What is left.** Nothing the daemon needs. The user's own next step, when
+ready: design and build the voice interface itself — the event-bus bridges
+and dual-model routing that were deliberately kept dormant are exactly the
+seams it is expected to attach to.
+
+---
+
+### 21.21 The presence tray — rebuilt, read-only
+
+**User decision, 2026-09-12 (same day, after §21.20).** The user asked for
+the A1 tray back — it had never actually been visible (never installed as a
+service, per A1's own design note), and today's removal deleted it outright.
+Wanted going forward: two tray icons side by side — the existing soak
+diagnostic (`soak_tray.py`: graph button, basic info, refresh) and this one,
+for presence.
+
+**Built.** `core/presence.py` and the `PresenceState` enum, restored
+verbatim from git history — both were always pure (no `interface/` import),
+so nothing about them needed to change. New: `core/presence_tracker.py`'s
+`PresenceTracker(BaseModule)` — the same five-input state machine
+`interface/layer.py` used to compute, now a small always-on subscriber with
+no socket and no write-back, reporting through the normal `health()` path
+so its state lands in `orchestration/orchestrator.py`'s periodic
+health-dump file (`config.health_dump_path`) exactly like every other
+module's counters (`detail = "state=thinking since=<iso> errors=0"`, the
+same `key=value` convention `soak_probe.py`'s regex-based parsing already
+uses elsewhere). Added to `build_modules()`'s tail, where L9 used to sit.
+`scripts/neuropaca_tray.py` rewritten around this: `read_health()` replaces
+the socket `request()`, `is_stale()` catches a daemon that died without
+cleaning up (mtime older than a few missed dump intervals), and
+`compute_tray_view()` renders exactly the same five-state icon set as
+before. The systemd unit's install-and-enable step (`sed` + `enable --now`)
+was actually run this time — A1's original "enabling it is the user's own
+call" note no longer applies; it was called.
+
+**Rejected — kept the socket-only features cut.** `pause`, `feedback`
+(keep/dismiss on the last moment), and the on-demand `mirror` menu item all
+required *writing* to the daemon, not just reading its state — there is no
+channel left to write through, and building one back in would be rebuilding
+exactly the control surface the user asked removed. Confirmed explicitly
+before rebuilding, not assumed.
+
+**Tests.** `tests/test_presence_tracker.py` (new) covers the state machine
+end to end through the module's own `health()` — idle/focused/thinking
+transitions, the `key=value` detail format, stop-then-ignore, idempotent
+stop. `tests/test_neuropaca_tray.py` rewritten around `read_health`/
+`is_stale`/`compute_tray_view` (file-based, no socket fixture needed).
+`tests/test_sensing.py`'s `build_modules()` module-order assertions gained
+`"presence"` at the tail.
+
+**What is left.** Live verification — running the rebuilt tray against the
+real daemon and confirming both tray icons actually appear side by side —
+is the same kind of thing every A1 dossier entry already flags as needing
+real desktop time, not a code review.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.

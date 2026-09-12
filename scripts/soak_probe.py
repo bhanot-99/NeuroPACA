@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""One soak measurement, taken over the L9 socket (BL-5).
+"""One soak measurement, read from the daemon's own health-dump file (BL-5).
 
 WHY NOT journalctl.
 
@@ -19,9 +19,17 @@ a week of zeros for a system that was working the whole time. That is the B7
 failure exactly: a measurement apparatus lying, and the lie being read as a
 finding about the system.
 
-`neuropaca health` over the unix socket has none of that dependency. It is the
-daemon's own account of itself, it is structured rather than grepped, and its
-counters are the ones the modules actually maintain.
+WHY NOT THE L9 SOCKET ANY MORE.
+
+This originally read `neuropaca health` over the L9 unix socket. That whole
+interface (the socket, the CLI, the tray) was removed by user decision -- no
+terminal/text control surface, superseded eventually by voice. The daemon's
+own account of itself did not go away with it: `orchestration/orchestrator.py`
+now periodically writes its own `health_check()` as JSON to
+`config.health_dump_path` (atomically -- temp file + rename), and this script
+reads that file instead of opening a socket. Same structured, authoritative
+data (`SystemHealth`, straight from `asdict()`); the daemon's own account of
+itself, same as before, no daemon-side control surface required to get it.
 
 Emits one JSON object on stdout, or `{}` when the daemon is unreachable -- an
 unreachable daemon is a fact worth a row, not a reason to abort the soak.
@@ -31,41 +39,26 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import socket
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 _COUNTER = re.compile(r"(\d+)\s+([a-z][a-z-]*)")
 
 
-def default_socket_path() -> str:
-    runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    return f"{runtime}/neuropaca.sock"
+def default_health_dump_path() -> str:
+    return str(Path(__file__).resolve().parents[1] / "data" / "health.json")
 
 
-def fetch_health(path: str, timeout: float = 10.0) -> dict[str, Any] | None:
+def fetch_health(path: str) -> dict[str, Any] | None:
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(path)
-            sock.sendall((json.dumps({"op": "health"}) + "\n").encode())
-            chunks = []
-            while True:
-                chunk = sock.recv(65536)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                if chunks[-1].endswith(b"\n"):
-                    break
-        reply = json.loads(b"".join(chunks).decode())
+        health = json.loads(Path(path).read_text("utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not reply.get("ok"):
+    if not isinstance(health, dict) or not health.get("ok"):
         return None
-    health: dict[str, Any] | None = reply.get("health")
     return health
 
 
@@ -191,7 +184,7 @@ def build_sample(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="One soak sample as JSON.")
-    parser.add_argument("--socket", default=None)
+    parser.add_argument("--health-dump", default=None, help="path to the daemon's health.json")
     parser.add_argument("--actions-log", default=None)
     parser.add_argument(
         "--graph", default=None, help="path to data/graph.json for T7 weight stats (optional)"
@@ -206,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         except OSError:
             actions = 0
 
-    health = fetch_health(args.socket or default_socket_path())
+    health = fetch_health(args.health_dump or default_health_dump_path())
     json.dump(build_sample(health, actions, args.graph), sys.stdout)
     sys.stdout.write("\n")
     return 0

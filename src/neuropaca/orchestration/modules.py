@@ -1,13 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""`build_modules()` — construct the L2-L9 modules for the phases built so far,
+"""`build_modules()` — construct the L2-L8 modules for the phases built so far,
 in dependency order (D-7 B6).
 
 The orchestrator calls this in `initialize()` and drives the returned list
 through `initialize -> start -> stop`; list order is start order
 (L2 -> L3 -> ...). `bitnet_runtime` is passed for the modules that will need it
 from B4 on.
+
+L9 (`InterfaceLayer`, the socket/CLI/tray-facing "terminal accessibility"
+surface) was removed by user decision: a text/CLI control surface will not be
+maintained going forward, superseded by a future voice interface. Every
+module below still publishes exactly what it always did (`MOMENT_PROPOSED`,
+`ACTION_PROPOSAL`, `ACTION_CONFIRMATION_REQUEST`, `DMN_CYCLE_STARTED`/`_ENDED`,
+the `BRIEFING_REQUEST`/`MIRROR_REQUEST`/`SYSTEM_HEALTH_REQUEST` bridges) —
+none of that is "terminal", it is the general "ask without importing"
+pattern (rules.md §0) any future interface reuses. There is simply no
+subscriber on the other end of any of it right now — except `presence`
+(`PresenceTracker`, below), reintroduced as a passive, socket-free module so
+`scripts/neuropaca_tray.py` still has a real state to show, read from the
+health-dump file rather than a live request.
 """
 
 from __future__ import annotations
@@ -21,10 +34,10 @@ from neuropaca.core.config import Config
 from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
+from neuropaca.core.presence_tracker import PresenceTracker
 from neuropaca.diagnosis.correlator import SignalCorrelator
 from neuropaca.drive.pressure import PressureAccumulator
 from neuropaca.idle.dmn import DefaultModeNetwork
-from neuropaca.interface.layer import InterfaceLayer
 from neuropaca.interface.moments import MomentComposer
 from neuropaca.learning.plasticity import BitNetPlasticity
 from neuropaca.sensing.activity.collector import ActivityCollector
@@ -84,29 +97,25 @@ def build_modules(
         episode_store=episode_store,
     )
     moments = MomentComposer(event_bus, config, graph_memory, clock=SystemClock())
-    interface = InterfaceLayer(
-        event_bus,
-        config,
-        graph_memory,
-        bitnet_runtime,
-        clock=SystemClock(),
-        socket_path=config.interface_socket_path or None,
-    )
+    # A1 · presence, minus L9 (RESEARCH_DOSSIER.md §21.20/21.21). No socket, no
+    # write-back — just the state machine, reported through the normal
+    # `health()` path so it lands in the periodic health-dump file
+    # (`config.health_dump_path`) like every other module's counters.
+    presence = PresenceTracker(event_bus, config, clock=SystemClock())
 
     # Start order = list order: L2 Sensing -> L3 Diagnosis -> L4 Learning ->
-    # L5 Drive -> L7 Action -> L8 Agents -> L6 Idle Cognition -> A0 Moments ->
-    # L9 Interface — the blueprint's own order (Architecture.md §10 A7, B7/B8)
-    # plus VISION_PHASES.md's A0. L5 sits after its two producers (L3, L4) and
-    # L7 immediately after L5, so a threshold crossed during startup already has
-    # an executor listening. L8 follows L7 for the same reason in reverse: it is
-    # the second reader of that threshold, and it must not start before the
-    # layer that will gate its `ACTION_PROPOSAL`s — A0's `MomentComposer` is a
-    # second such proposer and follows the same rule. L9 is last so it is
-    # subscribed to L7's notification intents and confirmation prompts before
-    # either can be published. L4 and L6 share the
-    # loop model and self-disable without
-    # llama-cpp-python / the model (D-11); L9's interactive model is likewise
-    # optional (D-12) — none block startup.
+    # L5 Drive -> L7 Action -> L8 Agents -> L6 Idle Cognition -> A0 Moments —
+    # the blueprint's own order (Architecture.md §10 A7, B7/B8) plus
+    # VISION_PHASES.md's A0, minus the removed L9 Interface that used to sit
+    # last. L5 sits after its two producers (L3, L4) and L7 immediately after
+    # L5, so a threshold crossed during startup already has an executor
+    # listening. L8 follows L7 for the same reason in reverse: it is the
+    # second reader of that threshold, and it must not start before the layer
+    # that will gate its `ACTION_PROPOSAL`s — A0's `MomentComposer` is a
+    # second such proposer and follows the same rule. L4 and L6 share the loop
+    # model and self-disable without llama-cpp-python / the model (D-11).
+    # `presence` is last — like L9 before it, it only reads what every other
+    # module already publishes.
     modules: list[BaseModule] = [sensing]
     # B13 · raw-data CSV. Passive METRIC_COLLECTED subscriber, appends one row
     # per reading. Right after sensing so it captures from the first poll.
@@ -123,7 +132,7 @@ def build_modules(
     modules.append(idle_cognition)
     if config.welcome_enabled:
         modules.append(moments)
-    modules.append(interface)
+    modules.append(presence)
     return modules
 
 

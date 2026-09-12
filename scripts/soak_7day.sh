@@ -153,12 +153,15 @@ ${body}"
 }
 
 # --- sampling -----------------------------------------------------------------
-# Measurements come from `neuropaca health` over the L9 socket, NOT from
-# journalctl. Measured on this box 2026-09-03, `journalctl --user -u neuropacad`
-# returns "No journal files were found": journald ships Storage=auto with no
-# /var/log/journal, so there are no per-user journal files to grep. A sampler
-# reading that would have recorded a week of zeros for a healthy system and
-# called it a finding -- the B7 mistake, wearing a different hat.
+# Measurements come from the daemon's own health-dump file
+# (config.health_dump_path, read by scripts/soak_probe.py), NOT from
+# journalctl and, since the terminal/CLI removal, not from the L9 socket
+# either -- that interface is gone. Measured on this box 2026-09-03,
+# `journalctl --user -u neuropacad` returns "No journal files were found":
+# journald ships Storage=auto with no /var/log/journal, so there are no
+# per-user journal files to grep. A sampler reading that would have recorded
+# a week of zeros for a healthy system and called it a finding -- the B7
+# mistake, wearing a different hat.
 sample_once() {
   local metrics
   metrics="$("$PY" "${REPO}/scripts/soak_probe.py" \

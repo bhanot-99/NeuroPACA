@@ -138,15 +138,6 @@ async def test_episodes_enabled_wires_episode_store_and_its_three_modules(tmp_pa
         graph_save_interval_seconds=3600,
         episodes_enabled=True,
         episodes_db_path=str(tmp_path / "episodes.sqlite"),
-        # `build_modules` constructs a real `InterfaceLayer`, which binds a
-        # real socket — an empty `interface_socket_path` falls back to
-        # `default_socket_path()`, the same `$XDG_RUNTIME_DIR/neuropaca.sock`
-        # a real `neuropacad` uses. `InterfaceLayer.start()` unlinks whatever
-        # is already there before binding, so leaving this unset here would
-        # steal the socket out from under (and break) any real daemon running
-        # on the same machine while this test runs. Every other test that
-        # constructs a real `InterfaceLayer` (test_interface.py) does the same.
-        interface_socket_path=str(tmp_path / "neuropaca.sock"),
     )
     orch = NeuroPACAOrchestrator(config, module_builder=build_modules)
     await orch.initialize()
@@ -161,6 +152,74 @@ async def test_episodes_enabled_wires_episode_store_and_its_three_modules(tmp_pa
         await orch.stop()
     assert orch.episode_store is not None
     assert not orch.episode_store.is_running
+
+
+async def test_health_dump_writes_a_readable_json_snapshot_on_start(tmp_path) -> None:
+    """The file-based replacement for `neuropaca health` (removed along with
+    the L9 socket) — `scripts/soak_probe.py`'s only remaining source."""
+    import json
+
+    dump_path = tmp_path / "health.json"
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+        health_dump_path=str(dump_path),
+        health_dump_interval_seconds=3600,  # the start()-time write is what this checks
+    )
+    orch = NeuroPACAOrchestrator(config)
+    await orch.initialize()
+    await orch.start()
+    try:
+        assert dump_path.exists()
+        payload = json.loads(dump_path.read_text("utf-8"))
+        assert payload["ok"] is True
+        assert "uptime_seconds" in payload
+    finally:
+        await orch.stop()
+
+
+async def test_health_dump_is_disabled_by_default(tmp_path) -> None:
+    dump_path = tmp_path / "health.json"
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+    )
+    orch = NeuroPACAOrchestrator(config)
+    await orch.initialize()
+    await orch.start()
+    try:
+        assert not dump_path.exists()
+    finally:
+        await orch.stop()
+
+
+async def test_health_dump_keeps_refreshing_on_its_own_interval(tmp_path) -> None:
+    import json
+
+    dump_path = tmp_path / "health.json"
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+        health_dump_path=str(dump_path),
+        health_dump_interval_seconds=0.05,
+    )
+    orch = NeuroPACAOrchestrator(config)
+    await orch.initialize()
+    await orch.start()
+    try:
+        first = dump_path.read_text("utf-8")
+        first_uptime = json.loads(first)["uptime_seconds"]
+        await asyncio.sleep(0.2)
+        second_uptime = json.loads(dump_path.read_text("utf-8"))["uptime_seconds"]
+        assert second_uptime > first_uptime
+    finally:
+        await orch.stop()
 
 
 # gen-ref: 5302c260

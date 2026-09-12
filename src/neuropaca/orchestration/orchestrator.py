@@ -18,6 +18,8 @@ async form that also performs the shutdown, for callers not going through
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import signal
 import time
@@ -93,10 +95,11 @@ class NeuroPACAOrchestrator:
         self._shutdown_done = False
         self._started_at: float | None = None
         # Non-fatal degradations survived at boot (B9/BL-2). Surfaced through
-        # health_check().notes so `neuropaca health` shows a daemon that came
-        # up on a reseeded graph as degraded rather than silently ok.
+        # health_check().notes so a daemon that came up on a reseeded graph
+        # reports itself as degraded rather than silently ok.
         self._degraded_notes: list[str] = []
         self._shutdown_event = asyncio.Event()
+        self._health_dump_task: asyncio.Task[None] | None = None
 
     # ---------------------------------------------------------------- properties
     @property
@@ -309,6 +312,12 @@ class NeuroPACAOrchestrator:
         self._scheduler.start()
         self._started_at = time.perf_counter()
         self._running = True
+        if self._config.health_dump_path:
+            try:
+                self._write_health_dump()  # a reader has something the instant we start
+            except Exception:
+                _log.exception("health dump failed")
+            self._health_dump_task = asyncio.create_task(self._health_dump_loop())
         _log.info("orchestrator started")
 
     async def stop(self) -> None:
@@ -316,6 +325,12 @@ class NeuroPACAOrchestrator:
             return
         self._shutdown_done = True
         self._running = False
+
+        task, self._health_dump_task = self._health_dump_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
         if self._event_bus is not None:
             self._event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REQUEST, self._on_health_request)
@@ -413,6 +428,28 @@ class NeuroPACAOrchestrator:
                 payload={"health": report},
             )
         )
+
+    # -------------------------------------------------------------- health dump
+    async def _health_dump_loop(self) -> None:
+        """The file-based replacement for what `neuropaca health` used to
+        answer over the now-removed L9 socket. `scripts/soak_probe.py` (the
+        7-day soak's own measurement, unrelated to any human-facing control
+        surface) is the only reader. Errors are logged, never fatal — a
+        failed dump is a missed sample, not a reason to stop the daemon."""
+        while True:
+            await asyncio.sleep(self._config.health_dump_interval_seconds)
+            try:
+                self._write_health_dump()
+            except Exception:
+                _log.exception("health dump failed")
+
+    def _write_health_dump(self) -> None:
+        target = Path(self._config.health_dump_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(asdict(self.health_check()), default=str)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(target)  # atomic on the same filesystem — never a half-written read
 
     # ------------------------------------------------------------------ internal
     def _install_signal_handlers(self) -> None:
