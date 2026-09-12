@@ -221,8 +221,9 @@ def build_rows(
             "Measurements",
             "Samples",
             f"{len(samples)} ({soak_state.restarts(samples)} daemon restarts)",
-            "One `neuropaca health` reading per minute over the L9 socket. Restarts "
-            "are counted from the daemon's own counters resetting to zero.",
+            "One reading per minute of the daemon's own health-dump file "
+            "(scripts/soak_probe.py). Restarts are counted from the daemon's own "
+            "counters resetting to zero.",
             "neutral",
         )
     )

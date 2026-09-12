@@ -82,13 +82,20 @@ class EventType(StrEnum):
     # timeout, or cancellation alike (a `finally`, not a bare `except`).
     DMN_CYCLE_STARTED = auto()
     DMN_CYCLE_ENDED = auto()
+    # A2 · the mirror (VISION_PHASES.md §3.8). `neuropaca mirror`'s on-demand
+    # path — the same request/report shape as `BRIEFING_REQUEST`/`_REPORT`,
+    # for the same reason: L9 cannot import `MirrorComposer` (rules.md §0).
+    MIRROR_REQUEST = auto()
+    MIRROR_REPORT = auto()
 
 
 class PresenceState(StrEnum):
     """A1 · the tray's state machine (VISION_PHASES.md). Precedence, highest
     first: `THINKING` > `NOTICED` > `FOCUSED` > `IDLE` > `AWAKE` —
     `core/presence.py`'s `compute_presence_state` is the one place that order
-    is encoded; nothing else may re-derive it."""
+    is encoded; nothing else may re-derive it. Restored after the terminal/L9
+    removal for `core/presence_tracker.py` — the same pure function, now fed
+    by a small always-on module instead of `InterfaceLayer`."""
 
     THINKING = auto()
     NOTICED = auto()

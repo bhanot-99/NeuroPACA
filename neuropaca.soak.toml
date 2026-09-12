@@ -17,7 +17,7 @@
 # with dry-run on and only the safe tier enabled.
 
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
-# B12 · used only by `neuropaca tell <path> --explain` (see neuropaca.toml).
+# B12/dormant · no current caller (see neuropaca.toml).
 interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
 inference_backend = "llama"
 
@@ -25,6 +25,7 @@ graph_db_path = "data/graph.json"
 action_log_path = "data/actions.jsonl"
 quarantine_path = "data/quarantine"
 log_level = "INFO"
+health_dump_path = "data/health.json"
 
 # L2 · sensing. The real Wayland ActivityCollector (B2.5a/b) is on, so the soak
 # exercises FocusSessionPattern / DistractionPattern — the patterns that

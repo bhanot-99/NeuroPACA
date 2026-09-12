@@ -8,6 +8,32 @@
 >
 > Written 2026-09-12. Section references like "§3.4" point into `VISION.md`.
 
+> **2026-09-12, later the same day — the terminal/CLI interface was removed.**
+> User decision: no ongoing text/terminal control surface, superseded by a
+> future voice interface. `interface/{layer,cli,repl,describe,offline,message,
+> desktop}.py` and every socket-dependent validation script are gone
+> (RESEARCH_DOSSIER.md's removal chapter has the full list). **The tray was
+> then rebuilt, read-only** (RESEARCH_DOSSIER.md §21.21): `core/presence.py`
+> and `PresenceState` are back, fed by a new small always-on module
+> (`core/presence_tracker.py`, no socket, no write-back) whose state is
+> reported through the daemon's normal health-dump file
+> (`config.health_dump_path`) like every other module's counters;
+> `scripts/neuropaca_tray.py` reads that file. Its `pause`/`feedback` buttons
+> and on-demand `mirror` item did **not** come back — those need to write to
+> the daemon, and there is no channel left to write through. A0/A1/A2 below
+> still describe what was actually built at the time, including their L9
+> wiring — read as history, not as a live surface: `neuropaca briefing`,
+> `neuropaca mirror`, and `--explain`'s interactive-model paraphrase no
+> longer have anything to reach them with. Every "L9 op" named in a
+> **not-yet-built** phase below (A3's
+> confirmation flow, S1+, the `predict` op) should be read as "whatever
+> request/report bridge the eventual voice interface uses" — the underlying
+> event-bus pattern (`_REQUEST`/`_REPORT`, unchanged) is exactly what such an
+> interface would reuse; only the human-facing end of it is gone. The
+> confirmation handshake itself (`ACTION_CONFIRMATION_REQUEST`/`_RESPONSE`,
+> D-14) and the dual inference-backend routing (`BitNetRuntime`, D-12) were
+> deliberately left in place, dormant, for the same reason.
+
 ---
 
 ## 0. How every phase runs
@@ -460,9 +486,10 @@ trip, no timeout risk, unlike `briefing`'s); `DMN_CYCLE_STARTED`/`_ENDED` so
 L9 can see "thinking" without importing `idle/dmn.py`; the state machine
 itself as a pure, directly-tested function (`core/presence.py`); the tray
 script with the same pure-logic/GTK-glue split `soak_tray.py` established.
-**Deferred to A2**, not built: the "what did you learn today" menu item —
-its backend (the mirror, §3.8) does not exist yet, and a menu item with
-nothing behind it is worse than no menu item.
+The "what did you learn today" menu item, originally deferred here to A2
+because the mirror did not exist yet, was added once it did (the A1/A2
+audit, VISION_PHASES.md's own follow-up) — "What changed today" in the
+tray's menu, an on-demand `mirror` request rendered in a dialog.
 
 ---
 
@@ -509,9 +536,29 @@ actually changed about you today.
 under relabelling; KL is zero for identical days and grows with shift; contributors
 sum to the divergence; no mirror below $\tau$.
 
+**Built.** `core/curiosity.py` (Beta–Bernoulli information gain, a hand-written
+digamma so no scipy dependency is added) and the DMN's seed-choice mix
+(`idle/dmn.py`'s `_choose_seeds`), both tested directly, including the two
+required properties (IG higher for uncertain than settled pairs; IG symmetric
+under relabelling `(s,f) <-> (f,s)`). `core/mirror.py` (KL divergence with
+Dirichlet smoothing) and `interface/mirror_composer.py`'s `MirrorComposer`,
+wired to L9 (`mirror` op), the CLI (`neuropaca mirror`), and the REPL — all
+five required math properties tested directly (KL zero for identical days,
+grows with shift; contributors sum to the divergence; no mirror below `tau`).
+1015 tests pass, `ruff`/`mypy` clean (RESEARCH_DOSSIER.md §21.18).
+
 **Exit**
-- [ ] The mirror stays silent on ordinary days (≤ 1 false alarm a week in dogfood).
-- [ ] H4 protocol run: users rate IG-chosen thoughts vs score-sampled thoughts.
+- [ ] The mirror stays silent on ordinary days (≤ 1 false alarm a week in
+      dogfood) — needs real elapsed time this session cannot produce; not
+      assumed met. `mirror_kl_threshold` is a reasoned default (§3.8's own
+      spike calls for picking it by replaying two real weeks — no such
+      history exists yet on the live daemon), the first thing to recalibrate
+      once it does.
+- [ ] H4 protocol run: users rate IG-chosen thoughts vs score-sampled
+      thoughts — needs real dogfood usage; not run.
+- Not yet live-verified: the live daemon's config does not have
+  `episodes_enabled = true`, so neither half of A2 has run against real data
+  yet — turning it on is the user's call.
 
 ---
 

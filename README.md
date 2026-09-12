@@ -74,9 +74,9 @@ It passively watches **cold OS-level numbers** (CPU, RAM, disk, temperature, pro
 logs, Wayland idle/focus events) every 60 seconds, turns them into **named behavioural patterns**
 with a rule-based correlator (no inference in that path, by design), and stores them in a personal
 knowledge graph. Insights it surfaces, and — behind a hard safety gate — actions it can take, all
-come from that graph. The terminal client is a **read-only project guide**: predefined commands
-that report daemon state (`health`, `insights`, …) or explain the codebase itself
-(`neuropaca tell <path>`, `neuropaca overview`).
+come from that graph. There is currently **no terminal or CLI control surface** — that layer (a
+Unix-socket client, a read-only project guide, `$!`/`$$` command relay) was removed; a voice
+interface is the planned replacement (see [Where to contribute](#where-to-contribute)).
 
 ```mermaid
 flowchart LR
@@ -94,9 +94,6 @@ flowchart LR
     AGENT -->|ACTION_PROPOSAL| ACT
     AGENT --> GRAPH
     ACT --> GRAPH
-    GRAPH --> ASK["L9 · Interface<br/>$ what's using my CPU?"]
-    ASK -->|grounded answer,<br/>cites real nodes| USER([You, in the terminal])
-    ACT -.->|needs your yes| USER
 ```
 
 **Privacy is the product.** Nothing leaves the machine — CI *affirmatively proves* it by running
@@ -119,7 +116,7 @@ product, or a GPU project. Those are stated scope boundaries, not omissions.
 | **Linux** | Developed and soaked on Pop!\_OS (Wayland). macOS/Windows: the daemon runs but the Wayland `ActivityCollector` self-disables. |
 | **Python 3.12** | `requires-python = ">=3.12"`. |
 | **[uv](https://docs.astral.sh/uv/)** | The only supported dependency manager (`uv.lock` is committed; CI runs `uv sync --locked`). |
-| **~5 GB free RAM** | Only to *run the daemon with inference* — idle daemon is ~40 MB, BitNet adds ~1.4 GB, Qwen adds ~3.25 GB the first time you run `neuropaca tell … --explain`. Running the **test suite** needs none of this. |
+| **~1.5 GB free RAM** | Only to *run the daemon with inference* — idle daemon is ~40 MB, BitNet (the always-on "loop" model) adds ~1.4 GB. Running the **test suite** needs none of this. |
 | A C toolchain + `libwayland-dev` | Only for the optional `llama` / `activity` extras. Not needed for tests, lint, or type-checking. |
 
 ### Clone and set up
@@ -154,26 +151,28 @@ the daemon to contribute to most of the codebase.**
 
 ### Running the daemon (optional — needs the models)
 
-The daemon runs inference in-process via `llama.cpp`, so you need the `llama` extra and two GGUF
-model files.
+The daemon runs inference in-process via `llama.cpp`, so you need the `llama` extra and one GGUF
+model file — the always-on "loop" model idle cognition and learning use.
 
 ```bash
 uv pip install -e ".[dev,llama,activity]"   # activity = real Wayland idle/focus sensing
 
-# Fetch the two models into ./models/ (gitignored).
+# Fetch the model into ./models/ (gitignored).
 mkdir -p models
 uv pip install huggingface-hub
 huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --include "*.gguf" --local-dir models
-huggingface-cli download Qwen/Qwen2.5-3B-Instruct-GGUF   --include "qwen2.5-3b-instruct-q4_k_m.gguf" --local-dir models
 ```
 
-`neuropaca.toml` expects the files at these exact paths — rename/symlink to match, or edit the
-config:
+`neuropaca.toml` expects the file at this exact path — rename/symlink to match, or edit the config:
 
 ```toml
-model_path             = "models/bitnet-2b4t-tq2_0.gguf"
-interactive_model_path  = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
+model_path = "models/bitnet-2b4t-tq2_0.gguf"
 ```
+
+There is a second, optional inference backend (`interactive_model_path`) — it was for the removed
+terminal's paraphrase feature and has no current caller; the config field and `BitNetRuntime`'s
+dual-model routing were left in place as infrastructure a future voice interface is expected to
+reuse. No need to download anything for it today.
 
 The official BitNet repo ships `ggml-model-i2_s.gguf` (the BitNet-native quant); symlink it to
 `bitnet-2b4t-tq2_0.gguf` or point `model_path` at it. The B0 spike notes
@@ -206,61 +205,23 @@ unit's ordering is load-bearing (it must start *after* the Wayland compositor
 imports the session environment) — see the header of
 [`scripts/systemd/neuropacad.service`](scripts/systemd/neuropacad.service).
 
-### Using the CLI
+### There is no terminal client right now
 
-The CLI is a thin client over a Unix socket
-(`--socket PATH` > `$NEUROPACA_SOCKET` > `$XDG_RUNTIME_DIR/neuropaca.sock`).
+There used to be one — a thin CLI over a Unix socket, a read-only project guide (`tell`/
+`overview`), and a `$!`/`$$` prefix that handed a typed shell command to the action layer behind a
+confirmation gate. All of it was removed: no ongoing terminal/text control surface is planned, in
+favour of a future voice interface that does not exist yet. Until it does, the daemon runs, senses,
+learns, and (behind its safety gate) can propose actions, but there is no channel for a human to
+query it, confirm a dangerous action, or ask it anything, on this machine or any other.
 
-```bash
-neuropaca                                     # no args → the command menu (below)
-neuropaca help                                # the full guide
-
-neuropaca overview                            # what NeuroPACA is + the L1-L10 layer map
-neuropaca tell src/neuropaca/drive/pressure.py    # what a file or folder does
-neuropaca tell drive/pressure.py --explain    # + a plain-words model paraphrase (needs the daemon)
-
-neuropaca health                             # daemon + module health
-neuropaca insights                           # surfaced insights (anomaly / distraction)
-neuropaca notifications                       # what the action layer wants to tell you
-neuropaca confirmations                       # dangerous actions waiting on you
-neuropaca confirm <id> [--deny]               # answer one
-neuropaca run "pkill -f webpack"              # hand a command to the action layer (needs confirmation)
-neuropaca run --backup "systemctl --user restart x"   # same, daemon state backed up first
-
-neuropaca doctor                              # offline diagnosis, no daemon needed
-neuropaca export <path> [--force]             # dump the graph out of data/
-neuropaca panic [--yes]                       # kill the daemon and wipe all state
-```
-
-`tell` accepts a file or a folder, and is forgiving about the path: `root/…`,
-`src/neuropaca/…`, a bare `layer.py`, or a directory all resolve. It reads the
-target's module docstring and its top-level classes/functions — deterministic,
-and it works with no daemon. `--explain` adds one optional step: the daemon's
-interactive model paraphrases that summary in plain words, clearly flagged,
-*after* the facts.
-
-#### The command menu
-
-Run `neuropaca` with **no arguments** to drop into a `neuropaca>` prompt. It
-accepts the same predefined verbs, unquoted — nothing else. A line whose first
-word is not a verb is a short error, never a free-text question.
-
-```
-neuropaca> tell src/neuropaca/interface/layer.py
-neuropaca> overview
-neuropaca> health
-neuropaca> run "pkill -f webpack"
-neuropaca> help        quit
-```
-
-Each line is translated to the exact `neuropaca` argv and run through the same
-path (`src/neuropaca/interface/repl.py`) — the client stays thin.
-
-**The action layer ships inert.** `action_dry_run = True` and only the `safe` tier is enabled, so a
-fresh install describes what it *would* do and does nothing. Even turned on: a dangerous action
-pauses for `neuropaca confirm` in your terminal, silence past the timeout is a refusal, commands
-run with no shell and no inherited environment, writes are confined to `watch_paths` and backed up
-to quarantine first, and every attempt — refusals included — is two lines in `data/actions.jsonl`.
+**The action layer still ships inert.** `action_dry_run = True` and only the `safe` tier is
+enabled, so a fresh install describes what it *would* do and does nothing. A "high"/"dangerous"
+tier action still cannot run without a human confirming it (D-14) — the confirmation handshake
+(`ACTION_CONFIRMATION_REQUEST`/`_RESPONSE` over the internal event bus) still exists and still
+gates every attempt; it simply has no interface answering it right now, so silence past
+`action_confirmation_timeout_seconds` is always a refusal. Commands run with no shell and no
+inherited environment, writes are confined to `watch_paths` and backed up to quarantine first, and
+every attempt — refusals included — is two lines in `data/actions.jsonl`.
 
 ### Inspecting the behavioural graph
 
@@ -313,6 +274,14 @@ methods (recency-only, frequency-only, degree-only, semantic), an ablation runne
 score term in turn, and `--research-mode` event tracing kept out of the shipped daemon. Claim A
 cannot be published without it.
 
+The second gap: **a voice interface.** The terminal/CLI control surface was removed by design (see
+above) with a voice replacement planned but not started — there is currently no way for a human to
+query the daemon, confirm a dangerous action, or hear a briefing/mirror moment. The event-bus
+bridges that pattern reuses already exist (`BRIEFING_REQUEST`/`_REPORT`,
+`MIRROR_REQUEST`/`_REPORT`, `SYSTEM_HEALTH_REQUEST`/`_REPORT`, the `ACTION_CONFIRMATION_REQUEST`/
+`_RESPONSE` handshake, a second optional inference backend for phrasing) — nothing subscribes on
+the human-facing side of any of them right now.
+
 ### Repository map
 
 | Path | What it holds |
@@ -321,7 +290,7 @@ cannot be published without it.
 | `tests/` | Unit tests, plus `stress/` and `integration/` (both marker-gated) |
 | `scripts/` | Per-phase validation harnesses (`validate_b*.py`), the 7-day soak harness (`soak_*.py` / `soak_*.sh` + tray widget), the graph viewer, `systemd/` unit templates, logrotate config |
 | `spikes/` | Throwaway de-risking spikes (`b0_bitnet/`, `b2_5_activity/`, `b7_positive_control/`) — **never** imported by the daemon |
-| `models/` | gitignored — the two GGUF files |
+| `models/` | gitignored — the one GGUF file (BitNet, the loop model) |
 | `data/` | gitignored — `graph.json`, `graph_view.html`, `actions.jsonl`, `idle_cache.db`, logs, soak state |
 
 ---

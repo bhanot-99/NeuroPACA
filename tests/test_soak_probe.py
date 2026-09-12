@@ -146,8 +146,28 @@ def test_an_unreachable_daemon_produces_a_row_saying_so_not_an_exception() -> No
     assert "ts" in sample
 
 
-def test_fetch_health_returns_none_when_there_is_no_socket(tmp_path: Path) -> None:
-    assert probe.fetch_health(str(tmp_path / "absent.sock")) is None
+def test_fetch_health_returns_none_when_there_is_no_dump_file(tmp_path: Path) -> None:
+    assert probe.fetch_health(str(tmp_path / "absent.json")) is None
+
+
+def test_fetch_health_returns_none_on_malformed_json(tmp_path: Path) -> None:
+    bad = tmp_path / "health.json"
+    bad.write_text("not json", encoding="utf-8")
+    assert probe.fetch_health(str(bad)) is None
+
+
+def test_fetch_health_returns_none_when_ok_is_false(tmp_path: Path) -> None:
+    dump = tmp_path / "health.json"
+    dump.write_text('{"ok": false}', encoding="utf-8")
+    assert probe.fetch_health(str(dump)) is None
+
+
+def test_fetch_health_reads_a_real_dump(tmp_path: Path) -> None:
+    dump = tmp_path / "health.json"
+    dump.write_text('{"ok": true, "uptime_seconds": 12.0}', encoding="utf-8")
+    health = probe.fetch_health(str(dump))
+    assert health is not None
+    assert health["uptime_seconds"] == 12.0
 
 
 def test_hebbian_weight_stats_reads_the_co_occurrence_distribution(tmp_path: Path) -> None:

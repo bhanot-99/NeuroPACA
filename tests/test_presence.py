@@ -106,6 +106,3 @@ def test_thinking_flag_without_a_since_does_not_win() -> None:
         )
     )
     assert state is PresenceState.FOCUSED
-
-
-# gen-ref: a1-test-presence

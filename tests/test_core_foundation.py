@@ -37,7 +37,7 @@ def test_enum_members_match_the_blueprint() -> None:
     # +MOMENT_{PROPOSED,DELIVERED,FEEDBACK} (A0, F1 — VISION_PHASES.md)
     # +BRIEFING_{REQUEST,REPORT} (S0 — the on-demand `neuropaca briefing` bridge)
     # +DMN_CYCLE_{STARTED,ENDED} (A1 — the tray's "thinking" state)
-    assert len(EventType) == 27
+    assert len(EventType) == 29
     # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).
@@ -129,7 +129,6 @@ def test_llama_backend_requires_existing_model_path() -> None:
         ),
         ({"inference_backend": "fake", "max_concurrent_agents": -1}, "max_concurrent_agents"),
         ({"inference_backend": "fake", "poll_intervals": {"system": 0.0}}, "poll_intervals"),
-        ({"inference_backend": "fake", "explain_temperature": 1.5}, "explain_temperature"),
         (
             {"inference_backend": "fake", "interactive_model_context_tokens": -1},
             "interactive_model_context_tokens",

@@ -121,4 +121,105 @@ async def test_stop_is_idempotent(config: Config) -> None:
     assert orch.is_running is False
 
 
+async def test_episodes_enabled_wires_episode_store_and_its_three_modules(tmp_path) -> None:
+    """S0/A1/A2's whole conditional-module path (`episodes_enabled=True`),
+    exercised for real through `NeuroPACAOrchestrator.initialize()` with the
+    production `build_modules` — every other test in this file builds a bare
+    `NeuroPACAOrchestrator(config)` with no `module_builder` at all, so this
+    path (the `ModuleBuilder` protocol widened to a fifth `EpisodeStore | None`
+    argument, and `EpisodicWriter`/`BriefingComposer`/`MirrorComposer` all
+    appended alongside it) had never been exercised end to end."""
+    from neuropaca.orchestration.modules import build_modules
+
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+        episodes_enabled=True,
+        episodes_db_path=str(tmp_path / "episodes.sqlite"),
+    )
+    orch = NeuroPACAOrchestrator(config, module_builder=build_modules)
+    await orch.initialize()
+    try:
+        assert orch.episode_store is not None
+        assert orch.episode_store.is_running
+        await orch.start()
+        names = {report.name for report in orch.health_check().modules}
+        assert {"episodic_writer", "briefing", "mirror", "idle"} <= names
+        assert orch.health_check().ok is True
+    finally:
+        await orch.stop()
+    assert orch.episode_store is not None
+    assert not orch.episode_store.is_running
+
+
+async def test_health_dump_writes_a_readable_json_snapshot_on_start(tmp_path) -> None:
+    """The file-based replacement for `neuropaca health` (removed along with
+    the L9 socket) — `scripts/soak_probe.py`'s only remaining source."""
+    import json
+
+    dump_path = tmp_path / "health.json"
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+        health_dump_path=str(dump_path),
+        health_dump_interval_seconds=3600,  # the start()-time write is what this checks
+    )
+    orch = NeuroPACAOrchestrator(config)
+    await orch.initialize()
+    await orch.start()
+    try:
+        assert dump_path.exists()
+        payload = json.loads(dump_path.read_text("utf-8"))
+        assert payload["ok"] is True
+        assert "uptime_seconds" in payload
+    finally:
+        await orch.stop()
+
+
+async def test_health_dump_is_disabled_by_default(tmp_path) -> None:
+    dump_path = tmp_path / "health.json"
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+    )
+    orch = NeuroPACAOrchestrator(config)
+    await orch.initialize()
+    await orch.start()
+    try:
+        assert not dump_path.exists()
+    finally:
+        await orch.stop()
+
+
+async def test_health_dump_keeps_refreshing_on_its_own_interval(tmp_path) -> None:
+    import json
+
+    dump_path = tmp_path / "health.json"
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+        health_dump_path=str(dump_path),
+        health_dump_interval_seconds=0.05,
+    )
+    orch = NeuroPACAOrchestrator(config)
+    await orch.initialize()
+    await orch.start()
+    try:
+        first = dump_path.read_text("utf-8")
+        first_uptime = json.loads(first)["uptime_seconds"]
+        await asyncio.sleep(0.2)
+        second_uptime = json.loads(dump_path.read_text("utf-8"))["uptime_seconds"]
+        assert second_uptime > first_uptime
+    finally:
+        await orch.stop()
+
+
 # gen-ref: 5302c260

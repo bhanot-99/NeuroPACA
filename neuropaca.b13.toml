@@ -28,6 +28,11 @@ log_level = "INFO"
 log_to_file = true
 log_file_path = "data/neuropaca.log"
 
+# Post-terminal-removal: what scripts/soak_probe.py reads instead of
+# `neuropaca health` over the (now-removed) L9 socket. Written atomically
+# every health_dump_interval_seconds (default 30s).
+health_dump_path = "data/health.json"
+
 # L2 · sensing. Activity on (FocusSession / Distraction), plus the B13 census.
 activity_enabled = true
 top_process_count = 5

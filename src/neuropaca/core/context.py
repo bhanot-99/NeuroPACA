@@ -4,9 +4,10 @@
 """The one serialiser for graph context handed to the model (rules.md §4.1, D-13).
 
 Before B6 this line format lived in three places — `BitNetRuntime`,
-`learning/prompts.py._context_block`, and `InterfaceLayer._nodes_within_budget` —
-each a copy. L4, L6, and L9 now all distil through here, so a change to how a
-node reads to the model happens in exactly one spot (A8).
+`learning/prompts.py._context_block`, and L9's own copy (removed along with
+the rest of the terminal interface) — each a copy. L4 and L6 now distil
+through here, so a change to how a node reads to the model happens in exactly
+one spot (A8).
 
 Two entry points, same line shape:
 - `build_context_from_nodes(nodes)` — keyed by real node id (`BitNetRuntime`);

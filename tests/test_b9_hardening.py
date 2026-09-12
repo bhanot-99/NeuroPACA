@@ -5,11 +5,15 @@
 
 Grouped by blocker so a failure names the thing it protects:
 
-- BL-1  the systemd unit can still bind the L9 socket under ProtectSystem=strict
+- BL-1  the systemd unit's data directory is writable under ProtectSystem=strict
 - BL-2  boot recovery: an unreadable graph is quarantined, not fatal
 - BL-3  schema versioning is *read*, not merely written
 - BL-4  the file sink logrotate rotates actually exists
-- BL-7  `doctor` / `export` / `panic` — the offline verbs
+
+BL-7 (`doctor` / `export` / `panic`, the offline verbs) was removed along
+with `interface/offline.py` and the rest of the terminal accessibility
+surface — no terminal/CLI control going forward, superseded by a future
+voice interface.
 """
 
 from __future__ import annotations
@@ -23,7 +27,6 @@ import pytest
 from neuropaca.core.config import Config
 from neuropaca.core.errors import ConfigError, GraphMemoryError
 from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
-from neuropaca.interface import offline
 from neuropaca.orchestration.orchestrator import NeuroPACAOrchestrator
 
 _HUB_COUNT = 11  # YOU + 10 domain hubs
@@ -229,261 +232,20 @@ def test_config_rejects_an_empty_log_file_path_when_the_sink_is_on() -> None:
         Config(inference_backend="fake", log_to_file=True, log_file_path="").validate()
 
 
-# --------------------------------------------------------------- BL-7 · offline
-
-
-@pytest.fixture(autouse=True)
-def _no_host_service_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests describe the repo's behaviour, not this machine's. V-11 added
-    a `systemctl --user is-enabled` probe to `doctor`; without this stub,
-    whether the developer's own unit happens to be enabled would decide whether
-    BL-7 passes. `None` is what a CI runner — no user manager — answers."""
-    monkeypatch.setattr(offline, "_systemctl_is_enabled", lambda _unit: None)
-
-
-def test_doctor_runs_with_no_daemon_and_no_data_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The BL-7 criterion: `doctor` works when nothing is running."""
-    graph = tmp_path / "data" / "graph.json"
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.doctor([]) == 0
-    out = capsys.readouterr().out
-    assert "not running" in out
-    assert "seeds 11 hubs" in out
-
-
-def test_doctor_reports_a_corrupt_graph_and_exits_nonzero(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    graph = tmp_path / "data" / "graph.json"
-    _write_graph(graph, "{ not json")
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.doctor([]) == 1
-    assert "CORRUPT" in capsys.readouterr().out
-
-
-def test_doctor_surfaces_a_previous_boot_recovery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A quarantined file is the only evidence a reseed happened — doctor is how
-    the user finds out, since the daemon came up looking fine."""
-    graph = tmp_path / "data" / "graph.json"
-    _write_graph(graph, json.dumps({"schema_version": 2, "nodes": [], "edges": []}))
-    (graph.parent / "graph.json.corrupt.20260903T120000Z").write_text("{ broken")
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.doctor([]) == 1
-    assert "quarantined graph" in capsys.readouterr().out
-
-
-def _write_episode_config(tmp_path: Path, *, episodes_db: Path) -> Path:
-    cfg = tmp_path / "neuropaca.toml"
-    cfg.write_text(
-        'inference_backend = "fake"\n'
-        f'graph_db_path = "{tmp_path / "data" / "graph.json"}"\n'
-        "episodes_enabled = true\n"
-        f'episodes_db_path = "{episodes_db}"\n',
-        encoding="utf-8",
-    )
-    return cfg
-
-
-def test_doctor_reports_episodes_disabled_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    graph = tmp_path / "data" / "graph.json"
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.doctor([]) == 0
-    assert "episodes_enabled = false" in capsys.readouterr().out
-
-
-def test_doctor_reports_episode_store_row_count_and_schema(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import asyncio
-    from datetime import UTC, datetime, timedelta
-
-    from neuropaca.core.enums import EpisodeKind
-    from neuropaca.core.episodes import EpisodeStore
-
-    episodes_db = tmp_path / "data" / "episodes.sqlite"
-
-    async def _seed() -> None:
-        store = EpisodeStore(episodes_db)
-        await store.start()
-        t0 = datetime(2026, 9, 15, 9, 0, tzinfo=UTC)
-        store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", t0, t0 + timedelta(minutes=5))
-        await store.flush()
-        await store.stop()
-
-    asyncio.run(_seed())
-
-    monkeypatch.setenv(
-        "NEUROPACA_CONFIG", str(_write_episode_config(tmp_path, episodes_db=episodes_db))
-    )
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.doctor([]) == 0
-    out = capsys.readouterr().out
-    assert "1 row(s)" in out
-    assert "episode schema" in out
-
-
-def test_doctor_reports_an_unreadable_episode_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    episodes_db = tmp_path / "data" / "episodes.sqlite"
-    episodes_db.parent.mkdir(parents=True, exist_ok=True)
-    episodes_db.write_text("not a sqlite file", encoding="utf-8")
-
-    monkeypatch.setenv(
-        "NEUROPACA_CONFIG", str(_write_episode_config(tmp_path, episodes_db=episodes_db))
-    )
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.doctor([]) == 1
-    assert "UNREADABLE" in capsys.readouterr().out
-
-
-def test_doctor_never_opens_the_socket_when_the_daemon_is_absent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Guards the architectural exception itself: if `doctor` ever grew a socket
-    round-trip it would stop working in the case it exists for."""
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path)))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-    monkeypatch.chdir(tmp_path)
-
-    def _explode(*_a: object, **_k: object) -> None:
-        raise AssertionError("doctor must not open a connection")
-
-    monkeypatch.setattr(offline.socket.socket, "connect", _explode)
-    offline.doctor([])  # must not raise
-
-
-def test_export_writes_the_graph_and_warns_that_data_left_the_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    graph = tmp_path / "data" / "graph.json"
-    payload = {
-        "schema_version": 2,
-        "nodes": [{"id": "app:webpack", "label": "webpack"}],
-        "edges": [],
-    }
-    _write_graph(graph, json.dumps(payload))
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
-
-    dest = tmp_path / "out" / "mygraph.json"
-    assert offline.export([str(dest)]) == 0
-
-    written = json.loads(dest.read_text("utf-8"))
-    assert written["graph"] == payload
-    assert written["schema_version"] == 2
-    assert "exported_at" in written
-    assert oct(dest.stat().st_mode)[-3:] == "600"
-
-    out = capsys.readouterr().out
-    assert "left data/" in out
-    assert "1 nodes" in out
-
-
-def test_export_refuses_to_overwrite_without_force(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    graph = tmp_path / "data" / "graph.json"
-    _write_graph(graph, json.dumps({"schema_version": 2, "nodes": [], "edges": []}))
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, graph)))
-
-    dest = tmp_path / "existing.json"
-    dest.write_text("mine", encoding="utf-8")
-    assert offline.export([str(dest)]) == 1
-    assert dest.read_text("utf-8") == "mine"
-    assert offline.export([str(dest), "--force"]) == 0
-
-
-def test_panic_wipes_the_data_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The BL-7 criterion: panic leaves nothing behind."""
-    data = tmp_path / "data"
-    data.mkdir()
-    (data / "graph.json").write_text("{}")
-    (data / "actions.jsonl").write_text("{}")
-    (data / "idle_cache.db").write_text("x")
-    (data / "quarantine").mkdir()
-    (data / "quarantine" / "held.bak").write_text("x")
-
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, data / "graph.json")))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-
-    assert offline.panic(["--yes"]) == 0
-    assert data.exists()  # the directory survives; its contents do not
-    assert list(data.iterdir()) == []
-
-
-def test_panic_without_the_typed_word_touches_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data = tmp_path / "data"
-    data.mkdir()
-    (data / "graph.json").write_text("precious")
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path, data / "graph.json")))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-    monkeypatch.setattr("builtins.input", lambda _prompt="": "yes")
-
-    assert offline.panic([]) == 1
-    assert (data / "graph.json").read_text("utf-8") == "precious"
-
-
-def test_panic_refuses_when_the_config_will_not_load(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Without a config there is no way to know which directory to destroy."""
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(tmp_path / "nope.toml"))
-    monkeypatch.chdir(tmp_path)
-    assert offline.panic(["--yes"]) == 1
-
-
-def test_the_offline_verbs_are_dispatched_before_the_socket_client() -> None:
-    for verb in ("doctor", "export", "panic", "repair-graph"):
-        assert verb in offline.OFFLINE_VERBS
-    assert offline.dispatch([]) is None
-    assert offline.dispatch(["health"]) is None
-
-
-def test_the_cli_routes_offline_verbs_without_a_socket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """End to end through `main()`: no daemon, no socket, still a report."""
-    from neuropaca.interface import cli
-
-    monkeypatch.setenv("NEUROPACA_CONFIG", str(_write_config(tmp_path)))
-    monkeypatch.setenv("NEUROPACA_SOCKET", str(tmp_path / "absent.sock"))
-    monkeypatch.chdir(tmp_path)
-
-    # Exit code is 0 or 1 depending on what doctor finds; the point is that it
-    # ran offline instead of failing with "cannot reach the daemon".
-    assert cli.main(["doctor"]) in (0, 1)
-
-
 # --------------------------------------------------------- BL-1/BL-4 · packaging
 
 
 def test_the_systemd_unit_grants_write_access_to_the_runtime_directory() -> None:
-    """BL-1, as a regression: without `ReadWritePaths=%t` the L9 socket cannot be
-    bound under `ProtectSystem=strict` and every CLI verb dies — including
-    `confirm`, the only approval path for a dangerous action (D-14c)."""
+    """BL-1, as a regression: without `ReadWritePaths=__REPO__/data` the daemon
+    cannot write its own graph/episode-store/quarantine/action-log under
+    `ProtectSystem=strict`. (The unit used to also grant `%t`
+    ($XDG_RUNTIME_DIR) for the now-removed L9 socket; that grant was removed
+    along with the socket — nothing in the daemon touches it any more.)"""
     unit = Path(__file__).resolve().parents[1] / "scripts" / "systemd" / "neuropacad.service"
     text = unit.read_text("utf-8")
-    assert "ReadWritePaths=%t" in text
     assert "ProtectSystem=strict" in text
     assert "ReadWritePaths=__REPO__/data" in text
+    assert "ReadWritePaths=%t" not in text
 
 
 def test_logrotate_targets_the_configured_log_paths() -> None:

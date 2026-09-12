@@ -4828,7 +4828,426 @@ A1's own exit section rather than silently missing.
   own `systemd-tmpfiles-clean.timer` (it last ran hours before one of the
   disappearances). Worked around each time with a plain restart; the actual
   cause is still unknown and deserves its own investigation before a 7-day
-  unattended soak is trusted around it again.
+  unattended soak is trusted around it again. **Update, §21.19**: a plausible
+  mechanism for exactly this symptom was reproduced live during the A1/A2
+  audit — an unisolated test binding to the same default socket path.
+  Not confirmed as the cause of these specific three occurrences, but the
+  class of bug is no longer a mystery.
+
+### 21.18 A2 · Curiosity and the mirror
+
+| | |
+| --- | --- |
+| **Branch** | `a2-curiosity-and-the-mirror` |
+| **Outcome** | Full suite (`-m ""`): 985 → **1018 collected, 1015 passed**, 3 pre-existing skips. `EventType` +2 (`MIRROR_REQUEST`/`_REPORT`, 27 → 29). `ruff`/`mypy` clean. Not yet live-verified against the running daemon (episodes are disabled there — see "What is left"). |
+
+**In plain words.** Two things landed. Idle thoughts are now genuinely
+curious — the DMN mostly wonders about the pair of things it has the least
+evidence for, not the pair it already knows cold. And there is a "mirror":
+ask `neuropaca mirror` (or wait for the first idle spell after 18:00) and, if
+today was actually unusual, it can say so in a sentence or two, grounded in
+real episode-log evidence.
+
+**Built — curiosity (§3.7).** `core/curiosity.py`: `information_gain(s, f)`
+is the closed-form Beta(1+s,1+f) entropy reduction from one more observation
+— `beta_entropy` via `math.lgamma` plus a hand-written digamma (the standard
+asymptotic-series recurrence; no scipy dependency, matching the Forward Push
+PPR precedent). `association_evidence` walks the episode log once,
+chronologically, to get real `(s, f)` counts for a pair — symmetric by
+construction, and deliberately not "smart" about the very first occurrence of
+either subject in the whole log (nothing preceded it, so it is unavoidably
+counted as a solo occurrence; this cannot be fixed without inventing evidence
+that was never observed). `top_information_gain_pairs` ranks the candidate
+pool's C(k,2) pairs, highest-IG first. `idle/dmn.py`'s `_seed_nodes` becomes
+`_choose_seeds`: with probability `1 - dmn_curiosity_epsilon` it seeds on the
+least-settled pair's nodes; otherwise — and always as the fallback for no
+store, too small a pool, no evidence, or a read that raised — the existing
+V-4 score-weighted sample. `DefaultModeNetwork` gained an optional
+`episode_store` constructor argument; wiring it through required widening the
+`ModuleBuilder` protocol (`orchestration/orchestrator.py`) to pass the
+already-constructed `EpisodeStore | None` as a fifth argument to
+`build_modules()` — the only production call site (`daemon.py`) needed no
+change, and only one test constructs `build_modules` directly.
+
+**Built — the mirror (§3.8).** `core/mirror.py`, pure functions only:
+`bucket_seconds` turns `focus_span` episodes into `(subject, hour)` seconds,
+clipped to a window and bucketed by *start* hour (a span is not split across
+an hour boundary — the same simplification a calendar already makes);
+`daily_distribution` normalises today's buckets into `Q`;
+`baseline_distribution` builds `P` as an exponentially-weighted average of
+the trailing `mirror_baseline_days`, same-weekday days up-weighted;
+`smooth` applies Dirichlet(+1) over the union of buckets either distribution
+touches (so `kl_divergence`'s division by `P_i` never sees a zero);
+`top_contributors` ranks buckets by `|Q_i log(Q_i/P_i)|` — verified to sum
+exactly to the full KL divergence; `missing_contributors` separately surfaces
+a usual bucket with *no* activity today (`Q_i = 0` makes its own KL term
+vanish by convention, so it can never appear in `top_contributors` — this is
+the only way §3.8's "you didn't open Obsidian today" example can be produced
+at all). `compute_mirror` composes all of it and refuses to fire with no
+baseline history at all (day one of the daemon) — silence, never a spurious
+"surprise" from comparing today against nothing. `interface/mirror_composer.py`'s
+`MirrorComposer(BaseModule)` mirrors `BriefingComposer`'s shape exactly: the
+day's first `IDLE_DETECTED` at or after `mirror_evening_hour` runs the
+pipeline once (tracked by calendar date, not a timer); `MIRROR_REQUEST` /
+`MIRROR_REPORT` gives L9 (which cannot import this module, rules.md §0) the
+on-demand path, ignoring the evening-hour gate entirely. `render_mirror`
+resolves every sentence's subject through `GraphMemory.display_name` — the
+same grounding discipline as the briefing, never a raw subject id. Wired into
+`InterfaceLayer` as a sixth op (`mirror`), the CLI (`neuropaca mirror`), and
+the REPL's known-verb set and help table, all as near-identical siblings of
+`briefing`'s existing wiring — including the same client/server socket-
+timeout margin bug class documented in S0 (`_MIRROR_TIMEOUT` set to 6.0 s,
+strictly under the test harness's fixed 8 s client read timeout, not equal to
+it).
+
+**Rejected.** A half-life or `tau` chosen by replaying two real weeks of
+episode-log history, as the phase's own spike literally calls for — there is
+no such history to replay yet (episodes have been enabled on the live daemon
+for hours, not weeks); `mirror_baseline_half_life_days = 7.0` and
+`mirror_kl_threshold = 0.5` are reasoned defaults, documented in
+`core/config.py` as the first things to recalibrate once real days
+accumulate, not as validated numbers. Splitting a focus span across an hour
+boundary in `bucket_seconds` — the extra bookkeeping bought nothing a
+"bucketed by start hour" simplification does not already deliver at the
+granularity a mirror sentence actually needs.
+
+**What is left**
+- Both exit criteria need real elapsed time this session cannot produce:
+  the mirror's false-alarm rate in dogfood, and the H4 IG-vs-score-sampled
+  user rating protocol. Neither is assumed met.
+- Not yet live-verified against the running daemon — the live
+  `neuropaca.b13.toml` config does not set `episodes_enabled = true`, so S0's
+  whole subsystem (and therefore both curiosity and the mirror) has never
+  run against real data. Turning it on is the user's call, same as every
+  prior S0/A-series config flip this session.
+- `mirror_baseline_half_life_days` and `mirror_kl_threshold` are placeholders
+  by design (see Rejected) — recalibrate once 14+ real days of episodes
+  exist.
+
+---
+
+### 21.19 A1/A2 · bug audit and cleanup
+
+| | |
+| --- | --- |
+| **Branch** | `a2-curiosity-and-the-mirror` (continued) |
+| **Outcome** | Full suite: 1015 → **1021 passed**, 3 pre-existing skips, `ruff`/`mypy` clean. No exit criteria changed — every remaining gap for A1 and A2 is real elapsed time (dogfood, the 7-day soak), not a defect. |
+
+**In plain words.** A deliberate pass back over A1 and A2 looking for actual
+bugs, stale leftovers, and untested wiring, at the user's request — not new
+features. Six real issues found and fixed; one near-miss caught and
+contained before it could do damage; the rest of the pass came back clean.
+
+**Found and fixed**
+
+1. **A real echo-chamber regression in curiosity itself.** `_curious_seeds`
+   ranked candidate pairs by information gain but never consulted the DMN's
+   own `_recent_seeds` refractory memory — with no differentiating evidence
+   (cold start, or any stretch where the top pair's IG simply does not move
+   yet), a stable sort picks the *same* pair every single cycle, forever.
+   That is V-4's own bug (VISION.md, the reason `_recent_seeds` exists at
+   all), reintroduced through the one path that never checked it. Fixed by
+   preferring ranked pairs not entirely inside `_recent_seeds`, falling back
+   to the raw ranking only when every candidate is. Caught by writing a
+   dedicated regression test and confirming it fails without the fix
+   (`test_curiosity_does_not_echo_chamber_when_ig_is_tied`,
+   `tests/test_a2_curiosity_dmn.py`).
+2. **The test doubles that "proved" curiosity worked were backwards.**
+   `_AlwaysCurious`/`_NeverCurious` in `tests/test_a2_curiosity_dmn.py` had
+   `random()` return `0.0`/`1.0` respectively — exactly inverted against the
+   production check `rng.random() >= dmn_curiosity_epsilon`, which is *true*
+   (curious) for a *large* draw, not a small one. Every test using
+   `_AlwaysCurious()` with the real default `epsilon=0.2` had actually been
+   exercising the V-4 *fallback* path the whole time, and passed anyway by
+   coincidence (a broken-RNG V-4 sample degenerates to an alphabetical id
+   sort, which happened to match the curiosity test's expected answer). Fixed
+   the two classes; every affected test re-verified to still pass, now for
+   the reason its name and docstring actually claim.
+3. **`MirrorComposer` could lose an entire day to one transient error.**
+   `on_idle_detected` set `_last_mirror_date = now.date()` *before* calling
+   `build_mirror_moment` — a single `EpisodeStore` read failure at the day's
+   first eligible idle spell permanently skipped the mirror until tomorrow,
+   since the date-guard would then reject every later idle spell the same
+   day. Fixed by advancing the date only after the pipeline actually returns,
+   so a transient failure retries on the next idle spell instead.
+4. **A copy-paste leftover in the tray's width hint.**
+   `scripts/neuropaca_tray.py`'s `AppIndicator3.set_label` call hardcoded its
+   sizing-guide argument to `"Focused"` regardless of the tray's actual
+   state — a leftover from `soak_tray.py`'s own `"100.0%"` guide, copied
+   without adapting it to this tray's label vocabulary. Replaced with a named
+   constant sized to the tray's own longest real label ("Thinking").
+5. **A1's own deferred menu item, never followed up.** A1's exit notes said
+   the "what did you learn today" menu item was deferred because its backend
+   (the mirror) did not exist yet — A2 built that backend and nobody had gone
+   back to add the item. Added: "What changed today" in the tray menu, an
+   on-demand `mirror` request rendered in a `Gtk.MessageDialog`; the response
+   formatting (`mirror_summary_text`) is a pure function, unit tested.
+6. **A rules.md §7 violation, and a stale docstring, inside A2's own new
+   code.** `curiosity.py` compared `r.kind == "focus_span"` — a string
+   literal doing an enum's job (rules.md §7 exists exactly for this) — fixed
+   to `str(EpisodeKind.FOCUS_SPAN)`, matching `mirror.py`'s own convention in
+   the same phase. `episodic_writer.py`'s docstring still said nothing
+   publishes `MOMENT_FEEDBACK`; A1's tray has been publishing it since A1
+   itself (§21.17) — the docstring was simply never updated when that
+   happened. `dmn_curiosity_top_pairs`'s config comment claimed it "matches
+   `dmn_top_k`" when the two defaults are 8 and 5 — inaccurate on top of
+   being incomplete once fix 1 above gave the gap between them a real job
+   (room for the recency fallback to find an alternative pair).
+7. **Fake provenance markers, both new and inherited.** This session's own
+   A2 files (`curiosity.py`, `mirror.py`, `mirror_composer.py`, their tests)
+   had hand-written `# gen-ref: a2-...` placeholders instead of the real
+   `scripts/_provenance.py` hash — harmless until the real stamper runs,
+   at which point its "already stamped, skip" check would have left them
+   permanently unstamped. Found the same defect already merged into `main`
+   from A1 (`presence.py`, `neuropaca_tray.py`, and both their test files) —
+   stripped all of them so the next real provenance run stamps every one
+   correctly. (Three more from B17/B18 exist too; out of this audit's A1/A2
+   scope, left alone.)
+
+**A near-miss, caught before it did lasting damage.** Writing the missing
+integration test for §21.18's `episodes_enabled=True` wiring path (below)
+initially built a `Config` with no `interface_socket_path` override. Every
+other test in the file constructs a bare `NeuroPACAOrchestrator(config)` with
+no `module_builder`, so none of them had ever actually started a real
+`InterfaceLayer` — this was the first one to use the production
+`build_modules`, and `InterfaceLayer.start()`/`stop()` both unconditionally
+unlink whatever socket file is already at the target path before binding
+their own. With no override, that path is `default_socket_path()` — the same
+`$XDG_RUNTIME_DIR/neuropaca.sock` the real, live `neuropacad.service` was
+using at the time. Running the test once unlinked the live daemon's socket
+out from under it, replaced it with the test's own for the test's lifetime,
+then unlinked it again on teardown — leaving the real daemon alive but
+unreachable, and the running 7-day soak's per-minute `neuropaca health`
+measurements failing, until `neuropacad.service` was restarted (with the
+user's explicit go-ahead) to rebind it. Fixed the test itself (an explicit
+`tmp_path`-scoped `interface_socket_path`, the same pattern `test_interface.py`
+and every other socket-binding test in the suite already uses) and confirmed
+no other test in the repository skips that override while actually calling
+`.start()` on the resulting modules. **This is very plausibly the actual
+explanation for the "recurring, unexplained" socket disappearance flagged in
+§21.17 and earlier** — some process on this machine binding to the default
+socket path without isolating it, whether a test, a script, or a stray
+second daemon instance, would produce exactly the observed symptom (the file
+gone, the original process still running, nothing logged, because the
+original process never touches the socket path again after its own `start()`).
+Not proven for the *earlier* occurrences specifically — no log evidence ties
+them to a specific cause — but the mechanism is now demonstrated, reproduced,
+and understood, which it was not before this session.
+
+**Closed a real integration-test gap, in the process.** No test anywhere in
+the suite had ever exercised `episodes_enabled=True` through the real
+`NeuroPACAOrchestrator.initialize()` with the production `build_modules` —
+every S0/A1/A2 conditional-module addition (`EpisodeStore` construction, the
+`ModuleBuilder` protocol widened to a fifth argument, `EpisodicWriter` /
+`BriefingComposer` / `MirrorComposer` all appended alongside it) had only
+ever been unit-tested in isolation. Added
+`test_episodes_enabled_wires_episode_store_and_its_three_modules`
+(`tests/test_orchestrator.py`) — it passed on the first run after the socket
+fix above, meaning the wiring itself was correct; only its one test was
+missing.
+
+**Rejected.** Optimising `top_information_gain_pairs`'s O(pairs × rows)
+scan — measured at 120 ms for a realistic 14-day, 24-candidate load
+(RESEARCH_DOSSIER.md's own §21.15 volume projection), comfortably inside the
+60 s DMN cycle budget and not a violation of any stated latency contract, so
+this stays a noted opportunity, not a defect. Threading the tray's blocking
+socket calls (`request()`, called every 5 s from the GTK main loop, and on
+every click) — a bounded, worst-case 2 s UI freeze if the daemon stalls,
+inherited unchanged from `soak_tray.py`'s own established pattern and not
+something this tray's exit criteria ("5 s poll invisible in CPU") actually
+speaks to; adding real thread-safety around a GTK object for a rare, bounded
+risk was judged not worth the complexity for an optional, non-critical tray.
+
+**What is left.** Nothing code-shaped. Both phases' exit criteria that were
+already open stay open for the same reason as before — they need real
+elapsed time (dogfood, the 7-day soak) no amount of further code auditing
+can substitute for.
+
+---
+
+### 21.20 The terminal accessibility feature — removed
+
+**User decision, 2026-09-12.** No ongoing terminal/text control surface for
+NeuroPACA; a future voice interface is the planned replacement, not built
+yet. Scope, given directly: everything reachable only through the CLI/socket
+(the read-only project guide, `doctor`/`export`/`panic`/`repair-graph`, the
+tray), including the L9 socket module itself.
+
+**Removed, wholesale.** `interface/{layer,cli,repl,describe,offline,message,
+desktop}.py`; `core/presence.py` (and the `PresenceState` enum — used only by
+the deleted `layer.py`'s presence payload); `scripts/neuropaca_tray.py` +
+`scripts/systemd/neuropaca-tray.service` (A1's tray — its `presence`/`pause`/
+`feedback`/`mirror` ops had nothing left to talk to); three standalone
+validation scripts that drove the whole daemon over the socket/`$!`/`$$`/
+`confirm` protocol and can no longer run at all
+(`validate_b5_latency.py`, `validate_b5_privacy.py`,
+`validate_b7_confirmation.py`); the `neuropaca` console-script entry point
+and the now-unused `rich` dependency (`pyproject.toml`); the corresponding
+test files (`test_interface.py`, `test_describe.py`, `test_neuropaca_tray.py`,
+`test_v12_desktop_delivery.py`, `test_presence.py`, `test_repair_graph.py`,
+`test_v11_resilience.py` — the last two were entirely about `offline.py`'s
+`doctor`; the underlying features they also touched, `core/graph_rebuild.py`
+and the Wayland pump retry, keep their own separate test coverage untouched).
+`conftest.py`'s autouse `_no_real_desktop` fixture went with `desktop.py` —
+nothing left to guard.
+
+**Trimmed, not deleted.** `test_idle.py` lost its "L9 surfacing" section (an
+`InterfaceLayer` fixture testing surface-once/restart behaviour that belonged
+to the deleted module, not to the DMN this file is otherwise about).
+`test_b9_hardening.py` lost its BL-7 offline-verb block (doctor/export/panic/
+CLI-dispatch) but kept BL-1/2/3/4 (schema versioning, boot recovery, the log
+sink, the systemd unit's write-access grant) — those are the daemon's own
+resilience, not the terminal's. `test_sensing.py`/`test_core_foundation.py`/
+`test_orchestrator.py` lost the module-name-list assertions and config
+parametrize cases that named the removed `"interface"` module or the removed
+`explain_temperature`/`interface_socket_path` fields.
+
+**Deliberately kept, dormant.** Not everything reachable only via L9 was
+"terminal accessibility" — some of it is the general "ask without importing"
+pattern (rules.md §0) any future interface, voice included, would reuse:
+
+- The event-bus request/report bridges (`BRIEFING_REQUEST`/`_REPORT`,
+  `MIRROR_REQUEST`/`_REPORT`, `SYSTEM_HEALTH_REQUEST`/`_REPORT`,
+  `DMN_CYCLE_STARTED`/`_ENDED`) and their producer-side code
+  (`BriefingComposer`, `MirrorComposer`, the orchestrator's health bridge,
+  `idle/dmn.py`) — all untouched. Only the consumer that lived in `layer.py`
+  is gone; publishing into the void is harmless.
+- `USER_MESSAGE` and the `$!`/`$$` confirmation-gated command relay in
+  `action/executor.py` (D-14) — L7's own architecture, dormant with no
+  current publisher, not rewritten.
+- The `ACTION_CONFIRMATION_REQUEST`/`_RESPONSE` handshake — dangerous
+  actions still cannot run without it; there is simply no interface
+  answering it right now, so silence past the timeout is always a refusal
+  (unchanged behaviour, just permanently exercised).
+- `BitNetRuntime`'s dual-model routing and `interactive_model_path` /
+  `interactive_model_context_tokens` (D-12) — the interactive backend has no
+  current caller (its only one, `--explain`, is gone) but the plumbing stays
+  for whatever phrasing model a voice interface will want.
+- `MOMENT_FEEDBACK` and `EpisodicWriter`'s subscription to it — a general
+  "human reacted to a moment" concept, not terminal-specific, even though its
+  only current publisher (the tray's Keep/Dismiss buttons) is gone too.
+
+`explain_temperature` was the one config field removed outright rather than
+left dormant — it was solely `tell --explain`'s free-decode temperature, with
+no plausible reuse.
+
+**A live consequence, caught and fixed in the same pass: the running 7-day
+soak's own measurement broke.** `scripts/soak_probe.py` fetched
+`neuropaca health` over the L9 socket for its per-minute sample (switches/hour,
+reconnects, pump-errors — the exact numbers the soak's own pass/fail gate is
+built on); `scripts/soak_gate.sh`'s check 4 called the `neuropaca` binary
+directly to prove the socket was reachable before a soak could start. Neither
+depends on any human-facing control — both are automated internal
+measurement — so removing them wholesale would have quietly broken the
+soak's own validity exactly the way B7/B15 already taught this project to
+distrust (RESEARCH_DOSSIER.md §21.3, §21.4): a soak recording nothing and a
+soak recording a healthy system look identical from outside.
+
+Fix: `NeuroPACAOrchestrator` gained a small periodic task
+(`_health_dump_loop`) that writes its own `health_check()` as JSON to
+`config.health_dump_path` every `health_dump_interval_seconds` (default 30 s,
+atomic — temp file + rename), on by default only when the path is set
+(empty = disabled, the same convention as `raw_metrics_csv_path`).
+`soak_probe.py` reads that file instead of opening a socket; `soak_gate.sh`'s
+check 4 now checks the file exists and is fresh (≤ 60 s old) and reports
+`ok`, instead of connecting to anything. Both scripts' output shape is
+unchanged (same `SystemHealth`/`ModuleHealth` fields), so
+`soak_state.py`/`soak_dashboard.py` needed no changes beyond one stale UI
+string. `health_dump_path` was added to the three live-adjacent config files
+(`neuropaca.toml`, `neuropaca.soak.toml`, `neuropaca.b13.toml` — the one the
+running daemon actually reads via its machine-local systemd override).
+
+The currently-running daemon process was unaffected throughout (already
+loaded the old `layer.py` into memory before any file was deleted, so its
+socket kept working for the length of this session) — the fix landed before
+the soak's *next* restart, not as an emergency patch to an already-broken
+one, but the gap existed and is worth naming: removing a human-facing
+interface can break machine-facing infrastructure that happened to reuse the
+same channel, and that is exactly the class of thing that showed up here.
+
+**A near-miss, caught before it did any lasting harm.** While auditing every
+tracked config file for now-invalid fields, `neuropaca.control.toml` (the old
+B7 positive-control throwaway-daemon config) turned out to set
+`interface_socket_path` — a field that no longer exists on `Config`. Since
+`Config.from_file` is `cls(**raw)`, loading this file today would have raised
+`TypeError` immediately, not degraded gracefully. Fixed (the field removed,
+the header comment updated) before it could bite whoever next reaches for
+that old harness. The lesson generalises: removing a `Config` field is not
+just a code change, it is a change to every `.toml` file in the repo — this
+session found one that would have broken and no others by checking every
+tracked file with `Config(**tomllib.load(...))` directly rather than trusting
+a grep for the field's own name.
+
+**Rejected.** Rewriting `Architecture.md`, `phases.md`, and `memory.md`'s
+historical entries to remove their L9/CLI content — these are dated records
+of what was actually built and decided at the time (`memory.md`'s own
+protocol: "append to the completed log; never rewrite history"), not live
+specs; rewriting them would be revisionist, not accurate. Instead,
+`VISION_PHASES.md` (the one document future phases actually read) got a
+single prominent callout at the top explaining the removal and how to read
+every earlier "L9 op" mention in a phase already built (history) versus one
+not yet built (read as "whatever request/report bridge the eventual voice
+interface uses"). `README.md` was rewritten more thoroughly since it is the
+live onboarding doc, not a historical log. Fixing `scripts/b7_positive_control.py`'s
+now-partially-dead socket liveness check (it already falls back to `pgrep`,
+degrading gracefully) — superseded tooling from before B9's soak-harness
+rebuild, not worth the effort for a redundant OR-branch that already fails
+safe.
+
+**What is left.** Nothing the daemon needs. The user's own next step, when
+ready: design and build the voice interface itself — the event-bus bridges
+and dual-model routing that were deliberately kept dormant are exactly the
+seams it is expected to attach to.
+
+---
+
+### 21.21 The presence tray — rebuilt, read-only
+
+**User decision, 2026-09-12 (same day, after §21.20).** The user asked for
+the A1 tray back — it had never actually been visible (never installed as a
+service, per A1's own design note), and today's removal deleted it outright.
+Wanted going forward: two tray icons side by side — the existing soak
+diagnostic (`soak_tray.py`: graph button, basic info, refresh) and this one,
+for presence.
+
+**Built.** `core/presence.py` and the `PresenceState` enum, restored
+verbatim from git history — both were always pure (no `interface/` import),
+so nothing about them needed to change. New: `core/presence_tracker.py`'s
+`PresenceTracker(BaseModule)` — the same five-input state machine
+`interface/layer.py` used to compute, now a small always-on subscriber with
+no socket and no write-back, reporting through the normal `health()` path
+so its state lands in `orchestration/orchestrator.py`'s periodic
+health-dump file (`config.health_dump_path`) exactly like every other
+module's counters (`detail = "state=thinking since=<iso> errors=0"`, the
+same `key=value` convention `soak_probe.py`'s regex-based parsing already
+uses elsewhere). Added to `build_modules()`'s tail, where L9 used to sit.
+`scripts/neuropaca_tray.py` rewritten around this: `read_health()` replaces
+the socket `request()`, `is_stale()` catches a daemon that died without
+cleaning up (mtime older than a few missed dump intervals), and
+`compute_tray_view()` renders exactly the same five-state icon set as
+before. The systemd unit's install-and-enable step (`sed` + `enable --now`)
+was actually run this time — A1's original "enabling it is the user's own
+call" note no longer applies; it was called.
+
+**Rejected — kept the socket-only features cut.** `pause`, `feedback`
+(keep/dismiss on the last moment), and the on-demand `mirror` menu item all
+required *writing* to the daemon, not just reading its state — there is no
+channel left to write through, and building one back in would be rebuilding
+exactly the control surface the user asked removed. Confirmed explicitly
+before rebuilding, not assumed.
+
+**Tests.** `tests/test_presence_tracker.py` (new) covers the state machine
+end to end through the module's own `health()` — idle/focused/thinking
+transitions, the `key=value` detail format, stop-then-ignore, idempotent
+stop. `tests/test_neuropaca_tray.py` rewritten around `read_health`/
+`is_stale`/`compute_tray_view` (file-based, no socket fixture needed).
+`tests/test_sensing.py`'s `build_modules()` module-order assertions gained
+`"presence"` at the tail.
+
+**What is left.** Live verification — running the rebuilt tray against the
+real daemon and confirming both tray icons actually appear side by side —
+is the same kind of thing every A1 dossier entry already flags as needing
+real desktop time, not a code review.
 
 ---
 

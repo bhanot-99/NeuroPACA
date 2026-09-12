@@ -43,7 +43,9 @@ from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
+from neuropaca.core.curiosity import top_information_gain_pairs
 from neuropaca.core.enums import EventType, NodeType
+from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
@@ -84,10 +86,12 @@ class DefaultModeNetwork(BaseModule):
         *,
         clock: Clock | None = None,
         rng: random.Random | None = None,
+        episode_store: EpisodeStore | None = None,
     ) -> None:
         super().__init__("idle", event_bus, config)
         self._graph = graph_memory
         self._runtime = bitnet_runtime
+        self._episodes = episode_store
         self._clock: Clock = clock or SystemClock()
         self._idle_task: asyncio.Task[None] | None = None
         self._cycles = 0
@@ -245,7 +249,7 @@ class DefaultModeNetwork(BaseModule):
         budget = self.config.dmn_max_inferences_per_cycle
         if budget <= 0 or self._runtime.backend_unavailable:
             return 0
-        seeds = self._seed_nodes()
+        seeds = await self._choose_seeds()
         if len(seeds) < 2:
             return 0  # nothing to relate — a follow-up question needs two nodes
         if not self._runtime.is_loaded and not await self._runtime.load_model_async():
@@ -263,6 +267,63 @@ class DefaultModeNetwork(BaseModule):
             if await self._one_thought(seeds, rotation) is not None:
                 made += 1
         return made
+
+    async def _choose_seeds(self) -> list[Node]:
+        """A2 · the seed choice is now a mix (VISION_PHASES.md §3.7): with
+        probability `1 - dmn_curiosity_epsilon` seed on the candidate pair the
+        episode log knows the least about (highest expected information gain
+        on one more observation); otherwise — and always as the fallback when
+        there is no store, no evidence yet, or a read fails — the V-4
+        score-weighted sample. Never blocks imagination on curiosity: this is
+        optional work (rules.md §4)."""
+        if self._episodes is not None and self._rng.random() >= self.config.dmn_curiosity_epsilon:
+            curious = await self._curious_seeds()
+            if curious is not None:
+                return curious
+        return self._seed_nodes()
+
+    async def _curious_seeds(self) -> list[Node] | None:
+        """The nodes of the highest-IG pairs among the V-4 candidate pool,
+        most-uncertain first, deduplicated, up to `dmn_top_k` — or `None` to
+        fall back (too small a pool, no evidence in the lookback window, or
+        the store read raised)."""
+        pool = self._top_nodes(self.config.dmn_candidate_pool_k)
+        if len(pool) < 2:
+            return None
+        by_id = {node.id: node for node in pool}
+        assert self._episodes is not None
+        try:
+            now = self._clock.now()
+            lookback = timedelta(days=self.config.dmn_curiosity_lookback_days)
+            rows = await self._episodes.between(now - lookback, now)
+        except Exception:
+            _log.exception("DMN curiosity: episode read failed, falling back to V-4 sampling")
+            return None
+        ranked = top_information_gain_pairs(
+            rows,
+            list(by_id),
+            window_seconds=self.config.coactivation_window_seconds,
+            top_n=self.config.dmn_curiosity_top_pairs,
+        )
+        # V-4's own fix, reapplied here: with no history at all — or a wide
+        # tie in IG, common until real evidence differentiates pairs — every
+        # cycle's ranking would otherwise pick the exact same pair from the
+        # exact same stable sort, forever. Prefer pairs not entirely composed
+        # of nodes this cycle's V-4 refractory memory already flagged; only
+        # settle for one wholly inside it when nothing else is on offer.
+        recent = set(self._recent_seeds)
+        fresh = [(u, v, ig) for u, v, ig in ranked if u not in recent or v not in recent]
+        seeds: list[Node] = []
+        seen: set[str] = set()
+        for u, v, _ig in fresh or ranked:
+            for node_id in (u, v):
+                if node_id in seen:
+                    continue
+                seen.add(node_id)
+                seeds.append(by_id[node_id])
+                if len(seeds) >= self.config.dmn_top_k:
+                    return seeds
+        return seeds if len(seeds) >= 2 else None
 
     def _seed_nodes(self) -> list[Node]:
         """The nodes offered to the model this cycle (V-4).
