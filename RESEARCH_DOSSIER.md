@@ -4828,7 +4828,11 @@ A1's own exit section rather than silently missing.
   own `systemd-tmpfiles-clean.timer` (it last ran hours before one of the
   disappearances). Worked around each time with a plain restart; the actual
   cause is still unknown and deserves its own investigation before a 7-day
-  unattended soak is trusted around it again.
+  unattended soak is trusted around it again. **Update, §21.19**: a plausible
+  mechanism for exactly this symptom was reproduced live during the A1/A2
+  audit — an unisolated test binding to the same default socket path.
+  Not confirmed as the cause of these specific three occurrences, but the
+  class of bug is no longer a mystery.
 
 ### 21.18 A2 · Curiosity and the mirror
 
@@ -4919,6 +4923,145 @@ granularity a mirror sentence actually needs.
 - `mirror_baseline_half_life_days` and `mirror_kl_threshold` are placeholders
   by design (see Rejected) — recalibrate once 14+ real days of episodes
   exist.
+
+---
+
+### 21.19 A1/A2 · bug audit and cleanup
+
+| | |
+| --- | --- |
+| **Branch** | `a2-curiosity-and-the-mirror` (continued) |
+| **Outcome** | Full suite: 1015 → **1021 passed**, 3 pre-existing skips, `ruff`/`mypy` clean. No exit criteria changed — every remaining gap for A1 and A2 is real elapsed time (dogfood, the 7-day soak), not a defect. |
+
+**In plain words.** A deliberate pass back over A1 and A2 looking for actual
+bugs, stale leftovers, and untested wiring, at the user's request — not new
+features. Six real issues found and fixed; one near-miss caught and
+contained before it could do damage; the rest of the pass came back clean.
+
+**Found and fixed**
+
+1. **A real echo-chamber regression in curiosity itself.** `_curious_seeds`
+   ranked candidate pairs by information gain but never consulted the DMN's
+   own `_recent_seeds` refractory memory — with no differentiating evidence
+   (cold start, or any stretch where the top pair's IG simply does not move
+   yet), a stable sort picks the *same* pair every single cycle, forever.
+   That is V-4's own bug (VISION.md, the reason `_recent_seeds` exists at
+   all), reintroduced through the one path that never checked it. Fixed by
+   preferring ranked pairs not entirely inside `_recent_seeds`, falling back
+   to the raw ranking only when every candidate is. Caught by writing a
+   dedicated regression test and confirming it fails without the fix
+   (`test_curiosity_does_not_echo_chamber_when_ig_is_tied`,
+   `tests/test_a2_curiosity_dmn.py`).
+2. **The test doubles that "proved" curiosity worked were backwards.**
+   `_AlwaysCurious`/`_NeverCurious` in `tests/test_a2_curiosity_dmn.py` had
+   `random()` return `0.0`/`1.0` respectively — exactly inverted against the
+   production check `rng.random() >= dmn_curiosity_epsilon`, which is *true*
+   (curious) for a *large* draw, not a small one. Every test using
+   `_AlwaysCurious()` with the real default `epsilon=0.2` had actually been
+   exercising the V-4 *fallback* path the whole time, and passed anyway by
+   coincidence (a broken-RNG V-4 sample degenerates to an alphabetical id
+   sort, which happened to match the curiosity test's expected answer). Fixed
+   the two classes; every affected test re-verified to still pass, now for
+   the reason its name and docstring actually claim.
+3. **`MirrorComposer` could lose an entire day to one transient error.**
+   `on_idle_detected` set `_last_mirror_date = now.date()` *before* calling
+   `build_mirror_moment` — a single `EpisodeStore` read failure at the day's
+   first eligible idle spell permanently skipped the mirror until tomorrow,
+   since the date-guard would then reject every later idle spell the same
+   day. Fixed by advancing the date only after the pipeline actually returns,
+   so a transient failure retries on the next idle spell instead.
+4. **A copy-paste leftover in the tray's width hint.**
+   `scripts/neuropaca_tray.py`'s `AppIndicator3.set_label` call hardcoded its
+   sizing-guide argument to `"Focused"` regardless of the tray's actual
+   state — a leftover from `soak_tray.py`'s own `"100.0%"` guide, copied
+   without adapting it to this tray's label vocabulary. Replaced with a named
+   constant sized to the tray's own longest real label ("Thinking").
+5. **A1's own deferred menu item, never followed up.** A1's exit notes said
+   the "what did you learn today" menu item was deferred because its backend
+   (the mirror) did not exist yet — A2 built that backend and nobody had gone
+   back to add the item. Added: "What changed today" in the tray menu, an
+   on-demand `mirror` request rendered in a `Gtk.MessageDialog`; the response
+   formatting (`mirror_summary_text`) is a pure function, unit tested.
+6. **A rules.md §7 violation, and a stale docstring, inside A2's own new
+   code.** `curiosity.py` compared `r.kind == "focus_span"` — a string
+   literal doing an enum's job (rules.md §7 exists exactly for this) — fixed
+   to `str(EpisodeKind.FOCUS_SPAN)`, matching `mirror.py`'s own convention in
+   the same phase. `episodic_writer.py`'s docstring still said nothing
+   publishes `MOMENT_FEEDBACK`; A1's tray has been publishing it since A1
+   itself (§21.17) — the docstring was simply never updated when that
+   happened. `dmn_curiosity_top_pairs`'s config comment claimed it "matches
+   `dmn_top_k`" when the two defaults are 8 and 5 — inaccurate on top of
+   being incomplete once fix 1 above gave the gap between them a real job
+   (room for the recency fallback to find an alternative pair).
+7. **Fake provenance markers, both new and inherited.** This session's own
+   A2 files (`curiosity.py`, `mirror.py`, `mirror_composer.py`, their tests)
+   had hand-written `# gen-ref: a2-...` placeholders instead of the real
+   `scripts/_provenance.py` hash — harmless until the real stamper runs,
+   at which point its "already stamped, skip" check would have left them
+   permanently unstamped. Found the same defect already merged into `main`
+   from A1 (`presence.py`, `neuropaca_tray.py`, and both their test files) —
+   stripped all of them so the next real provenance run stamps every one
+   correctly. (Three more from B17/B18 exist too; out of this audit's A1/A2
+   scope, left alone.)
+
+**A near-miss, caught before it did lasting damage.** Writing the missing
+integration test for §21.18's `episodes_enabled=True` wiring path (below)
+initially built a `Config` with no `interface_socket_path` override. Every
+other test in the file constructs a bare `NeuroPACAOrchestrator(config)` with
+no `module_builder`, so none of them had ever actually started a real
+`InterfaceLayer` — this was the first one to use the production
+`build_modules`, and `InterfaceLayer.start()`/`stop()` both unconditionally
+unlink whatever socket file is already at the target path before binding
+their own. With no override, that path is `default_socket_path()` — the same
+`$XDG_RUNTIME_DIR/neuropaca.sock` the real, live `neuropacad.service` was
+using at the time. Running the test once unlinked the live daemon's socket
+out from under it, replaced it with the test's own for the test's lifetime,
+then unlinked it again on teardown — leaving the real daemon alive but
+unreachable, and the running 7-day soak's per-minute `neuropaca health`
+measurements failing, until `neuropacad.service` was restarted (with the
+user's explicit go-ahead) to rebind it. Fixed the test itself (an explicit
+`tmp_path`-scoped `interface_socket_path`, the same pattern `test_interface.py`
+and every other socket-binding test in the suite already uses) and confirmed
+no other test in the repository skips that override while actually calling
+`.start()` on the resulting modules. **This is very plausibly the actual
+explanation for the "recurring, unexplained" socket disappearance flagged in
+§21.17 and earlier** — some process on this machine binding to the default
+socket path without isolating it, whether a test, a script, or a stray
+second daemon instance, would produce exactly the observed symptom (the file
+gone, the original process still running, nothing logged, because the
+original process never touches the socket path again after its own `start()`).
+Not proven for the *earlier* occurrences specifically — no log evidence ties
+them to a specific cause — but the mechanism is now demonstrated, reproduced,
+and understood, which it was not before this session.
+
+**Closed a real integration-test gap, in the process.** No test anywhere in
+the suite had ever exercised `episodes_enabled=True` through the real
+`NeuroPACAOrchestrator.initialize()` with the production `build_modules` —
+every S0/A1/A2 conditional-module addition (`EpisodeStore` construction, the
+`ModuleBuilder` protocol widened to a fifth argument, `EpisodicWriter` /
+`BriefingComposer` / `MirrorComposer` all appended alongside it) had only
+ever been unit-tested in isolation. Added
+`test_episodes_enabled_wires_episode_store_and_its_three_modules`
+(`tests/test_orchestrator.py`) — it passed on the first run after the socket
+fix above, meaning the wiring itself was correct; only its one test was
+missing.
+
+**Rejected.** Optimising `top_information_gain_pairs`'s O(pairs × rows)
+scan — measured at 120 ms for a realistic 14-day, 24-candidate load
+(RESEARCH_DOSSIER.md's own §21.15 volume projection), comfortably inside the
+60 s DMN cycle budget and not a violation of any stated latency contract, so
+this stays a noted opportunity, not a defect. Threading the tray's blocking
+socket calls (`request()`, called every 5 s from the GTK main loop, and on
+every click) — a bounded, worst-case 2 s UI freeze if the daemon stalls,
+inherited unchanged from `soak_tray.py`'s own established pattern and not
+something this tray's exit criteria ("5 s poll invisible in CPU") actually
+speaks to; adding real thread-safety around a GTK object for a rare, bounded
+risk was judged not worth the complexity for an optional, non-critical tray.
+
+**What is left.** Nothing code-shaped. Both phases' exit criteria that were
+already open stay open for the same reason as before — they need real
+elapsed time (dogfood, the 7-day soak) no amount of further code auditing
+can substitute for.
 
 ---
 

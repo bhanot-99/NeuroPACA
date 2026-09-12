@@ -31,7 +31,7 @@ from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
-from neuropaca.core.mirror import Bucket, MirrorResult, compute_mirror
+from neuropaca.core.mirror import MirrorResult, compute_mirror
 from neuropaca.core.models import Event, Moment, system_error_event
 
 _log = logging.getLogger(__name__)
@@ -54,13 +54,8 @@ def render_mirror(gm: GraphMemory, result: MirrorResult) -> str:
 
 
 def _evidence(result: MirrorResult) -> tuple[str, ...]:
-    subjects = [subject for subject, _hour in (b for b, _ in result.top)]
-    subjects += [subject for subject, _hour in (b for b, _ in result.missing)]
+    subjects = [subject for (subject, _hour), _term in (*result.top, *result.missing)]
     return tuple(dict.fromkeys(subjects))
-
-
-def _all_buckets(result: MirrorResult) -> list[Bucket]:
-    return [b for b, _ in result.top] + [b for b, _ in result.missing]
 
 
 async def build_mirror_moment(
@@ -100,7 +95,10 @@ async def build_mirror_moment(
         value=result.kl,
         context={
             "kl": result.kl,
-            "buckets": [f"{subject}@{hour}" for subject, hour in _all_buckets(result)],
+            "buckets": [
+                f"{subject}@{hour}"
+                for (subject, hour), _score in (*result.top, *result.missing)
+            ],
         },
         expires_at=now + timedelta(minutes=_MOMENT_EXPIRES_MINUTES),
     )
@@ -158,9 +156,11 @@ class MirrorComposer(BaseModule):
     async def on_idle_detected(self, _event: Event) -> None:
         """The proactive path: the day's *first* idle spell at or after
         `mirror_evening_hour` (config) runs the mirror. Every idle spell
-        before that hour, and every one after the first that already ran
-        today, is a no-op — `_last_mirror_date` is only ever set here, once
-        per calendar day."""
+        before that hour, and every one after the first that already
+        *succeeded* today, is a no-op — `_last_mirror_date` is only ever
+        advanced once the pipeline actually returns, not before the attempt:
+        a transient `EpisodeStore` read failure must retry on the next idle
+        spell rather than silently costing the user the rest of the day."""
         try:
             if not self.is_running or not self.config.mirror_enabled:
                 return
@@ -169,10 +169,10 @@ class MirrorComposer(BaseModule):
                 return
             if self._last_mirror_date == now.date():
                 return
-            self._last_mirror_date = now.date()
             moment = await build_mirror_moment(
                 self._graph, self._store, now=now, config=self.config
             )
+            self._last_mirror_date = now.date()
             if moment is None:
                 self._not_surprising += 1
                 return

@@ -126,6 +126,27 @@ def test_thought_lines_caps_at_the_limit_keeping_the_newest() -> None:
     assert lines == ["q7", "q8", "q9"]
 
 
+# ------------------------------------------------------- mirror_summary_text
+
+
+def test_mirror_summary_text_none_response_is_unreachable() -> None:
+    assert tray.mirror_summary_text(None) == "Couldn't reach the daemon."
+
+
+def test_mirror_summary_text_not_ok_reports_the_error() -> None:
+    resp = {"ok": False, "error": "mirror request timed out"}
+    assert tray.mirror_summary_text(resp) == "mirror request timed out"
+
+
+def test_mirror_summary_text_no_moment_is_nothing_unusual() -> None:
+    assert tray.mirror_summary_text({"ok": True, "moment": None}) == "Nothing unusual today."
+
+
+def test_mirror_summary_text_carries_the_moment_text_through() -> None:
+    resp = {"ok": True, "moment": {"text": "You spent unusual time in Spreadsheet today."}}
+    assert tray.mirror_summary_text(resp) == "You spent unusual time in Spreadsheet today."
+
+
 # ------------------------------------------------------------- request() live
 
 
@@ -187,6 +208,3 @@ def test_default_socket_path_falls_back_to_xdg_runtime_dir(monkeypatch) -> None:
     monkeypatch.delenv("NEUROPACA_SOCKET", raising=False)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     assert tray.default_socket_path() == Path("/run/user/1000/neuropaca.sock")
-
-
-# gen-ref: a1-test-neuropaca-tray

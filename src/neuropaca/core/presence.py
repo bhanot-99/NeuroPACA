@@ -72,6 +72,3 @@ def _latest(a: datetime | None, b: datetime | None) -> datetime | None:
     if b is None:
         return a
     return max(a, b)
-
-
-# gen-ref: a1-presence-core

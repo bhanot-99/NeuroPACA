@@ -191,9 +191,13 @@ class Config:
     # and the fallback when there is no episode store, no history yet, or a read
     # fails. `dmn_curiosity_lookback_days` bounds the evidence query (a growing
     # log must not turn one idle cycle into an unbounded scan); `_top_pairs` is
-    # how many of the candidate pool's C(k,2) pairs are ranked by IG before the
-    # highest is taken (matches `dmn_top_k` — big enough that ties or near-ties
-    # have somewhere to go, small enough to stay O(pool²) on a bounded pool).
+    # how many of the candidate pool's C(k,2) pairs are ranked by IG and kept
+    # as fallback candidates, most-uncertain first, before `_curious_seeds`
+    # takes the highest one whose nodes are not entirely inside the DMN's own
+    # V-4 refractory memory (`_recent_seeds`) — deliberately more than
+    # `dmn_top_k` (default 8 vs 5), so that when the single top pair was just
+    # used last cycle there is still somewhere else to go, rather than the
+    # exact echo-chamber V-4's own refractory penalty already exists to avoid.
     dmn_curiosity_epsilon: float = 0.2
     dmn_curiosity_lookback_days: int = 14
     dmn_curiosity_top_pairs: int = 8

@@ -121,4 +121,46 @@ async def test_stop_is_idempotent(config: Config) -> None:
     assert orch.is_running is False
 
 
+async def test_episodes_enabled_wires_episode_store_and_its_three_modules(tmp_path) -> None:
+    """S0/A1/A2's whole conditional-module path (`episodes_enabled=True`),
+    exercised for real through `NeuroPACAOrchestrator.initialize()` with the
+    production `build_modules` — every other test in this file builds a bare
+    `NeuroPACAOrchestrator(config)` with no `module_builder` at all, so this
+    path (the `ModuleBuilder` protocol widened to a fifth `EpisodeStore | None`
+    argument, and `EpisodicWriter`/`BriefingComposer`/`MirrorComposer` all
+    appended alongside it) had never been exercised end to end."""
+    from neuropaca.orchestration.modules import build_modules
+
+    config = Config(
+        inference_backend="fake",
+        graph_db_path=str(tmp_path / "graph.json"),
+        action_log_path=str(tmp_path / "actions.jsonl"),
+        graph_save_interval_seconds=3600,
+        episodes_enabled=True,
+        episodes_db_path=str(tmp_path / "episodes.sqlite"),
+        # `build_modules` constructs a real `InterfaceLayer`, which binds a
+        # real socket — an empty `interface_socket_path` falls back to
+        # `default_socket_path()`, the same `$XDG_RUNTIME_DIR/neuropaca.sock`
+        # a real `neuropacad` uses. `InterfaceLayer.start()` unlinks whatever
+        # is already there before binding, so leaving this unset here would
+        # steal the socket out from under (and break) any real daemon running
+        # on the same machine while this test runs. Every other test that
+        # constructs a real `InterfaceLayer` (test_interface.py) does the same.
+        interface_socket_path=str(tmp_path / "neuropaca.sock"),
+    )
+    orch = NeuroPACAOrchestrator(config, module_builder=build_modules)
+    await orch.initialize()
+    try:
+        assert orch.episode_store is not None
+        assert orch.episode_store.is_running
+        await orch.start()
+        names = {report.name for report in orch.health_check().modules}
+        assert {"episodic_writer", "briefing", "mirror", "idle"} <= names
+        assert orch.health_check().ok is True
+    finally:
+        await orch.stop()
+    assert orch.episode_store is not None
+    assert not orch.episode_store.is_running
+
+
 # gen-ref: 5302c260

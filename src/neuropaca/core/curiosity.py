@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 from datetime import datetime
 
+from neuropaca.core.enums import EpisodeKind
 from neuropaca.core.episodes import EpisodeRecord
 
 
@@ -76,12 +77,9 @@ def association_evidence(
     the other was active within `window_seconds` beforehand — a co-use (`s`)
     if so, "one without the other" (`f`) if not. Symmetric by construction:
     `association_evidence(rows, u, v, w) == association_evidence(rows, v, u, w)`."""
+    focus_span = str(EpisodeKind.FOCUS_SPAN)
     relevant = sorted(
-        (
-            r
-            for r in rows
-            if r.kind == "focus_span" and r.subject in (u, v) and r.t_start is not None
-        ),
+        (r for r in rows if r.kind == focus_span and r.subject in (u, v) and r.t_start is not None),
         key=lambda r: r.t_start,  # type: ignore[arg-type,return-value]
     )
     s = f = 0

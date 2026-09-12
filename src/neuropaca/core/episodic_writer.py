@@ -25,10 +25,12 @@ another; the bus is the only channel).
   `on_activity_detected`).
 - **insights and idle thoughts** — one row per `INSIGHT_GENERATED`, keyed by
   the node id L4/L6 minted for it.
-- **delivered moments and their feedback (F2)** — `MOMENT_DELIVERED` /
-  `MOMENT_FEEDBACK` are defined in `EventType` now though nothing publishes
-  them until A3 exists (the guardian) and F2 (feedback capture); subscribed
-  here so the day they start firing needs no change to this file.
+- **delivered moments and their feedback (F2)** — `MOMENT_DELIVERED` is
+  defined in `EventType` but still nothing publishes it (A3's guardian does
+  not exist yet); `MOMENT_FEEDBACK` now does fire — A1's tray "keep" /
+  "dismiss" buttons (`interface/layer.py`'s `_submit_feedback`) are its first
+  publisher. Both were subscribed here from the start so the day either
+  began firing needed no change to this file — exactly what happened.
 
 A handler never lets an exception escape (rules.md §2) — `record_span` /
 `assert_fact` themselves cannot raise (they only enqueue), so the only things

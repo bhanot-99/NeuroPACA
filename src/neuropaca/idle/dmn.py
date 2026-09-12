@@ -305,9 +305,17 @@ class DefaultModeNetwork(BaseModule):
             window_seconds=self.config.coactivation_window_seconds,
             top_n=self.config.dmn_curiosity_top_pairs,
         )
+        # V-4's own fix, reapplied here: with no history at all — or a wide
+        # tie in IG, common until real evidence differentiates pairs — every
+        # cycle's ranking would otherwise pick the exact same pair from the
+        # exact same stable sort, forever. Prefer pairs not entirely composed
+        # of nodes this cycle's V-4 refractory memory already flagged; only
+        # settle for one wholly inside it when nothing else is on offer.
+        recent = set(self._recent_seeds)
+        fresh = [(u, v, ig) for u, v, ig in ranked if u not in recent or v not in recent]
         seeds: list[Node] = []
         seen: set[str] = set()
-        for u, v, _ig in ranked:
+        for u, v, _ig in fresh or ranked:
             for node_id in (u, v):
                 if node_id in seen:
                     continue

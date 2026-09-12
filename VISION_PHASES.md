@@ -460,9 +460,10 @@ trip, no timeout risk, unlike `briefing`'s); `DMN_CYCLE_STARTED`/`_ENDED` so
 L9 can see "thinking" without importing `idle/dmn.py`; the state machine
 itself as a pure, directly-tested function (`core/presence.py`); the tray
 script with the same pure-logic/GTK-glue split `soak_tray.py` established.
-**Deferred to A2**, not built: the "what did you learn today" menu item —
-its backend (the mirror, §3.8) does not exist yet, and a menu item with
-nothing behind it is worse than no menu item.
+The "what did you learn today" menu item, originally deferred here to A2
+because the mirror did not exist yet, was added once it did (the A1/A2
+audit, VISION_PHASES.md's own follow-up) — "What changed today" in the
+tray's menu, an on-demand `mirror` request rendered in a dialog.
 
 ---
 

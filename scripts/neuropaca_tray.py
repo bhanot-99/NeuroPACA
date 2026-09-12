@@ -8,8 +8,10 @@ WHAT THIS IS
 
 You can glance at the corner of your screen and see that NeuroPACA is there
 and what it is doing — focused, idle, thinking, or "noticed something". One
-click shows today's idle thoughts; another opens the graph view; another
-gives feedback on the last thing it said.
+click shows today's idle thoughts; another opens the graph view; another asks
+"what changed today" (A2's mirror, on demand — this item was deferred out of
+A1's own first cut, since the mirror did not exist yet); another gives
+feedback on the last thing it said.
 
 NOT `scripts/soak_tray.py`
 
@@ -87,6 +89,13 @@ ICON_IDLE = "user-idle"
 ICON_AWAKE = "user-available"
 ICON_ASLEEP = "user-offline"  # the daemon is unreachable — not one of the five real states
 ICON_ERROR = "dialog-error"
+
+# The widest label this tray ever actually shows ("Thinking", 8 chars) — the
+# fixed sizing hint AppIndicator3.set_label's second argument wants, so the
+# panel does not resize on every state change. An earlier version hardcoded
+# "Focused" here regardless of state — a leftover copy from soak_tray.py's
+# own percentage-width guide, unrelated to this tray's label vocabulary.
+LABEL_WIDTH_GUIDE = "Thinking"
 
 _ICON_BY_STATE = {
     "thinking": ICON_THINKING,
@@ -208,6 +217,24 @@ def thought_lines(view: TrayView, limit: int = _MAX_THOUGHT_ROWS) -> list[str]:
     return list(view.thoughts_today[-limit:])
 
 
+def mirror_summary_text(resp: dict[str, Any] | None) -> str:
+    """A2's on-demand `mirror` op, summarised for the "What changed today"
+    menu item's dialog — A1's own deferral note ("its backend, the mirror,
+    does not exist yet") no longer applies, so this is that item, finally
+    built. Every failure mode (no daemon, no live `MirrorComposer` because
+    episodes are disabled, nothing surprising today) renders as a plain
+    sentence, the same shape `interface/cli.py`'s `mirror` op already prints
+    — never a raised error reaching the dialog."""
+    if resp is None:
+        return "Couldn't reach the daemon."
+    if not resp.get("ok"):
+        return str(resp.get("error", "Couldn't reach the daemon."))
+    moment = resp.get("moment")
+    if not isinstance(moment, dict) or not moment.get("text"):
+        return "Nothing unusual today."
+    return str(moment["text"])
+
+
 def _brave_command() -> list[str] | None:
     for name in BRAVE_BINARIES:
         found = shutil.which(name)
@@ -304,7 +331,7 @@ def _run_tray() -> None:
             presence = request(sock_path, {"op": "presence"})
             self.view = compute_tray_view(presence)
             self.indicator.set_icon_full(self.view.icon_name, self.view.label)
-            self.indicator.set_label(self.view.label, "Focused")
+            self.indicator.set_label(self.view.label, LABEL_WIDTH_GUIDE)
             self._populate_menu()
 
         def _on_refresh_clicked(self, *_args: object) -> None:
@@ -324,6 +351,31 @@ def _run_tray() -> None:
         def _on_feedback_clicked(self, outcome: str) -> None:
             request(sock_path, {"op": "feedback", "outcome": outcome})
 
+        def _on_mirror_clicked(self, *_args: object) -> None:
+            # A2's "what did you learn today" (A1's own deferred menu item,
+            # now that the mirror exists to back it). Same idle_add hand-off
+            # as `_on_refresh_clicked` — never tear down the menu from inside
+            # its own item's `activate` emission — and the request itself is
+            # a bounded, one-shot round trip, not the 5 s poll loop.
+            GLib.idle_add(self._show_mirror_once)
+
+        def _show_mirror_once(self) -> bool:
+            # `mirror` composes a KL divergence over up to 14 days of history
+            # server-side (`_MIRROR_TIMEOUT` in interface/layer.py is 6.0 s) —
+            # this client timeout needs margin over that, not to sit at or
+            # below it (the exact race `_BRIEFING_TIMEOUT`/`_MIRROR_TIMEOUT`
+            # were themselves sized against in the test harness).
+            resp = request(sock_path, {"op": "mirror"}, timeout=8.0)
+            dialog = Gtk.MessageDialog(
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text="What changed today",
+            )
+            dialog.format_secondary_text(mirror_summary_text(resp))
+            dialog.connect("response", lambda d, *_: d.destroy())
+            dialog.show()
+            return GLib.SOURCE_REMOVE
+
         def _populate_menu(self) -> None:
             for child in self.menu.get_children():
                 self.menu.remove(child)
@@ -337,6 +389,10 @@ def _run_tray() -> None:
             graph_item = Gtk.MenuItem(label="Open graph view")
             graph_item.connect("activate", lambda *_: open_graph_view())
             self.menu.append(graph_item)
+
+            mirror_item = Gtk.MenuItem(label="What changed today")
+            mirror_item.connect("activate", self._on_mirror_clicked)
+            self.menu.append(mirror_item)
             self.menu.append(Gtk.SeparatorMenuItem())
 
             lines = thought_lines(view)
@@ -406,5 +462,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-# gen-ref: a1-neuropaca-tray

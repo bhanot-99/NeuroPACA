@@ -27,17 +27,25 @@ _NOW = datetime(2026, 9, 15, 9, 0, tzinfo=UTC)
 
 
 class _AlwaysCurious(random.Random):
-    """Forces `_choose_seeds()` down the curiosity branch every draw."""
+    """Forces `_choose_seeds()` down the curiosity branch every draw.
 
-    def random(self) -> float:
-        return 0.0
-
-
-class _NeverCurious(random.Random):
-    """Forces `_choose_seeds()` down the V-4 fallback every draw."""
+    The production check is `rng.random() >= dmn_curiosity_epsilon` — curious
+    with probability `1 - epsilon`. `random()` returning 1.0 satisfies that
+    for every valid epsilon in `[0.0, 1.0]`, including the edge `epsilon =
+    1.0` itself (an earlier version of this file had this and `_NeverCurious`
+    backwards: 0.0 here and 1.0 there, which silently forced the *opposite*
+    branch in every test using them for any `epsilon > 0`)."""
 
     def random(self) -> float:
         return 1.0
+
+
+class _NeverCurious(random.Random):
+    """Forces `_choose_seeds()` down the V-4 fallback every draw, for any
+    `epsilon > 0.0` (the only values every test here actually uses)."""
+
+    def random(self) -> float:
+        return 0.0
 
 
 async def _store(tmp_path) -> EpisodeStore:
@@ -141,6 +149,38 @@ async def test_falls_back_to_v4_sampling_with_no_evidence_at_all(tmp_path) -> No
             seeds = await dmn._choose_seeds()
             assert len(seeds) == 2
             assert len({n.id for n in seeds}) == 2
+        finally:
+            await dmn.stop()
+            await bus.stop()
+    finally:
+        await store.stop()
+
+
+async def test_curiosity_does_not_echo_chamber_when_ig_is_tied(tmp_path) -> None:
+    """A regression for V-4's own bug, reintroduced: with no differentiating
+    evidence, every pair ties at the `Beta(1,1)` prior and a bare stable sort
+    would pick the identical pair forever. `_choose_seeds` must move on once
+    `_recent_seeds` (populated the same way `_imagination` populates it) marks
+    the previous pair as just used — the same refractory idea V-4 already
+    relies on for its own sampling path."""
+    store = await _store(tmp_path)
+    try:
+        dmn, bus, gm = await _dmn(
+            tmp_path,
+            episodes=store,
+            rng=_AlwaysCurious(),
+            dmn_top_k=2,
+            dmn_candidate_pool_k=6,
+            dmn_curiosity_top_pairs=15,  # every C(6,2)=15 pair, all tied
+        )
+        try:
+            await _populate(gm, 6)
+            seen_pairs: set[frozenset[str]] = set()
+            for _ in range(10):
+                seeds = await dmn._choose_seeds()
+                seen_pairs.add(frozenset(n.id for n in seeds))
+                dmn._recent_seeds.extend(n.id for n in seeds)
+            assert len(seen_pairs) > 1
         finally:
             await dmn.stop()
             await bus.stop()
