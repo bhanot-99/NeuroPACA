@@ -18,6 +18,7 @@ from neuropaca.core.base_module import BaseModule
 from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import SystemClock
 from neuropaca.core.config import Config
+from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.diagnosis.correlator import SignalCorrelator
@@ -39,6 +40,7 @@ def build_modules(
     event_bus: EventBus,
     graph_memory: GraphMemory,
     bitnet_runtime: BitNetRuntime,
+    episode_store: EpisodeStore | None = None,
 ) -> list[BaseModule]:
     # B2.5 (D-9): when the real Wayland ActivityCollector is on, XMetricCollector
     # stops emitting its CPU-derived IDLE_DETECTED / ACTIVITY_DETECTED stand-in.
@@ -74,7 +76,12 @@ def build_modules(
     action = ActionExecutor(event_bus, config, graph_memory)
     agents = AgentSupervisor(event_bus, config, graph_memory, clock=SystemClock())
     idle_cognition = DefaultModeNetwork(
-        event_bus, config, graph_memory, bitnet_runtime, clock=SystemClock()
+        event_bus,
+        config,
+        graph_memory,
+        bitnet_runtime,
+        clock=SystemClock(),
+        episode_store=episode_store,
     )
     moments = MomentComposer(event_bus, config, graph_memory, clock=SystemClock())
     interface = InterfaceLayer(

@@ -42,6 +42,7 @@ from neuropaca.core.health import SystemHealth, current_rss_mb
 from neuropaca.core.inference import create_backend, create_interactive_backend
 from neuropaca.core.models import Event
 from neuropaca.interface.briefing import BriefingComposer
+from neuropaca.interface.mirror_composer import MirrorComposer
 from neuropaca.orchestration.scheduler import Scheduler
 
 if TYPE_CHECKING:
@@ -51,7 +52,9 @@ _log = logging.getLogger(__name__)
 
 _SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 
-ModuleBuilder = Callable[[Config, EventBus, GraphMemory, BitNetRuntime], list[BaseModule]]
+ModuleBuilder = Callable[
+    [Config, EventBus, GraphMemory, BitNetRuntime, EpisodeStore | None], list[BaseModule]
+]
 
 
 def non_activity_app(config: Config, identity: AppIdentity) -> Callable[[str], bool]:
@@ -149,7 +152,11 @@ class NeuroPACAOrchestrator:
         if self._module_builder is not None:
             self._modules.extend(
                 self._module_builder(
-                    self._config, self._event_bus, self._graph_memory, self._bitnet_runtime
+                    self._config,
+                    self._event_bus,
+                    self._graph_memory,
+                    self._bitnet_runtime,
+                    self._episode_store,
                 )
             )
         if self._episode_store is not None:
@@ -163,6 +170,15 @@ class NeuroPACAOrchestrator:
             )
             self._modules.append(
                 BriefingComposer(
+                    self._event_bus,
+                    self._config,
+                    self._graph_memory,
+                    self._episode_store,
+                    clock=SystemClock(),
+                )
+            )
+            self._modules.append(
+                MirrorComposer(
                     self._event_bus,
                     self._config,
                     self._graph_memory,

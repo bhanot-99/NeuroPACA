@@ -509,9 +509,29 @@ actually changed about you today.
 under relabelling; KL is zero for identical days and grows with shift; contributors
 sum to the divergence; no mirror below $\tau$.
 
+**Built.** `core/curiosity.py` (Beta–Bernoulli information gain, a hand-written
+digamma so no scipy dependency is added) and the DMN's seed-choice mix
+(`idle/dmn.py`'s `_choose_seeds`), both tested directly, including the two
+required properties (IG higher for uncertain than settled pairs; IG symmetric
+under relabelling `(s,f) <-> (f,s)`). `core/mirror.py` (KL divergence with
+Dirichlet smoothing) and `interface/mirror_composer.py`'s `MirrorComposer`,
+wired to L9 (`mirror` op), the CLI (`neuropaca mirror`), and the REPL — all
+five required math properties tested directly (KL zero for identical days,
+grows with shift; contributors sum to the divergence; no mirror below `tau`).
+1015 tests pass, `ruff`/`mypy` clean (RESEARCH_DOSSIER.md §21.18).
+
 **Exit**
-- [ ] The mirror stays silent on ordinary days (≤ 1 false alarm a week in dogfood).
-- [ ] H4 protocol run: users rate IG-chosen thoughts vs score-sampled thoughts.
+- [ ] The mirror stays silent on ordinary days (≤ 1 false alarm a week in
+      dogfood) — needs real elapsed time this session cannot produce; not
+      assumed met. `mirror_kl_threshold` is a reasoned default (§3.8's own
+      spike calls for picking it by replaying two real weeks — no such
+      history exists yet on the live daemon), the first thing to recalibrate
+      once it does.
+- [ ] H4 protocol run: users rate IG-chosen thoughts vs score-sampled
+      thoughts — needs real dogfood usage; not run.
+- Not yet live-verified: the live daemon's config does not have
+  `episodes_enabled = true`, so neither half of A2 has run against real data
+  yet — turning it on is the user's call.
 
 ---
 

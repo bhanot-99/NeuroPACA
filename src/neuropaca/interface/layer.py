@@ -9,10 +9,10 @@ Shape (B5, re-scoped in B12):
   one JSON request per line, one JSON response per line). The thin CLI
   (`interface/cli.py`) is the only client. Ops: `health`, `insights`,
   `notifications`, `confirmations`, `confirm`, `run`, `explain`, `briefing`,
-  `presence`, `pause`, `feedback` (A1, VISION_PHASES.md — `scripts/neuropaca_tray.py`
-  is the only caller of these three today), `reload-graph` (internal —
-  `interface/offline.py`'s `repair-graph` verb is the only caller, not a
-  `neuropaca` verb of its own).
+  `mirror` (A2, VISION_PHASES.md §3.8), `presence`, `pause`, `feedback` (A1,
+  VISION_PHASES.md — `scripts/neuropaca_tray.py` is the only caller of these
+  three today), `reload-graph` (internal — `interface/offline.py`'s
+  `repair-graph` verb is the only caller, not a `neuropaca` verb of its own).
 - the terminal is a **read-only project guide** now: `neuropaca tell` / `overview`
   answer deterministically on the client side (`interface/describe.py`) and never
   reach this module. There is no natural-language query of the behavioural graph
@@ -77,6 +77,12 @@ _HEALTH_TIMEOUT = 2.0
 # S0's on-demand briefing composes fresh (a PPR walk, not a cache read) —
 # generous next to `_HEALTH_TIMEOUT`, still well under a human's patience.
 _BRIEFING_TIMEOUT = 5.0
+# A2 · the mirror composes a KL divergence over up to `mirror_baseline_days`
+# of history, not a single PPR walk — a slightly longer budget than the
+# briefing's, but still well under the test harness's fixed 8s client-side
+# socket read timeout (tests/test_interface.py) — the exact race documented
+# in RESEARCH_DOSSIER.md that made `_BRIEFING_TIMEOUT` need its own margin.
+_MIRROR_TIMEOUT = 6.0
 
 # Insight surfacing (B5, B3; B6 adds `proactive` — L6 idle thoughts, D-13)
 _INSIGHT_MIN_CONFIDENCE = 0.75
@@ -153,6 +159,9 @@ class InterfaceLayer(BaseModule):
         # request to request (a fresh composition), so one waiter must not
         # resolve on another's answer.
         self._briefing_waiters: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
+        # A2 · `neuropaca mirror` (VISION_PHASES.md §3.8). Same shape as the
+        # briefing waiters above, for the same reason.
+        self._mirror_waiters: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
         self._pending_insights: list[Insight] = []
         self._pending_notifications: list[dict[str, Any]] = []
         # V-12 · desktop delivery state
@@ -189,6 +198,7 @@ class InterfaceLayer(BaseModule):
         self.event_bus.subscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.subscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
         self.event_bus.subscribe(EventType.BRIEFING_REPORT, self._on_briefing_report)
+        self.event_bus.subscribe(EventType.MIRROR_REPORT, self._on_mirror_report)
         # B7 (D-14): L7 publishes intents and confirmation prompts; L9 is the
         # only module that may turn either into something a human sees.
         self.event_bus.subscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
@@ -243,6 +253,7 @@ class InterfaceLayer(BaseModule):
         self.event_bus.unsubscribe(EventType.INSIGHT_GENERATED, self.on_insight_generated)
         self.event_bus.unsubscribe(EventType.SYSTEM_HEALTH_REPORT, self._on_health_report)
         self.event_bus.unsubscribe(EventType.BRIEFING_REPORT, self._on_briefing_report)
+        self.event_bus.unsubscribe(EventType.MIRROR_REPORT, self._on_mirror_report)
         self.event_bus.unsubscribe(EventType.ACTION_TRIGGERED, self.on_action_triggered)
         desktop_task, self._desktop_task = self._desktop_task, None
         if desktop_task is not None and not desktop_task.done():
@@ -290,6 +301,13 @@ class InterfaceLayer(BaseModule):
     async def _on_briefing_report(self, event: Event) -> None:
         request_id = str(event.payload.get("request_id", ""))
         fut = self._briefing_waiters.pop(request_id, None)
+        if fut is not None and not fut.done():
+            moment = event.payload.get("moment")
+            fut.set_result(_moment_to_dict(moment) if isinstance(moment, Moment) else None)
+
+    async def _on_mirror_report(self, event: Event) -> None:
+        request_id = str(event.payload.get("request_id", ""))
+        fut = self._mirror_waiters.pop(request_id, None)
         if fut is not None and not fut.done():
             moment = event.payload.get("moment")
             fut.set_result(_moment_to_dict(moment) if isinstance(moment, Moment) else None)
@@ -694,6 +712,9 @@ class InterfaceLayer(BaseModule):
         if op == "briefing":
             self._queries += 1
             return await self._request_briefing()
+        if op == "mirror":
+            self._queries += 1
+            return await self._request_mirror()
         if op == "reload-graph":
             return await self._reload_graph()
         if op == "presence":
@@ -754,6 +775,29 @@ class InterfaceLayer(BaseModule):
             return {"ok": False, "error": "briefing request timed out"}
         finally:
             self._briefing_waiters.pop(request_id, None)
+        return {"ok": True, "moment": moment}
+
+    async def _request_mirror(self) -> dict[str, Any]:
+        """A2's on-demand path (`neuropaca mirror`). `None` (no live
+        `MirrorComposer` — episodes disabled, or nothing surprising today)
+        reads the same as a timeout to the caller."""
+        loop = asyncio.get_running_loop()
+        request_id = uuid4().hex[:12]
+        fut: asyncio.Future[dict[str, Any] | None] = loop.create_future()
+        self._mirror_waiters[request_id] = fut
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.MIRROR_REQUEST,
+                source="interface",
+                payload={"request_id": request_id},
+            )
+        )
+        try:
+            moment = await asyncio.wait_for(fut, _MIRROR_TIMEOUT)
+        except TimeoutError:
+            return {"ok": False, "error": "mirror request timed out"}
+        finally:
+            self._mirror_waiters.pop(request_id, None)
         return {"ok": True, "moment": moment}
 
     # ------------------------------------------------------------ run relay (B7)

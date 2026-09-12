@@ -590,6 +590,68 @@ async def test_briefing_op_times_out_cleanly_when_no_composer_is_running(tmp_pat
     assert resp["ok"] is False and "timed out" in resp["error"]
 
 
+async def test_mirror_op_bridges_request_and_report_over_the_bus(tmp_path) -> None:
+    w = await _wired(tmp_path)
+
+    async def fake_mirror_composer(event: Event) -> None:
+        w.bus.publish(
+            Event(
+                event_type=EventType.MIRROR_REPORT,
+                source="mirror",
+                payload={
+                    "request_id": event.payload.get("request_id"),
+                    "moment": Moment(
+                        kind="mirror",
+                        text="You spent unusual time in Spreadsheet today.",
+                        evidence=("app:spreadsheet",),
+                        value=1.0,
+                        context={},
+                        expires_at=w.layer._clock.now(),
+                    ),
+                },
+            )
+        )
+
+    w.bus.subscribe(EventType.MIRROR_REQUEST, fake_mirror_composer)
+    try:
+        resp = await w.request({"op": "mirror"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["moment"]["text"] == "You spent unusual time in Spreadsheet today."
+    assert resp["moment"]["evidence"] == ["app:spreadsheet"]
+
+
+async def test_mirror_op_nothing_unusual_is_still_ok(tmp_path) -> None:
+    w = await _wired(tmp_path)
+
+    async def fake_mirror_composer(event: Event) -> None:
+        w.bus.publish(
+            Event(
+                event_type=EventType.MIRROR_REPORT,
+                source="mirror",
+                payload={"request_id": event.payload.get("request_id"), "moment": None},
+            )
+        )
+
+    w.bus.subscribe(EventType.MIRROR_REQUEST, fake_mirror_composer)
+    try:
+        resp = await w.request({"op": "mirror"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert resp["moment"] is None
+
+
+async def test_mirror_op_times_out_cleanly_when_no_composer_is_running(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        resp = await w.request({"op": "mirror"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False and "timed out" in resp["error"]
+
+
 async def test_run_command_is_ram_only_and_never_on_disk(tmp_path) -> None:
     marker = "zzq_secret_kernel_panic_marker"
     w = await _wired(tmp_path)
@@ -634,6 +696,8 @@ async def test_ipc_payloads_are_redacted_in_logs(tmp_path, caplog) -> None:
         (["insights"], {"op": "insights"}),
         (["notifications"], {"op": "notifications"}),
         (["confirmations"], {"op": "confirmations"}),
+        (["briefing"], {"op": "briefing"}),
+        (["mirror"], {"op": "mirror"}),
         (["confirm", "abc123"], {"op": "confirm", "request_id": "abc123", "approved": True}),
         (
             ["confirm", "abc123", "--deny"],

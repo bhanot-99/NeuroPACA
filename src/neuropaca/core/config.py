@@ -183,6 +183,20 @@ class Config:
     dmn_top_k: int = 5
     dmn_candidate_pool_k: int = 24
     dmn_seed_refractory_cycles: int = 3
+    # A2 · curiosity (VISION_PHASES.md §3.7). The seed choice becomes a mix:
+    # with probability `1 - dmn_curiosity_epsilon` the pair among the candidate
+    # pool with the highest expected information gain (§3.7's Beta-Bernoulli
+    # posterior over `(u, v)` "belongs together"); with `dmn_curiosity_epsilon`
+    # the existing V-4 score-weighted sample — kept as both the exploration term
+    # and the fallback when there is no episode store, no history yet, or a read
+    # fails. `dmn_curiosity_lookback_days` bounds the evidence query (a growing
+    # log must not turn one idle cycle into an unbounded scan); `_top_pairs` is
+    # how many of the candidate pool's C(k,2) pairs are ranked by IG before the
+    # highest is taken (matches `dmn_top_k` — big enough that ties or near-ties
+    # have somewhere to go, small enough to stay O(pool²) on a bounded pool).
+    dmn_curiosity_epsilon: float = 0.2
+    dmn_curiosity_lookback_days: int = 14
+    dmn_curiosity_top_pairs: int = 8
     # B7 · Action (L7, D-14). `action_dry_run` defaults **True**: the daemon
     # ships in the dry-run review period the B7 exit criteria require ("a review
     # period in dry-run with zero false positives before any tier goes live"),
@@ -257,6 +271,31 @@ class Config:
     briefing_max_items: int = 5
     briefing_similarity_mu: float = 0.5
     briefing_idle_gap_hours: float = 6.0
+    # A2 · the mirror (VISION_PHASES.md §3.8). Q = today's app x hour
+    # distribution; P = an exponentially-weighted baseline over the trailing
+    # `mirror_baseline_days`, same-weekday rows up-weighted by
+    # `mirror_same_weekday_boost`; both Dirichlet(+1) smoothed before the KL
+    # divergence. `mirror_kl_threshold` (tau) gates whether a day says anything
+    # at all — the spike (§3.7's spike item 2) calls for picking it by replaying
+    # two real weeks so an ordinary day stays silent; no such replay exists yet
+    # (the live episode store is only hours old), so this starts at a reasoned
+    # default and is the first thing to recalibrate once real days accumulate,
+    # never a value to treat as validated. `mirror_evening_hour` is the
+    # earliest hour a first-idle-after check may fire the day's mirror moment;
+    # `mirror_top_contributors` bounds how many Q_i*log(Q_i/P_i) terms (and the
+    # largest missing P_i) the rendered sentence names.
+    mirror_enabled: bool = True
+    mirror_baseline_days: int = 14
+    # No half-life is specified in VISION.md §3.8 beyond "exponentially
+    # weighted" — 7 days (half of the lookback) is the reasoned starting
+    # point: a day one week old counts for half of yesterday, a day at the
+    # 14-day edge for a quarter. Recalibrate once real days accumulate, same
+    # as `mirror_kl_threshold` below.
+    mirror_baseline_half_life_days: float = 7.0
+    mirror_same_weekday_boost: float = 2.0
+    mirror_kl_threshold: float = 0.5
+    mirror_evening_hour: int = 18
+    mirror_top_contributors: int = 3
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -398,6 +437,10 @@ class Config:
             "welcome_daily_cap",
             "episode_retention_days",
             "briefing_max_items",
+            "dmn_curiosity_lookback_days",
+            "dmn_curiosity_top_pairs",
+            "mirror_baseline_days",
+            "mirror_top_contributors",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
@@ -428,6 +471,25 @@ class Config:
         if self.dmn_seed_refractory_cycles < 0:
             errs.append(
                 f"dmn_seed_refractory_cycles must be >= 0, got {self.dmn_seed_refractory_cycles}"
+            )
+        if not 0.0 <= self.dmn_curiosity_epsilon <= 1.0:
+            errs.append(
+                f"dmn_curiosity_epsilon must be in [0.0, 1.0], got {self.dmn_curiosity_epsilon}"
+            )
+        if self.mirror_baseline_half_life_days <= 0.0:
+            errs.append(
+                "mirror_baseline_half_life_days must be > 0, got "
+                f"{self.mirror_baseline_half_life_days}"
+            )
+        if self.mirror_same_weekday_boost <= 0.0:
+            errs.append(
+                f"mirror_same_weekday_boost must be > 0, got {self.mirror_same_weekday_boost}"
+            )
+        if self.mirror_kl_threshold <= 0.0:
+            errs.append(f"mirror_kl_threshold must be > 0, got {self.mirror_kl_threshold}")
+        if not 0 <= self.mirror_evening_hour <= 23:
+            errs.append(
+                f"mirror_evening_hour must be in [0, 23], got {self.mirror_evening_hour}"
             )
 
         if self.pressure_low_threshold <= 0:

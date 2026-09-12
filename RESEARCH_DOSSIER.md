@@ -4830,6 +4830,96 @@ A1's own exit section rather than silently missing.
   cause is still unknown and deserves its own investigation before a 7-day
   unattended soak is trusted around it again.
 
+### 21.18 A2 · Curiosity and the mirror
+
+| | |
+| --- | --- |
+| **Branch** | `a2-curiosity-and-the-mirror` |
+| **Outcome** | Full suite (`-m ""`): 985 → **1018 collected, 1015 passed**, 3 pre-existing skips. `EventType` +2 (`MIRROR_REQUEST`/`_REPORT`, 27 → 29). `ruff`/`mypy` clean. Not yet live-verified against the running daemon (episodes are disabled there — see "What is left"). |
+
+**In plain words.** Two things landed. Idle thoughts are now genuinely
+curious — the DMN mostly wonders about the pair of things it has the least
+evidence for, not the pair it already knows cold. And there is a "mirror":
+ask `neuropaca mirror` (or wait for the first idle spell after 18:00) and, if
+today was actually unusual, it can say so in a sentence or two, grounded in
+real episode-log evidence.
+
+**Built — curiosity (§3.7).** `core/curiosity.py`: `information_gain(s, f)`
+is the closed-form Beta(1+s,1+f) entropy reduction from one more observation
+— `beta_entropy` via `math.lgamma` plus a hand-written digamma (the standard
+asymptotic-series recurrence; no scipy dependency, matching the Forward Push
+PPR precedent). `association_evidence` walks the episode log once,
+chronologically, to get real `(s, f)` counts for a pair — symmetric by
+construction, and deliberately not "smart" about the very first occurrence of
+either subject in the whole log (nothing preceded it, so it is unavoidably
+counted as a solo occurrence; this cannot be fixed without inventing evidence
+that was never observed). `top_information_gain_pairs` ranks the candidate
+pool's C(k,2) pairs, highest-IG first. `idle/dmn.py`'s `_seed_nodes` becomes
+`_choose_seeds`: with probability `1 - dmn_curiosity_epsilon` it seeds on the
+least-settled pair's nodes; otherwise — and always as the fallback for no
+store, too small a pool, no evidence, or a read that raised — the existing
+V-4 score-weighted sample. `DefaultModeNetwork` gained an optional
+`episode_store` constructor argument; wiring it through required widening the
+`ModuleBuilder` protocol (`orchestration/orchestrator.py`) to pass the
+already-constructed `EpisodeStore | None` as a fifth argument to
+`build_modules()` — the only production call site (`daemon.py`) needed no
+change, and only one test constructs `build_modules` directly.
+
+**Built — the mirror (§3.8).** `core/mirror.py`, pure functions only:
+`bucket_seconds` turns `focus_span` episodes into `(subject, hour)` seconds,
+clipped to a window and bucketed by *start* hour (a span is not split across
+an hour boundary — the same simplification a calendar already makes);
+`daily_distribution` normalises today's buckets into `Q`;
+`baseline_distribution` builds `P` as an exponentially-weighted average of
+the trailing `mirror_baseline_days`, same-weekday days up-weighted;
+`smooth` applies Dirichlet(+1) over the union of buckets either distribution
+touches (so `kl_divergence`'s division by `P_i` never sees a zero);
+`top_contributors` ranks buckets by `|Q_i log(Q_i/P_i)|` — verified to sum
+exactly to the full KL divergence; `missing_contributors` separately surfaces
+a usual bucket with *no* activity today (`Q_i = 0` makes its own KL term
+vanish by convention, so it can never appear in `top_contributors` — this is
+the only way §3.8's "you didn't open Obsidian today" example can be produced
+at all). `compute_mirror` composes all of it and refuses to fire with no
+baseline history at all (day one of the daemon) — silence, never a spurious
+"surprise" from comparing today against nothing. `interface/mirror_composer.py`'s
+`MirrorComposer(BaseModule)` mirrors `BriefingComposer`'s shape exactly: the
+day's first `IDLE_DETECTED` at or after `mirror_evening_hour` runs the
+pipeline once (tracked by calendar date, not a timer); `MIRROR_REQUEST` /
+`MIRROR_REPORT` gives L9 (which cannot import this module, rules.md §0) the
+on-demand path, ignoring the evening-hour gate entirely. `render_mirror`
+resolves every sentence's subject through `GraphMemory.display_name` — the
+same grounding discipline as the briefing, never a raw subject id. Wired into
+`InterfaceLayer` as a sixth op (`mirror`), the CLI (`neuropaca mirror`), and
+the REPL's known-verb set and help table, all as near-identical siblings of
+`briefing`'s existing wiring — including the same client/server socket-
+timeout margin bug class documented in S0 (`_MIRROR_TIMEOUT` set to 6.0 s,
+strictly under the test harness's fixed 8 s client read timeout, not equal to
+it).
+
+**Rejected.** A half-life or `tau` chosen by replaying two real weeks of
+episode-log history, as the phase's own spike literally calls for — there is
+no such history to replay yet (episodes have been enabled on the live daemon
+for hours, not weeks); `mirror_baseline_half_life_days = 7.0` and
+`mirror_kl_threshold = 0.5` are reasoned defaults, documented in
+`core/config.py` as the first things to recalibrate once real days
+accumulate, not as validated numbers. Splitting a focus span across an hour
+boundary in `bucket_seconds` — the extra bookkeeping bought nothing a
+"bucketed by start hour" simplification does not already deliver at the
+granularity a mirror sentence actually needs.
+
+**What is left**
+- Both exit criteria need real elapsed time this session cannot produce:
+  the mirror's false-alarm rate in dogfood, and the H4 IG-vs-score-sampled
+  user rating protocol. Neither is assumed met.
+- Not yet live-verified against the running daemon — the live
+  `neuropaca.b13.toml` config does not set `episodes_enabled = true`, so S0's
+  whole subsystem (and therefore both curiosity and the mirror) has never
+  run against real data. Turning it on is the user's call, same as every
+  prior S0/A-series config flip this session.
+- `mirror_baseline_half_life_days` and `mirror_kl_threshold` are placeholders
+  by design (see Rejected) — recalibrate once 14+ real days of episodes
+  exist.
+
 ---
 
 ## Appendix A — decision log index

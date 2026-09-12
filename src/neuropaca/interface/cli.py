@@ -26,6 +26,7 @@
     neuropaca run "pkill -f webpack"           # hand a command to the action layer
     neuropaca run --backup "systemctl --user restart x"   # same, state backed up first
     neuropaca briefing                         # what's waiting, on demand (S0)
+    neuropaca mirror                           # what changed today, on demand (A2)
     neuropaca doctor                           # offline diagnosis (B9, no daemon)
     neuropaca export <path>                    # dump the graph out of data/ (B9)
     neuropaca panic                            # kill the daemon, wipe state (B9)
@@ -55,6 +56,7 @@ _USAGE = (
     "       neuropaca overview                   # what NeuroPACA is + the layer map\n"
     '       neuropaca run [--backup] "<command>" # hand a command to the action layer\n'
     "       neuropaca briefing                   # what's waiting, on demand (S0)\n"
+    "       neuropaca mirror                     # what changed today, on demand (A2)\n"
     "       neuropaca doctor                     # offline diagnosis (no daemon needed)\n"
     "       neuropaca export <path> [--force]    # dump the graph out of data/\n"
     "       neuropaca panic [--yes]              # kill the daemon and wipe all state\n"
@@ -103,6 +105,8 @@ def _parse(argv: list[str]) -> tuple[dict[str, Any], str | None]:
         return {"op": "confirmations"}, socket_override
     if head == "briefing":
         return {"op": "briefing"}, socket_override
+    if head == "mirror":
+        return {"op": "mirror"}, socket_override
     if head == "confirm":
         if len(rest) != 1:
             raise _CliError("'confirm' needs exactly one request id (add --deny to refuse)")
@@ -231,6 +235,17 @@ def _render(request: dict[str, Any], resp: dict[str, Any]) -> int:
         moment = resp.get("moment")
         if not moment:
             console.print("[dim]nothing to brief right now[/dim]")
+            return 0
+        console.print(f"[magenta]◆[/magenta] {_e(str(moment.get('text', '')))}")
+        evidence = moment.get("evidence") or []
+        if evidence:
+            console.print(f"  [dim]evidence: {_e(', '.join(str(e) for e in evidence))}[/dim]")
+        return 0
+
+    if op == "mirror":
+        moment = resp.get("moment")
+        if not moment:
+            console.print("[dim]nothing unusual today[/dim]")
             return 0
         console.print(f"[magenta]◆[/magenta] {_e(str(moment.get('text', '')))}")
         evidence = moment.get("evidence") or []

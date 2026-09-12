@@ -46,6 +46,7 @@ _KNOWN_VERBS = {
     "export",
     "health",
     "insights",
+    "mirror",
     "notifications",
     "overview",
     "panic",
@@ -161,6 +162,7 @@ def print_help() -> None:
                 "hand a command to the action layer (confirmation still required)",
             ),
             ("briefing", "what's waiting, on demand (S0)"),
+            ("mirror", "what changed today, on demand (A2)"),
         ],
     )
     _section(
