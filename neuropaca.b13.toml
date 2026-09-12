@@ -16,6 +16,11 @@
 # the unfiltered picture first — expect `python` / `node` / `claude` rows and the
 # daemon's own footprint in the graph and the CSV. The round-2 exclusion list is
 # a soak *output*, not a guess.
+#
+# `episodes_enabled = true` (user decision, this soak restart): S0/A1/A2's
+# whole conditional-module path (EpisodicWriter, BriefingComposer,
+# MirrorComposer, curiosity's episode-store-backed seed choice) has never
+# run against real data before — this soak is what actually exercises it.
 
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
 interactive_model_path = "models/qwen2.5-3b-instruct-q4_k_m.gguf"
@@ -27,6 +32,9 @@ quarantine_path = "data/quarantine"
 log_level = "INFO"
 log_to_file = true
 log_file_path = "data/neuropaca.log"
+
+episodes_enabled = true
+episodes_db_path = "data/episodes.sqlite"
 
 # Post-terminal-removal: what scripts/soak_probe.py reads instead of
 # `neuropaca health` over the (now-removed) L9 socket. Written atomically
