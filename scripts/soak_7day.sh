@@ -93,13 +93,23 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" | tee -a "$LOG"; }
 # --- refuse to start without the gate ----------------------------------------
 # scripts/soak_gate.sh writes this stamp only after proving, on this machine,
 # that the daemon has WAYLAND_DISPLAY, the collector did not self-disable, the
-# L9 socket answers, and real activity edges appear. Spending a week without
+# health dump is fresh, and real activity edges appear. Spending a week without
 # that is spending a week to learn nothing -- the whole B7 lesson.
+#
+# NEUROPACA_SOAK_SKIP_GATE=1 is the one sanctioned way past this without
+# actually re-running the hour: an explicit, logged operator override for the
+# case where the gate already passed earlier the same day on unchanged
+# sensing code and re-running it would just re-prove the same fact. It is
+# never the default and never silent -- see the log line below.
 if [ ! -f "$GATE_STAMP" ] && [ "${NEUROPACA_SOAK_SKIP_GATE:-0}" != "1" ]; then
   log "REFUSING TO START: no gate stamp at ${GATE_STAMP}"
   log "Run scripts/soak_gate.sh first (1 hour). It is the cheap version of"
   log "finding out that the sensing path is dead."
   exit 1
+fi
+if [ ! -f "$GATE_STAMP" ] && [ "${NEUROPACA_SOAK_SKIP_GATE:-0}" = "1" ]; then
+  log "GATE SKIPPED by explicit operator override (NEUROPACA_SOAK_SKIP_GATE=1) -- no stamp at ${GATE_STAMP}."
+  log "This is not a claim that the gate would pass now; it is a recorded decision not to spend the hour checking."
 fi
 
 # --- session bookkeeping ------------------------------------------------------

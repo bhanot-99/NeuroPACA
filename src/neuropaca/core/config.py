@@ -346,6 +346,14 @@ class Config:
             # the entries above, just a tool that runs from a dev checkout
             # rather than the shipped daemon.
             "pytest",
+            # The same D-20 reasoning again, caught on the live graph a second
+            # time (2026-09-12): whatever `claude` CLI session is doing the
+            # daemon-management work in a terminal window is not the user's
+            # own activity either, and it was never added here — every
+            # co-occurrence edge that session's own terminal use wired
+            # (Hebbian "related_to" from `app:cosmic-term` to nearly
+            # everything else touched nearby in time) was noise, not signal.
+            "claude",
         ]
     )
     # B14 · web-app attribution. When the focused window's app_id is in
