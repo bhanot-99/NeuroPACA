@@ -4,16 +4,15 @@
 """F2 · `NotificationDispatcher` (VISION_PHASES.md).
 
 `notify-send` itself is never actually invoked — `asyncio.create_subprocess_exec`
-is monkeypatched to a fake process, so these tests exercise the (confirmed-safe)
-"every outcome reads as ignored" behaviour and the timeout/kill path without
-touching the real desktop (rules.md §8's spirit: no real external dependency in
-a unit test).
+is monkeypatched to a fake process, so these tests exercise the outcome mapping
+and the timeout/kill path without touching the real desktop (rules.md §8's
+spirit: no real external dependency in a unit test).
 
-Every case below resolves to `"ignored"` — that is not a bug in the test, it is
-the module's actual, deliberate behaviour: `cosmic-notifications` was confirmed
-this session to fabricate an "accepted" signal on its own, so nothing
-`notify-send` reports is trusted any more (`interface/notifier.py`'s own
-docstring has the full D-Bus evidence).
+Two groups: with `guardian_trust_notification_actions` off (the default —
+every outcome reads as `ignored`, confirmed necessary because
+`cosmic-notifications` fabricates an "accepted" signal on its own), and with
+it on (real stdout parsing — confirmed safe on a verified daemon like
+`swaync`, per `interface/notifier.py`'s own docstring).
 """
 
 from __future__ import annotations
@@ -43,14 +42,20 @@ def _moment(*, expires_in_minutes: float = 10.0) -> Moment:
 
 
 class _FakeProcess:
-    def __init__(self, *, hang: bool = False) -> None:
+    def __init__(self, stdout: bytes = b"", *, hang: bool = False) -> None:
+        self._stdout = stdout
         self._hang = hang
         self.killed = False
 
+    async def communicate(self) -> tuple[bytes, bytes]:
+        if self._hang:
+            await asyncio.sleep(3600.0)
+        return self._stdout, b""
+
     async def wait(self) -> int:
         # A real `kill()` makes any subsequent `wait()` return promptly once
-        # the OS reaps the process — the second, unwrapped `await proc.wait()`
-        # in `_show()` (reaping after a timeout) relies on exactly that.
+        # the OS reaps the process — the unwrapped `await proc.wait()` in
+        # `_show()`'s timeout cleanup relies on exactly that.
         if self._hang and not self.killed:
             await asyncio.sleep(3600.0)
         return -9 if self.killed else 0
@@ -60,7 +65,11 @@ class _FakeProcess:
 
 
 async def _notifier(
-    monkeypatch, clock=None, fake_process=None, which_result="/usr/bin/notify-send"
+    monkeypatch,
+    clock=None,
+    fake_process=None,
+    which_result="/usr/bin/notify-send",
+    trust=False,
 ):
     bus = EventBus.get_instance()
     await bus.start()
@@ -74,7 +83,9 @@ async def _notifier(
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
     notifier = NotificationDispatcher(
-        bus, Config(inference_backend="fake"), clock=clock or FakeClock(wall=_NOW)
+        bus,
+        Config(inference_backend="fake", guardian_trust_notification_actions=trust),
+        clock=clock or FakeClock(wall=_NOW),
     )
     await notifier.initialize()
     await notifier.start()
@@ -124,6 +135,43 @@ async def test_subprocess_launch_failure_is_ignored_not_raised(monkeypatch) -> N
     notifier, bus = await _notifier(monkeypatch, fake_process=OSError("no such file"))
     outcome = await notifier._show(_moment())
     assert outcome == "ignored"
+    await bus.stop()
+
+
+# ---------------------------------------------- trust=True (a verified daemon)
+
+
+async def test_trusted_keep_click_is_accepted(monkeypatch) -> None:
+    notifier, bus = await _notifier(
+        monkeypatch, fake_process=_FakeProcess(stdout=b"keep\n"), trust=True
+    )
+    outcome = await notifier._show(_moment())
+    assert outcome == "accepted"
+    await bus.stop()
+
+
+async def test_trusted_dismiss_click_is_dismissed(monkeypatch) -> None:
+    notifier, bus = await _notifier(
+        monkeypatch, fake_process=_FakeProcess(stdout=b"dismiss\n"), trust=True
+    )
+    outcome = await notifier._show(_moment())
+    assert outcome == "dismissed"
+    await bus.stop()
+
+
+async def test_trusted_close_without_a_labelled_action_is_dismissed(monkeypatch) -> None:
+    notifier, bus = await _notifier(monkeypatch, fake_process=_FakeProcess(stdout=b""), trust=True)
+    outcome = await notifier._show(_moment())
+    assert outcome == "dismissed"
+    await bus.stop()
+
+
+async def test_trusted_timeout_is_still_ignored(monkeypatch) -> None:
+    proc = _FakeProcess(hang=True)
+    notifier, bus = await _notifier(monkeypatch, fake_process=proc, trust=True)
+    outcome = await notifier._show(_moment(expires_in_minutes=1 / 60.0))
+    assert outcome == "ignored"
+    assert proc.killed is True
     await bus.stop()
 
 

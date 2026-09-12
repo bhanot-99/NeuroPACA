@@ -12,33 +12,36 @@ for exactly that one job, and nothing else: it does not decide *whether* to
 speak (that's `drive/guardian.py`) or run any inference — it subscribes
 `MOMENT_DELIVERED` only, and turns each one into a real notification.
 
-**Every outcome reads as `ignored`, on purpose — this is not the design,
-it's a confirmed workaround.** `notify-send --wait --action=keep=Keep
---action=dismiss=Dismiss` still shows the popup (`-t 0` disables the
-notification daemon's own auto-hide so `moment.expires_at` is the only
-timeout in play), but its result is never trusted. Verified directly at the
-D-Bus level this session (bypassing `notify-send`, calling `Notify()` and
-watching the raw signals): `cosmic-notifications 0.1.0` fires
-`ActionInvoked(id, "keep")` followed by `NotificationClosed(id, reason=2)`
-("dismissed by the user") **within seconds of every notification, with zero
-human interaction** — it fabricates the accept signal itself. This is not a
-`notify-send` bug and listening to the D-Bus signals directly instead of
-shelling out would not fix it (that was tried, first, and produces the same
-fabricated signals) — the unreliability is inside `cosmic-notifications`
-itself, not in how this module talks to it. Trusting `"keep"` on stdout
-would make the guardian believe every single moment was enthusiastically
-accepted, which is worse than no signal at all — so nothing from
-`notify-send`'s exit is interpreted; every completed run (real close,
+**Trust is opt-in** (`config.guardian_trust_notification_actions`, default
+`False`) — this is not a hedge, it's a confirmed necessity on at least one
+real daemon. `notify-send --wait --action=keep=Keep --action=dismiss=Dismiss`
+always shows the popup (`-t 0` disables the notification daemon's own
+auto-hide so `moment.expires_at` is the only timeout in play); whether its
+result is *believed* depends on the flag. Verified directly at the D-Bus
+level this session (bypassing `notify-send`, calling `Notify()` and watching
+the raw signals): `cosmic-notifications 0.1.0` fires `ActionInvoked(id,
+"keep")` followed by `NotificationClosed(id, reason=2)` ("dismissed by the
+user") **within seconds of every notification, with zero human
+interaction** — it fabricates the accept signal itself, and listening to the
+D-Bus signals directly instead of shelling out would not have fixed that
+(tried first; same fabricated signals) — the unreliability is inside
+`cosmic-notifications`, not in how anything talks to it. Trusting `"keep"`
+on stdout on a daemon like that would make the guardian believe every
+single moment was enthusiastically accepted, worse than no signal at all —
+hence the safe default. **`SwayNotificationCenter` (swaync) was separately
+confirmed, the same session, to report real clicks correctly** — a genuine
+`ActionInvoked` a few seconds after an actual click, not an instant
+fabrication — so the flag exists for exactly that case: turn it on once
+your own notification daemon is verified, not by default for daemons this
+code has never seen. With the flag off, every completed run (real close,
 fabricated close, or our own timeout) reports `ignored`, matching F2's own
-"expired untouched" outcome, which already accounts for "no real signal
-available". Revisit if `cosmic-notifications` ever implements actions
-correctly upstream — until then this is the honest answer, not a stopgap
-that quietly returns wrong data. The tray-menu fallback F2 already names
-("if no: the tray menu carries it") is the real path to a genuine
-accept/dismiss signal on this system.
+"expired untouched" outcome. With it on: `"keep"` on stdout -> **accepted**;
+any other completion -> **dismissed**; our own timeout -> **ignored**. The
+tray-menu fallback F2 already names ("if no: the tray menu carries it")
+remains the answer for a daemon that never renders actions at all.
 
 `notify-send` missing entirely (e.g. a bare CI container) degrades the same
-way: `ignored`, immediately, never raised.
+way regardless of the flag: `ignored`, immediately, never raised.
 """
 
 from __future__ import annotations
@@ -147,6 +150,7 @@ class NotificationDispatcher(BaseModule):
             return "ignored"
         if shutil.which("notify-send") is None:
             return "ignored"
+        trust = self.config.guardian_trust_notification_actions
         argv = [
             "notify-send",
             f"--app-name={_APP_NAME}",
@@ -159,22 +163,29 @@ class NotificationDispatcher(BaseModule):
         ]
         try:
             proc = await asyncio.create_subprocess_exec(
-                *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+                *argv,
+                stdout=asyncio.subprocess.PIPE if trust else asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
         except OSError:
             return "ignored"
         try:
-            await asyncio.wait_for(proc.wait(), timeout=remaining)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=remaining)
         except TimeoutError:
             proc.kill()
-        with contextlib.suppress(ProcessLookupError):
-            await proc.wait()
-        # `cosmic-notifications` fabricates `ActionInvoked("keep")` +
-        # `NotificationClosed(reason=2)` within seconds of every notification
-        # regardless of interaction (confirmed at the D-Bus level) — nothing
-        # notify-send's exit reports is trustworthy, so every completed run,
-        # real close or our own timeout alike, reads as `ignored`.
-        return "ignored"
+            with contextlib.suppress(ProcessLookupError):
+                await proc.wait()
+            return "ignored"
+        if not trust:
+            # `cosmic-notifications` fabricates `ActionInvoked("keep")` +
+            # `NotificationClosed(reason=2)` within seconds of every
+            # notification regardless of interaction (confirmed at the
+            # D-Bus level) — nothing notify-send's exit reports is
+            # trustworthy on an unverified daemon, so a real close still
+            # reads as `ignored` here.
+            return "ignored"
+        clicked = (stdout or b"").decode(errors="replace").strip()
+        return "accepted" if clicked == "keep" else "dismissed"
 
     def _on_error(self, exc: Exception) -> None:
         self._errors += 1

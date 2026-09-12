@@ -5256,7 +5256,7 @@ real desktop time, not a code review.
 | | |
 | --- | --- |
 | **Branch** | `a3-the-guardian` |
-| **Outcome** | Full suite: 909 → **929 collected, 922 passed**, 7 pre-existing skips (+20 new tests: 13 guardian, 6 notifier, 1 episodic-writer). `EpisodeKind` +1 (`GUARDIAN_POSTERIOR`, 7 → 8; no `EventType` change — `MOMENT_DELIVERED`/`MOMENT_FEEDBACK` already existed, unused). `ruff`/`mypy` clean. Live-verified in isolation (below) — not yet against the running 7-day soak daemon, which stays untouched. |
+| **Outcome** | Full suite: 909 → **934 collected, 927 passed**, 7 pre-existing skips (+25 new tests: 14 guardian, 10 notifier, 1 episodic-writer). `EpisodeKind` +1 (`GUARDIAN_POSTERIOR`, 7 → 8; no `EventType` change — `MOMENT_DELIVERED`/`MOMENT_FEEDBACK` already existed, unused). `ruff`/`mypy` clean. Live-verified in isolation (below) — not yet against the running 7-day soak daemon, which stays untouched. A pre-merge audit pass (below) caught and fixed one real bug (a permanent-silence deadlock) before it shipped. |
 
 **In plain words.** Two real gaps surfaced before this phase could even
 start, both from the same afternoon's terminal removal (§21.20): nothing
@@ -5370,13 +5370,73 @@ direct listener would receive the identical false `ActionInvoked("keep")` —
 new dependency, more code, no correctness gained; correctly abandoned once
 the evidence came back, not before.
 
+**Round 4 — the daemon itself got replaced, and the picture changed again.**
+The tray-menu fallback (round 3's conclusion) is real work for a future
+session; in the meantime the user asked, directly, whether Linux lets you
+swap the notification daemon at all. It does — `org.freedesktop.Notifications`
+is just whichever process currently owns that D-Bus name, and
+`cosmic-notifications` (not a systemd unit, a plain autostarted process)
+respawns fast enough that winning the name back takes a real race
+(`kill $(pgrep cosmic-notifications); nohup <daemon> & disown`, no
+intervening `sleep`). `dunst` lost that race to a fast respawn on Pop!_OS
+24.04. `sway-notification-center` (swaync) won it, and — user-confirmed,
+watched live via `dbus-monitor` — reported a real `ActionInvoked(id,
+"dismiss")` a couple of seconds after an actual click, not an instant
+fabrication. Separately verified the exact code path this module uses
+(`notify-send --wait`, not raw D-Bus) reports the same real click correctly
+under swaync. **Consequence:** trusting the daemon is not universally unsafe,
+it depends entirely on which daemon is running — a fact §21.22's first
+three rounds couldn't have known without one that actually worked to compare
+against. `interface/notifier.py` gained `config.
+guardian_trust_notification_actions` (default `False`) — off by default for
+any machine (including this project's own dev machine, until swaync
+replaces `cosmic-notifications` at the OS level, which is outside this
+repo's scope), on once a user has verified their own daemon the way this
+session did. With it on, `_show` reads stdout again (`"keep"` → accepted,
+anything else → dismissed, our own timeout → ignored, same three outcomes,
+just genuinely earned this time).
+
+**Audit (pre-merge, before any of the above landed).** A dedicated pass,
+not a re-run of the existing suite — this project's own convention after a
+phase is built+tested+committed. Two real findings, one serious:
+- **A permanent-silence deadlock.** `_decide_and_maybe_deliver` checked
+  `_budget_used >= nudge_daily_budget` *before* the day-rollover reset, which
+  lived inside `_spend_budget` — only reached once that same check had
+  already passed. The first day the guardian ever exhausted its budget, the
+  reset became permanently unreachable: every day after that would see
+  `_budget_used` still pinned at yesterday's cap, forever. `moments.py`'s own
+  `_cap_day` does this in the correct order (reset, then check) and was the
+  pattern this was supposed to mirror but didn't. Fixed by folding the reset
+  into `_roll_budget_day`, called before the check; a regression test
+  (`test_budget_resets_on_a_new_day_even_after_being_exhausted`) proposes
+  past the cap, advances a `FakeClock` by 24 h, and asserts delivery resumes
+  — traced by hand to confirm it fails against the pre-fix ordering.
+- **A dead branch dressed as live logic.** `interrupt_cost_focus` was read
+  inside a conditional (`if focus_bucket == "focused": use it`) that can
+  never be true — both call sites into `_decide_and_maybe_deliver` already
+  guarantee focus isn't `"focused"` there (a focus session holds
+  unconditionally, before this method is ever reached). The config
+  docstring compounded it, describing the field as if it actively gated
+  delivery. Not a behavioural bug (the branch never fired, so nothing was
+  ever computed wrong) but a real maintenance hazard — a future reader would
+  reasonably believe tuning `interrupt_cost_focus` does something. Simplified
+  to always use `interrupt_cost_normal` where this method actually runs, and
+  redocumented `interrupt_cost_focus` as a reserved switch with no class
+  behind it yet, the same honest labelling `api_call_enabled` already uses.
+
 **What is left**
-- **The tray-menu fallback F2's own doc names** ("if no: the tray menu
-  carries it") is now the *only* real path to a genuine accept/dismiss
-  signal on this system — round 3 proved the D-Bus layer itself cannot be
-  trusted, not just that buttons fail to render. Needs a write-back channel
-  from `scripts/neuropaca_tray.py` to the daemon, which is exactly the thing
-  §21.21 confirmed does not exist yet for any purpose.
+- The tray-menu fallback F2's own doc names remains the answer for any
+  daemon that never renders actions at all (unverified, unknown, or
+  confirmed-broken like `cosmic-notifications`) — still not built. Needs a
+  write-back channel from `scripts/neuropaca_tray.py` to the daemon, which
+  is exactly the thing §21.21 confirmed does not exist yet for any purpose.
+- `guardian_trust_notification_actions` is a per-machine, manually-verified
+  flag, not an auto-detected one — nothing in this codebase checks which
+  daemon owns `org.freedesktop.Notifications` before trusting it. Swapping
+  `cosmic-notifications` for `swaync` at the OS level (so the trust actually
+  holds after a reboot) is outside this repo — an environment change, the
+  user's call, not yet made permanent (done by hand, this session, via the
+  D-Bus name race).
 - Every exit criterion needing a real dogfood window (zero moments
   mid-focus over two weeks, a falling dismissal rate, H2's alternate-week
   protocol) needs real elapsed time this session cannot produce.
@@ -5384,10 +5444,10 @@ the evidence came back, not before.
   daemon's own measurement window was not interrupted for this. Turning
   `guardian_enabled` on there is the user's call, same as every prior
   A-series config flip.
-- `interrupt_cost_focus`/`interrupt_cost_normal`/`nudge_daily_budget` are
-  reasoned defaults (0.9, 0.1, 10/day), not calibrated against any real
-  acceptance data — the same "first thing to recalibrate once real days
-  accumulate" caveat every A2/A3 threshold in this dossier already carries.
+- `interrupt_cost_normal`/`nudge_daily_budget` are reasoned defaults (0.1,
+  10/day), not calibrated against any real acceptance data — the same
+  "first thing to recalibrate once real days accumulate" caveat every
+  A2/A3 threshold in this dossier already carries.
 
 ---
 

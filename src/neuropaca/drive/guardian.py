@@ -26,10 +26,13 @@ bucket)` arm, `bucket = focus x hour x recent_dismissals` (36 per kind):
 
 Below `guardian_burn_in_n` observations an arm uses its deterministic
 posterior mean instead of a sample (the cold-start burn-in, VISION.md §3.6);
-at or above it, a real Thompson draw. `interrupt_cost_focus` /
-`interrupt_cost_normal` are the only two cost tiers the design names —
-`just_ended` shares `interrupt_cost_normal`; the 3-way focus split is for
-which arm learns, not a third cost. A daily budget (`nudge_daily_budget`)
+at or above it, a real Thompson draw, compared against `interrupt_cost_normal`
+— the only cost this module ever actually reads. `interrupt_cost_focus`
+(`core/config.py`) is a reserved switch: a focus session holds
+unconditionally, before any cost comparison runs, so it has no class behind
+it yet, same as `api_call_enabled`. `just_ended` shares `interrupt_cost_normal`
+with `normal`; the 3-way focus split is for which arm learns, not a third
+cost. A daily budget (`nudge_daily_budget`)
 caps deliveries; exhausting it drops the rest of the day's moments the same
 as a losing sample — no re-queue, since a coin flip that came up "no" needs
 no memory. `focused`-held moments are the only ones queued (bounded, each
@@ -269,28 +272,34 @@ class Guardian(BaseModule):
         return self._rng.betavariate(arm.a, arm.b)
 
     async def _decide_and_maybe_deliver(self, moment: Moment, now: datetime) -> None:
+        # Both call sites (`on_moment_proposed`, `_reevaluate_held`) already
+        # guarantee `_focus_bucket(now) != "focused"` here — a focus session
+        # holds unconditionally, before this method is ever reached, so only
+        # `interrupt_cost_normal` (covering `normal` and `just_ended` alike)
+        # is ever actually consulted.
         bucket = self._bucket_key(now)
         arm = self._touch_arm(moment.kind, bucket, now)
-        cost = (
-            self.config.interrupt_cost_focus
-            if self._focus_bucket(now) == "focused"
-            else self.config.interrupt_cost_normal
-        )
+        cost = self.config.interrupt_cost_normal
         if self._p_hat(arm) * moment.value <= cost:
             self._dropped_sample += 1
             return
+        self._roll_budget_day(now)
         if self._budget_used >= self.config.nudge_daily_budget:
             self._dropped_budget += 1
             return
-        self._spend_budget(now)
+        self._budget_used += 1
         await self._deliver(moment, bucket, now)
 
-    def _spend_budget(self, now: datetime) -> None:
+    def _roll_budget_day(self, now: datetime) -> None:
+        """Reset the counter on a new calendar day — must run *before* the
+        cap is checked (`moments.py`'s `_cap_day` does this in the same
+        order): resetting only after a passed check means a day that ends at
+        the cap never resets at all, since the reset code becomes
+        unreachable the moment the check starts failing permanently."""
         today = now.date()
         if self._budget_day != today:
             self._budget_day = today
             self._budget_used = 0
-        self._budget_used += 1
 
     async def _deliver(self, moment: Moment, bucket: str, now: datetime) -> None:
         focus, hour, dismiss = bucket.split("|", 2)

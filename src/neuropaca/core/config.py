@@ -296,13 +296,19 @@ class Config:
     # A3 · the guardian (VISION.md §3.6, VISION_PHASES.md). Thompson sampling
     # per (moment kind, context bucket) arm — deliver iff the posterior mean
     # (below `guardian_burn_in_n` observations) or a Beta sample (at or above
-    # it) times the moment's own value beats the interrupt cost, and the
-    # daily budget still allows it. `interrupt_cost_focus` applies while a
-    # focus session is active (nothing gets through, regardless of the
-    # sample — the guardian holds it instead and re-evaluates once the
-    # session ends); `interrupt_cost_normal` applies otherwise, including
-    # `just_ended` — that bucket exists for the arms to learn separately,
-    # not for a third cost tier the doc never names.
+    # it) times `interrupt_cost_normal` beats the interrupt cost, and the
+    # daily budget still allows it. `interrupt_cost_normal` covers both
+    # `normal` and `just_ended` — that bucket exists for the arms to learn
+    # separately, not for a third cost tier the doc never names.
+    # `interrupt_cost_focus` is a **reserved switch, not currently read**
+    # (the `ApiCallAction`/`api_call_enabled` precedent, B7): a focus session
+    # holds unconditionally — "a context override, not a cold-start fix"
+    # (VISION.md §3.6) — before any cost comparison ever runs, so there is no
+    # class behind this field yet, same as `api_call_enabled` has none behind
+    # it. Kept because the phase doc names it; wiring it in would mean
+    # replacing the unconditional hold with a (still effectively unclearable)
+    # high-cost comparison instead — a deliberate design choice, not made
+    # here.
     # `guardian_just_ended_minutes` is how long after `ACTIVITY_DETECTED`
     # a moment still counts as "just ended" rather than "focused".
     guardian_enabled: bool = True
@@ -312,6 +318,17 @@ class Config:
     guardian_decay: float = 0.98
     guardian_burn_in_n: int = 5
     guardian_just_ended_minutes: int = 5
+    # F2 · whether `interface/notifier.py` may trust the accept/dismiss label
+    # `notify-send --wait` reports. Off by default: `cosmic-notifications`
+    # (the stock daemon on this project's own dev machine) was confirmed,
+    # at the D-Bus level, to fabricate `ActionInvoked("keep")` on every
+    # notification with zero human interaction — trusting it by default
+    # would teach the guardian that every moment is enthusiastically
+    # accepted, on any machine still running a daemon with the same bug.
+    # Turn this on only once you've verified your own notification daemon
+    # reports real clicks (e.g. replacing it with `dunst` or
+    # `swaync` — `SwayNotificationCenter` was confirmed correct this way).
+    guardian_trust_notification_actions: bool = False
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4

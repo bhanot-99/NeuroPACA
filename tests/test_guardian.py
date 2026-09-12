@@ -208,6 +208,37 @@ async def test_daily_budget_caps_deliveries() -> None:
     await bus.stop()
 
 
+async def test_budget_resets_on_a_new_day_even_after_being_exhausted() -> None:
+    """Regression: the day-rollover reset used to live inside the
+    now-removed `_spend_budget`, only reached *after* the cap check passed —
+    so once a day ended at the cap, the reset code became unreachable and
+    the guardian went silent forever. `_roll_budget_day` now runs before the
+    check, the same order `moments.py`'s `_cap_day` always used."""
+    clock = FakeClock(wall=_NOW)
+    guardian, bus = await _guardian(clock=clock, nudge_daily_budget=1)
+    delivered: list[Event] = []
+    bus.subscribe(EventType.MOMENT_DELIVERED, _collect(delivered))
+    await guardian.on_idle_detected(Event(event_type=EventType.IDLE_DETECTED))
+
+    await guardian.on_moment_proposed(
+        Event(event_type=EventType.MOMENT_PROPOSED, payload={"moment": _moment(value=1.0)})
+    )
+    await guardian.on_moment_proposed(
+        Event(event_type=EventType.MOMENT_PROPOSED, payload={"moment": _moment(value=1.0)})
+    )
+    await bus.join()
+    assert len(delivered) == 1  # today's budget of 1 is exhausted
+
+    await clock.advance(24 * 3600.0)  # a new day, same hour bucket
+    await guardian.on_moment_proposed(
+        Event(event_type=EventType.MOMENT_PROPOSED, payload={"moment": _moment(value=1.0)})
+    )
+    await bus.join()
+
+    assert len(delivered) == 2  # tomorrow's budget must not still read as spent
+    await bus.stop()
+
+
 # --------------------------------------------------------------------- decay
 
 
