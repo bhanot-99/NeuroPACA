@@ -257,9 +257,10 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
 
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
     # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> A0 (B8, D-16; Architecture.md §10
-    # A7; VISION_PHASES.md A0 adds `moments`). L9 interface was removed (no
-    # terminal/CLI control surface going forward, superseded by voice);
-    # `presence` (A1's state machine, socket-free) took its place at the tail.
+    # A7; VISION_PHASES.md A0 adds `moments`, A3 adds `guardian`/`notifier`).
+    # L9 interface was removed (no terminal/CLI control surface going forward,
+    # superseded by voice); `presence` (A1's state machine, socket-free) took
+    # its place at the tail.
     assert [m.name for m in modules] == [
         "sensing",
         "diagnosis",
@@ -269,6 +270,8 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "agents",
         "idle",
         "moments",
+        "guardian",
+        "notifier",
         "presence",
     ]
     assert isinstance(modules[0], XMetricCollector)
@@ -300,6 +303,8 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
         "agents",
         "idle",
         "moments",
+        "guardian",
+        "notifier",
         "presence",
     ]
     assert with_activity[0]._emit_idle_from_cpu is False
