@@ -278,3 +278,6 @@ def test_refractory_cycles_may_be_zero_but_not_negative() -> None:
     Config(inference_backend="fake", dmn_seed_refractory_cycles=0)
     with pytest.raises(ConfigError, match="dmn_seed_refractory_cycles"):
         Config(inference_backend="fake", dmn_seed_refractory_cycles=-1)
+
+
+# gen-ref: 456c7b23

@@ -4317,6 +4317,78 @@ during dry-run (an effect, which dry-run forbids).
 
 ---
 
+### 21.13 A0 · The welcome-back moment — VISION_PHASES.md begins
+
+| | |
+| --- | --- |
+| **Branch** | `a0-welcome-back-moment` (off `main` after the VISION harden commit) |
+| **Outcome** | One commit. Full suite (`-m ""`) 883 → **890 collected, 887 passed**, 3 pre-existing skips unrelated to this change. No schema bump — no `NodeType`/`RelationType` touched; `EventType` +3 (`MOMENT_PROPOSED`/`_DELIVERED`/`_FEEDBACK`, approved). |
+
+**In plain words.** The first phase of the new secretary plan, not a defect fix:
+you come back to your laptop and one line greets you — what it wondered about
+while you were away, and what you were in the middle of — built entirely from
+data the system already collects. Nothing new is sensed; the only new thing is
+a module that notices what already exists and says it out loud, once, when it's
+worth saying.
+
+**Spike, answered against real state instead of guessed:**
+- *Can `ACTION_PROPOSAL` be published by a module other than L8?* Yes — confirmed
+  from the L7 registry itself (Architecture.md §11b): `_instantiate` gates on
+  `action_type` membership in `_PROPOSABLE`, never on which module published it.
+  `MomentComposer` uses the identical description-only path L8 uses (D-16).
+- *How often do idle thoughts actually fire?* Checked the live soak
+  (`data/soak/samples.jsonl`, 183 one-minute samples, ~3 h window): `insights`
+  stayed at **0** for the whole window. The "you were in {app}" half is the one
+  that will carry most real returns — both halves were already designed to drop
+  independently, this just confirms which one matters most in practice.
+- *Idle-spell length distribution?* No per-spell duration log exists yet
+  (`data/neuropaca.log` too sparse, no raw `IDLE_DETECTED`→`ACTIVITY_DETECTED`
+  timestamp trail). Kept the design's 20-minute default rather than fit a
+  distribution to data that doesn't exist; flagged for the dogfood exit
+  criterion instead of guessed now.
+
+**Built.** `interface/moments.py` — `MomentComposer(BaseModule)`: opens a spell
+on `IDLE_DETECTED`, collects `source="idle"` `INSIGHT_GENERATED` thoughts while
+it's open, closes on `ACTIVITY_DETECTED` using its `idle_seconds` payload
+directly (no second timer kept), and — if the spell cleared
+`welcome_min_idle_minutes` and the day's `welcome_daily_cap` — composes a fixed
+two-slot template: the highest-relevance thought (ties → newest, read off
+`GraphMemory.get_node().relevance_score`) and the last focused `app:`/`webapp:`
+node, canonicalised through the same `AppIdentity` L3 already uses. Each slot is
+dropped independently when its node doesn't exist in the graph — silence, never
+a hollow "Welcome back." on its own. Publishes `Moment` on `MOMENT_PROPOSED`
+(F1's seam, for A3/S5 later) and, since the guardian doesn't exist yet, straight
+through as an `ACTION_PROPOSAL` `notification` — L7 still owns the gate, the
+audit log, and dry-run.
+
+**Proof.** 7 new tests (`tests/test_moments.py`): a full spell proposes exactly
+one grounded moment with both evidence ids; a spell shorter than the minimum
+proposes nothing; a spell with no thought still yields the focus line alone; a
+switch to an app never classified into the graph yields silence, not a
+half-true greeting; the daily cap holds across repeated spells; the
+highest-relevance thought wins with newest breaking ties; an `INSIGHT_GENERATED`
+from L4 (`source="diagnosis"`) is never mistaken for an idle thought. `ruff
+check .`, `ruff format --check .`, `mypy src/` all clean.
+
+**Rejected.** Deriving app/webapp node ids independently instead of reusing
+`AppIdentity` (drift risk against L3's own canonicalisation — same failure
+shape B17 already fixed once); gating thought selection on `Node.surfaced_at`
+(L9 already stamps that on every `INSIGHT_GENERATED` with confidence ≥ 0.75,
+including `proactive` — gating on it would almost always find nothing, since L9
+races ahead of the spell closing).
+
+**What is left**
+- The dogfood week itself — real returns, a zero-ungrounded-lines log, "the user
+  keeps it on for the week" — none of A0's exit checklist is evidence yet, only
+  the build and the unit tests are.
+- `scripts/_provenance.py` has not stamped `interface/moments.py` — needs
+  `PROV_SECRET`, not available to this session.
+- A3 (the guardian) is what actually decides deliver / hold / drop; until then
+  every qualifying moment fires straight through, bounded only by the minimum
+  idle and the daily cap.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.
@@ -4422,6 +4494,8 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | Graph schema version | **v8** (optional resource reading + `resources_at`, V-9); v7 = `LabelSpec.text` (V-7); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
+| Soak `insights` counter, 183 one-minute samples (~3 h) | **0** the whole window — idle thoughts are rare in practice, not the common case | A0 |
+| Full suite (`-m ""`) before / after A0 | 883 / **890 collected, 887 passed** (3 pre-existing skips) | A0 |
 
 ---
 

@@ -228,3 +228,6 @@ def test_node_data_reaches_the_page_as_text_never_as_markup() -> None:
     html = TEMPLATE.read_text("utf-8")
     panel = html[html.index("function showInspect") : html.index("// ---- chrome")]
     assert "innerHTML" not in panel
+
+
+# gen-ref: 265caa18

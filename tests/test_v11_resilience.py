@@ -131,3 +131,6 @@ def test_doctor_passes_when_the_service_is_enabled(monkeypatch, tmp_path) -> Non
     _offline_config(monkeypatch, tmp_path)
     _stub_state(monkeypatch, "enabled")
     assert offline.doctor([]) == 0
+
+
+# gen-ref: 930bc1eb
