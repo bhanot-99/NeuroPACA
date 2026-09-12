@@ -196,9 +196,18 @@ _ACRONYMS: frozenset[str] = frozenset(
 _PRETTY_WORDS: dict[str, str] = {
     "vscode": "VS Code",
     "code": "VS Code",
-    "cosmicterm": "Cosmic Term",
-    "cosmicfiles": "Cosmic Files",
-    "cosmicmonitor": "Cosmic Monitor",
+    # COSMIC desktop's own app names are accurate but opaque to anyone who
+    # hasn't used COSMIC — these render what the app actually *is* instead
+    # (user request, 2026-09-12: "cosmic files is just file manager"). Both
+    # forms: the canonical slug is hyphenated ("cosmic-files"), but this table
+    # is also consulted word-by-word after a `-`/`_` split, so the no-separator
+    # form is kept too in case a raw app_id ever normalises to one word.
+    "cosmicterm": "Terminal",
+    "cosmic-term": "Terminal",
+    "cosmicfiles": "File Manager",
+    "cosmic-files": "File Manager",
+    "cosmicmonitor": "System Monitor",
+    "cosmic-monitor": "System Monitor",
     "cosmiccomp": "Cosmic Comp",
     "github": "GitHub",
     "gitlab": "GitLab",

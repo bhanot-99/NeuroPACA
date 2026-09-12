@@ -224,6 +224,90 @@ returned spell; zero model calls.
 
 ---
 
+### A0.1 · Friendly names — the graph speaks your language — *size XS*
+
+**In plain words.** The first time A0 actually spoke — *"You were in Cosmic
+Term"* — the name was technically correct and immediately confusing: COSMIC's
+own app names (`Cosmic Files`, `Cosmic Term`) are accurate but opaque to
+anyone who hasn't used COSMIC, and every other faculty (the briefing, the
+mirror, the graph view) renders through the exact same name table, so the
+same confusion would have shown up everywhere else too. This is a defect
+fix surfaced *by* dogfooding A0, not a new faculty — worth its own short
+entry rather than folding silently into A0's own chapter, because it is a
+pattern (raw system-internal names leaking into user-facing text) that will
+recur every time a new app or a new desktop environment's naming shows up.
+
+**Needs:** A0 (surfaced it). **Delivers:** every node label rendered through
+`core/labels.py`'s `pretty_slug` — not just the two names that prompted this.
+
+**Spike — what else was hiding in the live graph**
+A full listing of every `app:` / `webapp:` node in the live 20-hour graph
+turned up, beyond the two named names, three different failure shapes worth
+telling apart:
+1. **Opaque-but-correct** (`Cosmic Files`, `Cosmic Term`, `Cosmic Monitor`) —
+   the name table already had entries for these; they were simply the
+   product name, not a plain description. Fixed here.
+2. **A real window that is not a separate app** (`Com System76
+   Cosmicfilesdialog` — COSMIC Files' own file-open/save dialog, a distinct
+   Wayland `app_id` for what is still just COSMIC Files). Fixed by aliasing
+   it in `app_identity.default.toml`, the existing B17 mechanism for "one
+   real app, several sensor names" — no new mechanism needed.
+3. **The daemon's own tooling counted as an app** (`Pytest`, access_count 20
+   in a session that ran nothing but test suites) — the B13/D-20 census
+   excludes the *shipped* daemon's own footprint (`neuropacad`, `python3`,
+   `node`, …) but a dev checkout's test runner was never on that list. Fixed
+   by adding `pytest` to `process_exclude_names`'s default.
+4. **Genuinely unexplained** (`Agy`, `Toplevel` — the latter is literally the
+   Wayland protocol term for a window handle, suggesting a fallback string
+   leaking through somewhere in the activity collector when a real app_id
+   could not be read). Not fixed here: renaming a symptom whose cause is
+   unknown would hide a real sensor defect behind a friendlier label. Left
+   for its own investigation — see **Risks**.
+
+**Design.** No new mechanism — this phase only *populates* two tables that
+already existed and already apply everywhere a name is rendered:
+- `core/labels.py`'s `_PRETTY_WORDS` — `cosmicterm`/`cosmic-term` → "Terminal",
+  `cosmicfiles`/`cosmic-files` → "File Manager", `cosmicmonitor`/`cosmic-monitor`
+  → "System Monitor" (both the no-separator and hyphenated forms, since the
+  table is consulted both as a whole-slug match and word-by-word after a
+  `-`/`_` split).
+- `data/app_identity.default.toml`'s `[alias]` table —
+  `com.system76.CosmicFilesDialog` → `cosmic-files`.
+- `Config.process_exclude_names`'s default — `+ "pytest"`.
+- The two already-existing nodes on the live graph needed a one-time
+  `GraphMemory.update_node()` + `save()` to pick up the new label immediately,
+  rather than waiting for them to be recreated; B17's `canonicalise_app_nodes()`
+  boot-tidy pass (already runs on every startup) merges the dialog node into
+  `app:cosmic-files` on its own, no manual step needed there.
+
+**Math.** None.
+
+**Load budget.** Zero — a dict lookup and one boot-time merge pass that
+already runs every startup for an unrelated reason (B17).
+
+**Tests.** `tests/test_labels.py`, `tests/test_app_identity.py`,
+`tests/test_graph_window.py` updated for the new pretty names (`pretty_slug`,
+`AppIdentity.pretty`, and the standalone graph-viewer's own `pretty_label`,
+which imports `labels.py` by path and needed no separate fix). Full suite
+green (951 passed) after the change.
+
+**Exit**
+- [x] `neuropaca tell` / the welcome-back moment / the graph view all render
+      "Terminal" and "File Manager", not the COSMIC product names.
+- [x] The existing two live nodes updated in place, not just future ones.
+- [ ] The dialog-node merge, confirmed on the next real daemon restart
+      (not yet observed — written down as an exit item, not assumed).
+
+**Risks.** `Agy` and `Toplevel` are recorded here as open, not silently
+dropped: `Toplevel` in particular reads like a fallback/default string
+substituting for a real Wayland `app_id` somewhere in
+`sensing/activity/collector.py`, which is a sensor defect, not a naming one —
+renaming it would make the symptom disappear without fixing the cause. Next
+session should grep the activity collector for a literal `"toplevel"` default
+before doing anything else with these two.
+
+---
+
 ### S0 · Episodic stream, attention, and the briefing core — *size L*
 
 **In plain words.** Today the graph knows *what goes with what*, but not *what

@@ -30,7 +30,7 @@ def test_pretty_label_hub_and_root() -> None:
 
 
 def test_pretty_label_apps_use_the_canonical_slug() -> None:
-    assert gw.pretty_label("app:cosmic-files", {"label": "cosmic-files"}) == "Cosmic Files"
+    assert gw.pretty_label("app:cosmic-files", {"label": "cosmic-files"}) == "File Manager"
     assert gw.pretty_label("app:brave", {"label": "brave"}) == "Brave"
     assert gw.pretty_label("webapp:github", {"label": "github"}) == "GitHub"
     assert gw.pretty_label("webapp:google-gemini", {"label": "google-gemini"}) == "Google Gemini"

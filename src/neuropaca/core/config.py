@@ -303,6 +303,13 @@ class Config:
             "chrome-devtools-mcp",
             "cosmic-comp",
             "Xwayland",
+            # A test run (this build's own `pytest`) exceeds process_min_rss_mb
+            # like any real app and got censused as `app:pytest` on the live
+            # graph (VISION_PHASES.md, the friendly-names sweep) — the same
+            # D-20 "the daemon's own tooling is not an activity" reasoning as
+            # the entries above, just a tool that runs from a dev checkout
+            # rather than the shipped daemon.
+            "pytest",
         ]
     )
     # B14 · web-app attribution. When the focused window's app_id is in

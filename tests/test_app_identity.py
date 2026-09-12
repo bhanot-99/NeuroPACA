@@ -91,7 +91,7 @@ def test_is_non_app_none_is_true(ident: AppIdentity) -> None:
 @pytest.mark.parametrize(
     ("canon", "expected"),
     [
-        ("cosmic-files", "Cosmic Files"),
+        ("cosmic-files", "File Manager"),
         ("brave", "Brave"),
         ("vscode", "VS Code"),
         ("github", "GitHub"),

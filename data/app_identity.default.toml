@@ -34,6 +34,15 @@ non_app = [
 "com.system76.CosmicTerm" = "cosmic-term"
 "com.system76.CosmicFiles" = "cosmic-files"
 "cosmicfiles" = "cosmic-files"
+# The file-open/save dialog is its own top-level window with its own app_id,
+# but it is COSMIC Files, not a separate application — merge it in rather
+# than let it mint a second, near-empty node every time it pops up. Both
+# forms: the raw dotted app_id (for a *new* node about to be created) and the
+# already-normalised hyphenated form (so the B17 boot-tidy pass can also
+# fold an *existing* junk node — `resolve()` never sees the original raw
+# string again once a node has already been normalised from it once).
+"com.system76.CosmicFilesDialog" = "cosmic-files"
+"com-system76-cosmicfilesdialog" = "cosmic-files"
 "com.system76.CosmicMonitor" = "cosmic-monitor"
 "com.system76.CosmicEdit" = "cosmic-edit"
 "com.system76.CosmicSettings" = "cosmic-settings"
