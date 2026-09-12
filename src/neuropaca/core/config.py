@@ -504,9 +504,7 @@ class Config:
         if self.mirror_kl_threshold <= 0.0:
             errs.append(f"mirror_kl_threshold must be > 0, got {self.mirror_kl_threshold}")
         if not 0 <= self.mirror_evening_hour <= 23:
-            errs.append(
-                f"mirror_evening_hour must be in [0, 23], got {self.mirror_evening_hour}"
-            )
+            errs.append(f"mirror_evening_hour must be in [0, 23], got {self.mirror_evening_hour}")
 
         if self.pressure_low_threshold <= 0:
             errs.append(f"pressure_low_threshold must be > 0, got {self.pressure_low_threshold}")

@@ -58,9 +58,7 @@ async def _seed_unusual_day(gm, store, now: datetime) -> None:
         base = day_start - timedelta(days=age) + timedelta(hours=9)
         store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", base, base + timedelta(hours=2))
     today = day_start + timedelta(hours=9)
-    store.record_span(
-        EpisodeKind.FOCUS_SPAN, "app:spreadsheet", today, today + timedelta(hours=4)
-    )
+    store.record_span(EpisodeKind.FOCUS_SPAN, "app:spreadsheet", today, today + timedelta(hours=4))
     await store.flush()
 
 

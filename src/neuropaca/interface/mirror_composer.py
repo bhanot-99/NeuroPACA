@@ -96,8 +96,7 @@ async def build_mirror_moment(
         context={
             "kl": result.kl,
             "buckets": [
-                f"{subject}@{hour}"
-                for (subject, hour), _score in (*result.top, *result.missing)
+                f"{subject}@{hour}" for (subject, hour), _score in (*result.top, *result.missing)
             ],
         },
         expires_at=now + timedelta(minutes=_MOMENT_EXPIRES_MINUTES),
