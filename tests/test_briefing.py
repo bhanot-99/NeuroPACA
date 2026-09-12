@@ -7,11 +7,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from neuropaca.core.clock import FakeClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EpisodeKind, NodeType, RelationType
+from neuropaca.core.enums import EpisodeKind, EventType, NodeType, RelationType
 from neuropaca.core.episodes import EpisodeStore
+from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
+from neuropaca.core.models import Event, Moment
 from neuropaca.interface.briefing import (
+    BriefingComposer,
     BriefingItem,
     compose_briefing,
     select_greedy_submodular,
@@ -145,6 +149,132 @@ def test_should_brief_now_long_idle_gap_fires_same_day() -> None:
     assert should_brief_now(
         now=_NOW, last_briefing_at=last, last_activity_gap_seconds=7 * 3600.0, config=cfg
     )
+
+
+# --------------------------------------------------------------------------- BriefingComposer
+
+
+def _collect(sink: list[Event]):
+    async def _cb(event: Event) -> None:
+        sink.append(event)
+
+    return _cb
+
+
+async def _composer(
+    tmp_path, clock=None, **cfg
+) -> tuple[BriefingComposer, EventBus, GraphMemory, EpisodeStore]:
+    bus = EventBus.get_instance()
+    await bus.start()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "g.json"))
+    await gm.load()
+    store = EpisodeStore(tmp_path / "episodes.sqlite")
+    await store.start()
+    composer = BriefingComposer(
+        bus, Config(inference_backend="fake", **cfg), gm, store, clock=clock or FakeClock(wall=_NOW)
+    )
+    await composer.initialize()
+    await composer.start()
+    return composer, bus, gm, store
+
+
+async def test_module_proposes_a_moment_on_first_ever_trigger(tmp_path) -> None:
+    composer, bus, gm, store = await _composer(tmp_path)
+    await gm.add_node("app:code", NodeType.APP, {"label": "Code", "relevance_score": 5.0})
+    yesterday = _NOW - timedelta(days=1)
+    store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", yesterday, yesterday + timedelta(hours=1))
+    await store.flush()
+
+    proposed: list[Event] = []
+    actions: list[Event] = []
+    bus.subscribe(EventType.MOMENT_PROPOSED, _collect(proposed))
+    bus.subscribe(EventType.ACTION_PROPOSAL, _collect(actions))
+
+    await composer.on_app_switch(
+        Event(event_type=EventType.APP_SWITCH, payload={"app_id": "code", "webapp": None})
+    )
+    await bus.join()
+
+    assert len(proposed) == 1
+    moment = proposed[0].payload["moment"]
+    assert isinstance(moment, Moment) and moment.kind == "briefing"
+    assert len(actions) == 1
+    assert actions[0].payload["action_type"] == "notification"
+    await store.stop()
+    await bus.stop()
+
+
+async def test_module_stays_silent_with_nothing_grounded(tmp_path) -> None:
+    composer, bus, _gm, store = await _composer(tmp_path)
+    proposed: list[Event] = []
+    bus.subscribe(EventType.MOMENT_PROPOSED, _collect(proposed))
+
+    await composer.on_activity_detected(Event(event_type=EventType.ACTIVITY_DETECTED))
+    await bus.join()
+
+    assert proposed == []
+    assert composer._nothing_to_say == 1
+    await store.stop()
+    await bus.stop()
+
+
+async def test_module_does_not_recheck_within_the_same_day_short_gap(tmp_path) -> None:
+    clock = FakeClock(wall=_NOW)
+    composer, bus, gm, store = await _composer(tmp_path, clock)
+    await gm.add_node("app:code", NodeType.APP, {"label": "Code", "relevance_score": 5.0})
+    yesterday = _NOW - timedelta(days=1)
+    store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", yesterday, yesterday + timedelta(hours=1))
+    await store.flush()
+
+    proposed: list[Event] = []
+    bus.subscribe(EventType.MOMENT_PROPOSED, _collect(proposed))
+
+    await composer.on_activity_detected(Event(event_type=EventType.ACTIVITY_DETECTED))
+    await clock.advance(60.0)  # one minute later, same day, short gap
+    await composer.on_activity_detected(Event(event_type=EventType.ACTIVITY_DETECTED))
+    await bus.join()
+
+    assert len(proposed) == 1  # the second trigger was a no-op, not a re-brief
+    await store.stop()
+    await bus.stop()
+
+
+async def test_on_briefing_request_answers_with_a_fresh_report(tmp_path) -> None:
+    composer, bus, gm, store = await _composer(tmp_path)
+    await gm.add_node("app:code", NodeType.APP, {"label": "Code", "relevance_score": 5.0})
+    yesterday = _NOW - timedelta(days=1)
+    store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", yesterday, yesterday + timedelta(hours=1))
+    await store.flush()
+
+    reports: list[Event] = []
+    bus.subscribe(EventType.BRIEFING_REPORT, _collect(reports))
+
+    await composer.on_briefing_request(
+        Event(event_type=EventType.BRIEFING_REQUEST, payload={"request_id": "r1"})
+    )
+    await bus.join()
+
+    assert len(reports) == 1
+    assert reports[0].payload["request_id"] == "r1"
+    assert isinstance(reports[0].payload["moment"], Moment)
+    await store.stop()
+    await bus.stop()
+
+
+async def test_on_briefing_request_reports_none_when_nothing_to_say(tmp_path) -> None:
+    composer, bus, _gm, store = await _composer(tmp_path)
+    reports: list[Event] = []
+    bus.subscribe(EventType.BRIEFING_REPORT, _collect(reports))
+
+    await composer.on_briefing_request(
+        Event(event_type=EventType.BRIEFING_REQUEST, payload={"request_id": "r2"})
+    )
+    await bus.join()
+
+    assert len(reports) == 1
+    assert reports[0].payload["moment"] is None
+    await store.stop()
+    await bus.stop()
 
 
 # gen-ref: a4e7b2c9

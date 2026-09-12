@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from neuropaca.core.base_module import BaseModule
+from neuropaca.core.coactivation import CoactivationWindow
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType, NodeType, RelationType
 from neuropaca.core.event_bus import EventBus
@@ -41,10 +42,6 @@ _log = logging.getLogger(__name__)
 # synthetic "activity" deque (maxlen = ceil(correlation_window / this) + 1, D-10).
 _ACTIVITY_NOMINAL_POLL = 2.0
 _ACTIVITY_COLLECTOR = "activity"
-# V-1 · a focus held longer than this is not assumed "in use right up to the
-# next switch" — past it the user most likely walked away, and the app left
-# focused overnight must not wire to the first app of the morning.
-_MAX_FOCUS_DWELL_SECONDS = 2 * 3600.0
 _CANON_CACHE_MAX = 1024
 # V-10 · a focused node's sighting is written at most this often. A focus storm
 # (alt-tab, or a compositor firing focus events) must stay lock-free — V-1 went
@@ -100,20 +97,19 @@ class SignalCorrelator(BaseModule):
         self._signals_emitted = 0
         self._errors = 0
         self._last_signal_at: datetime | None = None
-        # T7 · Hebbian co-activation. A rolling set of the most recently focused
-        # `app:` / `webapp:` node ids with a monotonic timestamp; every switch
-        # wires the new focus to whatever is still inside
-        # `coactivation_window_seconds` so apps used in the same work session
-        # accrue weight on the edge between them ("fire together, wire together").
-        self._coactive: deque[tuple[str, float]] = deque(maxlen=config.coactivation_max_nodes)
-        self._coactivation_window = float(config.coactivation_window_seconds)
+        # T7 · Hebbian co-activation. `CoactivationWindow` (core/coactivation.py,
+        # S0) is the shared state/math the deterministic graph rebuild also
+        # replays, so both apply *the same* "fire together, wire together"
+        # rule from *the same* state shape — never two implementations that
+        # could quietly drift.
+        self._window = CoactivationWindow(
+            window_seconds=config.coactivation_window_seconds,
+            max_nodes=config.coactivation_max_nodes,
+            refractory_seconds=config.coactivation_refractory_seconds,
+        )
         self._hebbian_delta = float(config.hebbian_delta)
         self._hebbian_wired = 0
         self._focus_exclude = frozenset(a.lower() for a in config.focus_exclude_app_ids)
-        # V-1 · when each pair was last stepped; entries older than the
-        # refractory period are swept, so the map holds only recent pairs.
-        self._refractory = float(config.coactivation_refractory_seconds)
-        self._pair_wired_at: dict[frozenset[str], float] = {}
         self._canon_cache: dict[str, tuple[str, str]] = {}
         # V-10 · node id -> monotonic time its last sighting was written
         self._sighted_at: dict[str, float] = {}
@@ -326,45 +322,20 @@ class SignalCorrelator(BaseModule):
         return app_id.lower() in self._focus_exclude or key.lower() in self._focus_exclude
 
     async def _reinforce_coactivation(self, focus_id: str) -> None:
-        """T7 · "fire together, wire together". Wire `focus_id` to every
-        `app:` / `webapp:` node *last active* within the last
-        `coactivation_window_seconds`, then record this focus. Credit falls
-        linearly with the gap — the app you switched straight from counts fully,
-        one near the edge of the window barely (V-1). Star-shaped
+        """T7 · "fire together, wire together" — the state/credit math lives in
+        `CoactivationWindow` (core/coactivation.py, S0); this just supplies the
+        clock and does the actual graph mutation. Star-shaped
         (`wire_coactivation`): the recent apps are never re-wired among
-        themselves. Bounded by the deque's `maxlen`."""
+        themselves."""
         now = _now()
-        if self._coactive:
-            # the previous focus was in use right up to this switch, so it was
-            # last active *now*, not when it was first focused — up to a dwell cap
-            prev, since = self._coactive[-1]
-            self._coactive[-1] = (prev, min(now, since + _MAX_FOCUS_DWELL_SECONDS))
-        warm = [
-            (nid, 1.0 - (now - ts) / self._coactivation_window)
-            for nid, ts in self._coactive
-            if nid != focus_id
-            and now - ts < self._coactivation_window
-            and now - self._pair_wired_at.get(frozenset((focus_id, nid)), -math.inf)
-            >= self._refractory
-        ]
+        warm = self._window.warm_peers(focus_id, now)
         if warm:
             created, bumped = await self._graph.wire_coactivation(
                 focus_id, warm, rate=self._hebbian_delta
             )
             self._hebbian_wired += created + bumped
-            for nid, _ in warm:
-                self._pair_wired_at[frozenset((focus_id, nid))] = now
-            if len(self._pair_wired_at) > 4 * (self._coactive.maxlen or 16):
-                self._pair_wired_at = {
-                    k: t for k, t in self._pair_wired_at.items() if now - t < self._refractory
-                }
-        # drop any stale copy of this id, then push it as the newest entry. A
-        # deque with `maxlen` evicts from the left on a right append, so the
-        # newest focus (rightmost) always survives and the oldest is forgotten.
-        kept = [(nid, ts) for nid, ts in self._coactive if nid != focus_id]
-        self._coactive.clear()
-        self._coactive.extend(kept)
-        self._coactive.append((focus_id, now))
+            self._window.record_wiring(focus_id, warm, now)
+        self._window.push_focus(focus_id, now)
 
     # --------------------------------------------------------------- helpers
     def _max_samples(self, collector: str) -> int:

@@ -68,6 +68,12 @@ class EventType(StrEnum):
     MOMENT_PROPOSED = auto()
     MOMENT_DELIVERED = auto()
     MOMENT_FEEDBACK = auto()
+    # S0 · Interface (VISION_PHASES.md). `neuropaca briefing`'s on-demand path:
+    # the same request/report shape as `SYSTEM_HEALTH_REQUEST`/`_REPORT` — L9
+    # cannot import `BriefingComposer` (rules.md §0), so it asks over the bus
+    # and `BriefingComposer` answers with whatever it composes right now.
+    BRIEFING_REQUEST = auto()
+    BRIEFING_REPORT = auto()
 
 
 class EpisodeKind(StrEnum):

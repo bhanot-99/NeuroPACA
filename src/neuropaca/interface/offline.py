@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""L9 · the three verbs that do **not** go over the socket (B9/BL-7).
+"""L9 · the four verbs that do **not** go over the socket (B9/BL-7, S0).
 
 Every other `neuropaca` verb is a thin client: parse, send one JSONL request to
-the daemon, render one JSONL response (`interface/cli.py`). These three cannot
+the daemon, render one JSONL response (`interface/cli.py`). These four cannot
 be, and the exception is deliberate:
 
 - **`doctor`** exists precisely for the case where the daemon will *not* start.
@@ -15,6 +15,9 @@ be, and the exception is deliberate:
   so it signals the process rather than asking it politely.
 - **`export`** reads the graph file; asking a possibly-dead daemon to dump a
   file that is sitting on disk would add a failure mode for nothing.
+- **`repair-graph`** (S0, VISION_PHASES.md) rebuilds the graph from the episode
+  log and needs no daemon either — a drifted or corrupt graph might be exactly
+  *why* the daemon will not start, so the fix cannot depend on it running.
 
 This module is the *only* place in L9 that touches `data/` directly. It reads
 config and files and imports no other layer — `rules.md §0` is intact.
@@ -22,6 +25,7 @@ config and files and imports no other layer — `rules.md §0` is intact.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -36,16 +40,19 @@ from pathlib import Path
 from typing import Any
 
 from neuropaca.core.config import Config
+from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.errors import ConfigError
 from neuropaca.core.graph_memory import graph_schema_version
+from neuropaca.core.graph_rebuild import rebuild_graph_to_file
 
 _DEFAULT_CONFIG_PATH = "neuropaca.toml"
 
 # `panic` is irreversible, so the confirmation is a typed word rather than a
 # y/n keypress — the same reasoning as D-14's dangerous-action prompt.
 _PANIC_WORD = "PANIC"
+_REPAIR_WORD = "REBUILD"
 
-OFFLINE_VERBS = ("doctor", "export", "panic")
+OFFLINE_VERBS = ("doctor", "export", "panic", "repair-graph")
 
 
 def _config_path() -> str:
@@ -454,6 +461,100 @@ def panic(argv: list[str]) -> int:
     return 0
 
 
+def repair_graph(argv: list[str]) -> int:
+    """Rebuild the graph from the episode log and atomically replace the
+    on-disk one (S0, VISION_PHASES.md: "graph-store consistency" — the rare,
+    deterministic full-rebuild repair path, as opposed to the scheduler's
+    per-tick watermark self-heal).
+
+    **Scope, honestly** (`core/graph_rebuild.py`, RESEARCH_DOSSIER.md §21.15):
+    this reproduces the focus-driven Hebbian mesh and sightings exactly — not
+    yet `domain:*` / browser `PART_OF` structure or `insight:` / `idle:`
+    nodes, which the episode log does not carry today. The previous graph is
+    never deleted — it moves to `quarantine_path` first (rules.md §5.7).
+    """
+    from rich.console import Console
+
+    console, err = Console(), Console(stderr=True)
+    assume_yes = "--yes" in argv or "-y" in argv
+
+    config, config_error = _load_config()
+    if config is None:
+        err.print(f"[red]✕[/red] config does not load: {config_error}")
+        return 1
+    if not config.episodes_enabled:
+        err.print(
+            "[red]✕[/red] episodes_enabled is false — there is no episode log to rebuild from"
+        )
+        return 1
+
+    episodes_path = Path(config.episodes_db_path)
+    if not episodes_path.exists():
+        err.print(f"[red]✕[/red] no episode store at {episodes_path} — nothing to rebuild from")
+        return 1
+
+    graph_path = Path(config.graph_db_path)
+    if not assume_yes:
+        console.print(
+            f"[yellow bold]This replaces {graph_path} with one rebuilt from the episode "
+            "log alone.[/yellow bold]"
+        )
+        console.print(
+            "  It reproduces the focus-driven Hebbian mesh and sightings exactly — not yet "
+            "insight/idle-thought nodes or domain/webapp structure (the episode log does not "
+            "carry those today)."
+        )
+        console.print(f"  The current graph is kept, moved to {config.quarantine_path} first.")
+        try:
+            typed = input(f"Type {_REPAIR_WORD} to confirm: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\naborted")
+            return 1
+        if typed != _REPAIR_WORD:
+            console.print("aborted — nothing was touched")
+            return 1
+
+    if graph_path.exists():
+        quarantine = Path(config.quarantine_path)
+        try:
+            quarantine.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            backup = quarantine / f"{graph_path.name}.pre-repair.{stamp}"
+            shutil.copy2(graph_path, backup)
+            console.print(f"[dim]kept the previous graph at {backup}[/dim]")
+        except OSError as exc:
+            err.print(f"[red]✕[/red] could not quarantine the current graph: {exc}")
+            err.print("  refusing to rebuild without a way back")
+            return 1
+
+    async def _run() -> Any:
+        store = EpisodeStore(str(episodes_path))
+        await store.start()
+        try:
+            return await rebuild_graph_to_file(store, config, target_path=str(graph_path))
+        finally:
+            await store.stop()
+
+    try:
+        stats = asyncio.run(_run())
+    except OSError as exc:
+        err.print(f"[red]✕[/red] rebuild failed: {exc}")
+        return 1
+
+    console.print(
+        f"[green]✓[/green] rebuilt {graph_path} from {stats.episodes_replayed} episode(s) "
+        f"({stats.focus_spans} focus span(s), {stats.idle_spans} idle span(s)) -> "
+        f"{stats.nodes} nodes, {stats.edges} edges"
+    )
+    sock = _socket_path()
+    if Path(sock).exists() and _daemon_pid(sock):
+        console.print(
+            "[yellow]![/yellow] the daemon is running with the old graph in memory — "
+            "restart it to load the rebuilt one"
+        )
+    return 0
+
+
 def dispatch(argv: list[str]) -> int | None:
     """Handle an offline verb, or return None to let the socket client take it."""
     if not argv:
@@ -465,6 +566,8 @@ def dispatch(argv: list[str]) -> int | None:
         return export(rest)
     if head == "panic":
         return panic(rest)
+    if head == "repair-graph":
+        return repair_graph(rest)
     return None
 
 

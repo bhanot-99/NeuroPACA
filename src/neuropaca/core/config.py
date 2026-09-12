@@ -224,15 +224,23 @@ class Config:
     # S0 · the episodic stream (VISION_PHASES.md §3.3-§3.9). `episodes_db_path`
     # is a separate sqlite file beside the graph, not a table inside it — the
     # spike's reason: the graph is one JSON document rewritten whole on every
-    # save, sqlite is append-friendly under a 20k-event storm. `episode_retention_days`
-    # is the default the spike's volume projection sized against (open question
-    # 2 in VISION.md §11 unresolved fields default to 90 days here).
+    # save, sqlite is append-friendly under a 20k-event storm.
     # Off by default like every other brand-new S0-and-later subsystem
     # (`activity_enabled`, `raw_metrics_csv_path`) — existing installs, and
     # every test that builds a bare `Config()`, see no new module until this
     # is turned on.
     episodes_enabled: bool = False
     episodes_db_path: str = "data/episodes.sqlite"
+    # Volume projection (RESEARCH_DOSSIER.md §21.15), from real numbers, not a
+    # guess: the soak gate measured 39 switches/hour during active use
+    # (`data/soak_gate_20260911T170701Z.log`); a measured `EpisodeStore` row
+    # (`core/episodes.py`'s schema, two indexes) costs ~256 bytes on disk after
+    # a WAL checkpoint. At ~8 active hours/day that is ~330 focus-span rows/day
+    # -> ~85 KiB/day -> ~2.5 MiB/month — 90 days of retention is under 8 MiB,
+    # nowhere near a real budget concern. `episode_retention_days` is therefore
+    # generous, not tight; open question 2 in VISION.md §11 stays unresolved on
+    # the *content* question (subjects+snippet vs full bodies for mail, S1),
+    # not on episode volume.
     episode_retention_days: int = 90
     # §3.4's blend r(v) = alpha*pi(v) + beta*recency + gamma*score(v)/10, and the
     # Forward Push parameters pi is computed with. attention_recency_half_life_seconds

@@ -11,25 +11,41 @@ submodular selection that penalises near-duplicates by neighbourhood Jaccard
 similarity, and renders the result as a `Moment` every claim of which resolves
 to graph or episode evidence.
 
-Deliberately not a `BaseModule` yet: nothing in S0 needs it to *react* to
-events beyond what `EpisodicWriter` already logs — the trigger (first
-activity of the day, or after `briefing_idle_gap_hours`) is decided by
-whatever calls this once per trigger, kept here as `should_brief_now` so the
-same rule drives both the daemon's proactive delivery and the on-demand
-`neuropaca briefing` verb.
+`BriefingComposer(BaseModule)` is the daemon-side driver: it is the only
+module that tracks focus history (the last few focused nodes, for §3.4's PPR
+seeds) and decides *when* to call `compose_briefing` — on `should_brief_now`'s
+rule, checked on every `APP_SWITCH` / `ACTIVITY_DETECTED`. Two paths out:
+- **proactive** — publishes `MOMENT_PROPOSED` and, until A3's guardian exists,
+  an `ACTION_PROPOSAL` `notification` straight through (A0's own pattern).
+- **on demand** (`neuropaca briefing`) — L9 cannot import this module
+  (rules.md §0), so it asks over the bus: `BRIEFING_REQUEST` in,
+  `BRIEFING_REPORT` out, the same request/report shape as L9's own health
+  bridge (`SYSTEM_HEALTH_REQUEST`/`_REPORT`).
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from uuid import uuid4
 
+from neuropaca.core.base_module import BaseModule
+from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
+from neuropaca.core.enums import EventType
 from neuropaca.core.episodes import EpisodeRecord, EpisodeStore
+from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
-from neuropaca.core.models import Moment
+from neuropaca.core.health import ModuleHealth
+from neuropaca.core.models import Event, Moment, system_error_event
+from neuropaca.diagnosis.app_identity import AppIdentity
+
+_log = logging.getLogger(__name__)
 
 _MOMENT_EXPIRES_MINUTES = 30
+_FOCUS_HISTORY_DEPTH = 4  # current focus + the last three (§3.4's seed weighting)
+_BRIEFING_REPORT_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +257,195 @@ def should_brief_now(
     if now.date() != last_briefing_at.date():
         return True
     return last_activity_gap_seconds >= config.briefing_idle_gap_hours * 3600.0
+
+
+class BriefingComposer(BaseModule):
+    """The daemon-side driver over the pure `compose_briefing` pipeline above."""
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        config: Config,
+        graph_memory: GraphMemory,
+        episode_store: EpisodeStore,
+        *,
+        clock: Clock | None = None,
+        identity: AppIdentity | None = None,
+    ) -> None:
+        super().__init__("briefing", event_bus, config)
+        self._graph = graph_memory
+        self._store = episode_store
+        self._clock: Clock = clock or SystemClock()
+        self._identity_path = config.app_identity_path
+        self._identity = identity if identity is not None else AppIdentity.empty()
+        self._focus_history: list[tuple[str, datetime]] = []
+        self._last_event_at: datetime | None = None
+        self._last_briefing_at: datetime | None = None
+        self._last_briefing_seq = 0
+        self._composed = 0
+        self._nothing_to_say = 0
+        self._errors = 0
+        self._last_at: datetime | None = None
+
+    # ------------------------------------------------------------ lifecycle
+    async def initialize(self) -> None:
+        if self._identity.alias_count == 0:
+            self._identity = AppIdentity.from_file(self._identity_path)
+        self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
+        self.event_bus.subscribe(EventType.IDLE_DETECTED, self.on_idle_detected)
+        self.event_bus.subscribe(EventType.ACTIVITY_DETECTED, self.on_activity_detected)
+        self.event_bus.subscribe(EventType.BRIEFING_REQUEST, self.on_briefing_request)
+
+    async def start(self) -> None:
+        self.is_running = True
+
+    async def stop(self) -> None:
+        if not self.is_running:
+            return
+        self.is_running = False
+        self.event_bus.unsubscribe(EventType.APP_SWITCH, self.on_app_switch)
+        self.event_bus.unsubscribe(EventType.IDLE_DETECTED, self.on_idle_detected)
+        self.event_bus.unsubscribe(EventType.ACTIVITY_DETECTED, self.on_activity_detected)
+        self.event_bus.unsubscribe(EventType.BRIEFING_REQUEST, self.on_briefing_request)
+
+    def health(self) -> ModuleHealth:
+        return ModuleHealth(
+            name=self.name,
+            ok=self.is_running,
+            detail=(
+                f"{self._composed} composed · {self._nothing_to_say} nothing-to-say · "
+                f"{self._errors} errors"
+            ),
+            last_event_at=self._last_at,
+        )
+
+    # --------------------------------------------------------- event handlers
+    async def on_app_switch(self, event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            now = self._clock.now()
+            payload = event.payload
+            webapp = payload.get("webapp")
+            if isinstance(webapp, str) and webapp:
+                subject: str | None = f"webapp:{webapp}"
+            else:
+                app_id = payload.get("app_id")
+                subject = None
+                if isinstance(app_id, str) and app_id:
+                    key = self._identity.resolve(app_id) or app_id
+                    subject = f"app:{key}"
+            if subject is not None:
+                self._focus_history.append((subject, now))
+                del self._focus_history[:-_FOCUS_HISTORY_DEPTH]
+            await self._maybe_brief(now)
+            self._last_event_at = now
+        except Exception as exc:  # a handler never raises (rules.md §2)
+            self._on_error(exc)
+
+    async def on_idle_detected(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            self._last_event_at = self._clock.now()
+        except Exception as exc:
+            self._on_error(exc)
+
+    async def on_activity_detected(self, _event: Event) -> None:
+        try:
+            if not self.is_running:
+                return
+            now = self._clock.now()
+            await self._maybe_brief(now)
+            self._last_event_at = now
+        except Exception as exc:
+            self._on_error(exc)
+
+    async def on_briefing_request(self, event: Event) -> None:
+        """The on-demand path (`neuropaca briefing`): compose fresh, right
+        now, from whatever focus history and evidence exist — never the stale
+        text of whatever last fired proactively. Answers even when there is
+        nothing to say, so L9 never times out waiting for a report that a
+        `None` result would otherwise silently skip."""
+        try:
+            if not self.is_running:
+                return
+            request_id = event.payload.get("request_id")
+            now = self._clock.now()
+            moment = await compose_briefing(
+                self._graph,
+                self._store,
+                focus_history=self._focus_history,
+                now=now,
+                last_briefing_seq=0,  # on demand: consider every insight, not just new ones
+                config=self.config,
+            )
+            self.event_bus.publish(
+                Event(
+                    event_type=EventType.BRIEFING_REPORT,
+                    source="briefing",
+                    payload={"request_id": request_id, "moment": moment},
+                )
+            )
+        except Exception as exc:
+            self._on_error(exc)
+
+    # --------------------------------------------------------------- compose
+    async def _maybe_brief(self, now: datetime) -> None:
+        gap = (now - self._last_event_at).total_seconds() if self._last_event_at else 0.0
+        if not should_brief_now(
+            now=now,
+            last_briefing_at=self._last_briefing_at,
+            last_activity_gap_seconds=gap,
+            config=self.config,
+        ):
+            return
+        # One attempt per trigger, whether or not it finds anything to say —
+        # otherwise a quiet morning re-checks on every single event all day.
+        self._last_briefing_at = now
+        moment = await compose_briefing(
+            self._graph,
+            self._store,
+            focus_history=self._focus_history,
+            now=now,
+            last_briefing_seq=self._last_briefing_seq,
+            config=self.config,
+        )
+        newest = await self._store.since(self._last_briefing_seq)
+        if newest:
+            self._last_briefing_seq = max(row.episode_seq for row in newest)
+        if moment is None:
+            self._nothing_to_say += 1
+            return
+        self._composed += 1
+        self._last_at = now
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.MOMENT_PROPOSED, source="briefing", payload={"moment": moment}
+            )
+        )
+        # A3 does not exist yet — deliver straight through, exactly A0's path
+        # (D-16's description-only `ACTION_PROPOSAL`; L7 owns the gate).
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.ACTION_PROPOSAL,
+                source="briefing",
+                payload={
+                    "proposal_id": uuid4().hex[:12],
+                    "action_type": "notification",
+                    "kwargs": {"text": moment.text, "node_ids": list(moment.evidence)},
+                    "reason": "morning briefing",
+                    "trigger": "briefing",
+                },
+            )
+        )
+
+    def _on_error(self, exc: Exception) -> None:
+        self._errors += 1
+        _log.exception("briefing handler failed")
+        self.event_bus.publish(
+            system_error_event(module="briefing", exception=str(exc), severity="handler")
+        )
 
 
 # gen-ref: 5e2b7c31

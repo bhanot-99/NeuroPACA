@@ -380,7 +380,7 @@ def test_panic_refuses_when_the_config_will_not_load(
 
 
 def test_the_offline_verbs_are_dispatched_before_the_socket_client() -> None:
-    for verb in ("doctor", "export", "panic"):
+    for verb in ("doctor", "export", "panic", "repair-graph"):
         assert verb in offline.OFFLINE_VERBS
     assert offline.dispatch([]) is None
     assert offline.dispatch(["health"]) is None

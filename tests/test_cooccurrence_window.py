@@ -270,7 +270,7 @@ async def test_coactivation_deque_is_bounded(tmp_path: Path, clock: _Clock) -> N
                 _switch("brave-browser", webapp=f"tab{i}", domain="domain:habits", t=float(i))
             )
             clock.advance(1)
-        assert len(corr._coactive) <= 4
+        assert len(corr._window.coactive) <= 4
     finally:
         await corr.stop()
         await bus.stop()

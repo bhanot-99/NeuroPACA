@@ -41,6 +41,7 @@ from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
 from neuropaca.core.health import SystemHealth, current_rss_mb
 from neuropaca.core.inference import create_backend, create_interactive_backend
 from neuropaca.core.models import Event
+from neuropaca.interface.briefing import BriefingComposer
 from neuropaca.orchestration.scheduler import Scheduler
 
 if TYPE_CHECKING:
@@ -158,6 +159,15 @@ class NeuroPACAOrchestrator:
             self._modules.append(
                 EpisodicWriter(
                     self._event_bus, self._config, self._episode_store, clock=SystemClock()
+                )
+            )
+            self._modules.append(
+                BriefingComposer(
+                    self._event_bus,
+                    self._config,
+                    self._graph_memory,
+                    self._episode_store,
+                    clock=SystemClock(),
                 )
             )
         # A6 · the L9 health bridge — L9 cannot import L10, so it asks over the bus.
