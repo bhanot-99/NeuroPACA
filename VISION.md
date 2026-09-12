@@ -191,9 +191,15 @@ $$
 r(v) = \alpha\, \pi(v) + \beta\, e^{-\lambda (t_{\text{now}} - t_{\text{last}}(v))} + \gamma\, \text{score}(v)/10
 $$
 
-*Starting from what you are doing, what else in your life is lit up?* Power
-iteration converges in a few dozen sparse matrix-vector products — milliseconds on
-a CPU at this graph's size.
+*Starting from what you are doing, what else in your life is lit up?* Computed by
+**Forward Push** (Andersen–Chung–Lang, 2006) rather than global power iteration:
+maintain a residual $r(v)$ and estimate $p(v)$ per node, seeded $r(e)=1$; while
+some $r(v) > \varepsilon$, push $\alpha\, r(v)$ into $p(v)$, spread
+$(1-\alpha)\, r(v)$ to $v$'s weighted out-neighbors, zero $r(v)$. Total work is
+bounded by $O(1/(\varepsilon\,\alpha))$ — independent of graph size, proportional
+only to the local density around the seeds — so it stays cheap however large the
+graph grows, and it decays with edge weight as well as distance instead of a
+hard hop cutoff.
 
 ### 3.5 Prediction (A4) — what you will do next, and when
 
@@ -226,6 +232,22 @@ Accepted → $a \mathrel{+}= 1$; dismissed → $b \mathrel{+}= 1$; ignored → a
 $b$ increment. $C_{\text{interrupt}}$ is high during a focus session and low right
 after one ends. A daily budget $B$ caps the total. *It learns your tolerance from
 your reactions — and stops doing what you wave away.*
+
+**Cold-start burn-in.** A fresh $\text{Beta}(1,3)$ arm still has a $12.5\%$ chance
+of sampling $\tilde p > 0.5$ on the very first draw — enough to misfire on zero
+evidence. Below a small per-arm count $N_0$, use the posterior mean deterministically
+instead of a sample:
+
+$$
+\hat p_{m,x} =
+\begin{cases}
+a_{m,x} / (a_{m,x} + b_{m,x}) & N_{m,x} < N_0 \\
+\tilde p \sim \text{Beta}(a_{m,x}, b_{m,x}) & N_{m,x} \ge N_0
+\end{cases}
+$$
+
+*No variance while it barely knows you, but never a blanket lockout — a moment
+worth enough ($V(m)$) can still clear the bar.*
 
 ### 3.7 Curiosity (A2) — what to wonder about
 
@@ -276,7 +298,7 @@ are settled by a benchmark spike before adoption, never by a blog post.
 | Always-on loop model | BitNet b1.58 2B4T | *candidate:* current 1–4B small models (Qwen3 series, Gemma family, Phi-4-mini) — judged on grammar-bound extraction accuracy, RAM and joules, not chat quality |
 | Voice / phrasing model | Qwen2.5-3B Q4 | *candidate:* a newer ~3–4B instruct model; still phrases only grounded facts |
 | Semantic similarity | none | *candidate:* EmbeddingGemma-300M (under 200 MB RAM quantised, Matryoshka dimensions) for titles, notes, thread matching |
-| Graph + math | networkx, own code | + sparse PPR (scipy-free power iteration), online Hawkes MLE, Beta-Bernoulli bandit — all dependency-light |
+| Graph + math | networkx, own code | + Forward Push PPR (scipy-free, size-independent), online Hawkes MLE, Beta-Bernoulli bandit — all dependency-light |
 | Plugins (senses & hands) | built-in collectors | **local MCP servers over stdio** — mail, calendar, projects, media as plugins behind one contract; no remote servers, ever |
 | Desktop surface | `notify-send` → org.freedesktop.Notifications | + tray presence (A1), briefing view |
 | Speech (A6, stretch) | none | *candidate:* whisper.cpp / Moonshine in; Kokoro-82M out |
@@ -508,4 +530,4 @@ Research this vision draws on (retrieved 2026-09-12):
 - On-device embeddings: [EmbeddingGemma](https://developers.googleblog.com/en/introducing-embeddinggemma/)
 - Local models and speech: [CPU-only local LLMs 2026](https://www.popularai.org/p/best-cpu-only-local-llm-2026), [local voice models 2026](https://d-central.tech/local-voice-ai-models/)
 - Model Context Protocol ecosystem: [state of MCP 2026](https://chatforest.com/guides/mcp-ecosystem-2026-state-of-the-standard/)
-- Classic results used without new retrieval: Thompson sampling; Horvitz, *Principles of Mixed-Initiative User Interfaces* (CHI 1999); Nemhauser–Wolsey–Fisher (1978) greedy submodular bound; Carbonell & Goldstein (1998) maximal marginal relevance; Itti & Baldi, Bayesian surprise.
+- Classic results used without new retrieval: Thompson sampling; Horvitz, *Principles of Mixed-Initiative User Interfaces* (CHI 1999); Nemhauser–Wolsey–Fisher (1978) greedy submodular bound; Carbonell & Goldstein (1998) maximal marginal relevance; Itti & Baldi, Bayesian surprise; Andersen, Chung & Lang, *Local Graph Partitioning using PageRank Vectors* (FOCS 2006) — Forward Push.

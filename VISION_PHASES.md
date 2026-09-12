@@ -242,8 +242,10 @@ above Level 3 depends on it.
    projected size per month; set retention (default 90 days).
 3. **Bi-temporal semantics.** Which facts can be *superseded* (an app's topic, a
    project's branch) vs which are only *episodes* (a focus span)?
-4. **PPR at scale.** Pure-Python power iteration over the adjacency dicts at the
-   10k-node fixture: target < 20 ms; if not, cache per scheduler tick.
+4. **PPR at scale.** Forward Push (Andersen–Chung–Lang, 2006) over the adjacency
+   dicts, not global power iteration: work is bounded by $O(1/(\varepsilon\,\alpha))$,
+   independent of graph size — verify sub-5 ms typical at the 10k-node fixture;
+   per-tick caching stays available but is no longer load-bearing.
 5. **Briefing trigger.** First activity of a calendar day vs first after ≥ 6 h
    idle vs both (open question 4) — replay the log to see which fires sensibly.
 
@@ -252,19 +254,34 @@ above Level 3 depends on it.
   - `data/episodes.sqlite`, own `episodes_schema_version`, read and written off the
     event loop (`asyncio.to_thread`), one writer task draining a bounded queue in
     batches;
-  - table `episode(id, kind, subject, object, t_start, t_end, t_valid, t_invalid,
-    t_seen, source, attrs_json)` with indexes on `(subject, t_start)` and `(kind, t_start)`;
+  - table `episode(id, episode_seq, kind, subject, object, t_start, t_end, t_valid,
+    t_invalid, t_seen, source, attrs_json)`, `episode_seq` a monotonic counter,
+    with indexes on `(subject, t_start)`, `(kind, t_start)`, and `episode_seq`;
   - `record_span(kind, subject, start, end)`, `assert_fact(...)` — which **closes**
     any contradicting open fact (`t_invalid = now`) instead of deleting it (§3.3),
-    `at(t)`, `between(t0, t1)`, `forget(entity)`.
+    `at(t)`, `between(t0, t1)`, `since(episode_seq)`, `forget(entity)`.
 - **Writers** (all through the bus, never imports):
   - focus spans: open on `APP_SWITCH`, close on the next switch / `IDLE_DETECTED`;
   - idle spans; insights and idle thoughts; delivered moments and their feedback (F2);
   - superseding facts: topic membership, later project state (S2).
-- **Attention** — `GraphMemory.personalized_pagerank(seeds, d=0.85, tol=1e-6, max_iter=50)`:
+- **Graph–store consistency** — the bus is fire-and-forget and drops under
+  backpressure by design, so `GraphMemory` and `EpisodeStore` can silently
+  diverge if a handler drops or throws:
+  - `GraphMemory` persists one extra scalar, `last_episode_seq`;
+  - every scheduler tick, `EpisodeStore.since(last_episode_seq)` replays any
+    missed rows as graph mutations and advances the watermark — O(1) in the
+    normal case (zero or one rows), self-healing rather than merely alerting;
+  - a weekly (or on-demand, `neuropaca repair-graph`) full rebuild replays the
+    entire log into a fresh graph and atomically replaces the live one — the
+    deterministic-projection guarantee, exercised rarely because it's O(all
+    history);
+  - requires decay math (`decay_cooccurrence_edges` and friends) to derive
+    elapsed time from consecutive episode timestamps during replay, not the
+    wall clock, so a rebuild reproduces the live graph exactly.
+- **Attention** — `GraphMemory.personalized_pagerank(seeds, eps=1e-4, alpha=0.15)`:
   - seeds = current focus node + the last three focus nodes, weighted by recency;
-  - sparse power iteration over `_succ` / `_pred` with Hebbian weights as transition
-    weights, hubs damped so `YOU` does not soak up the mass;
+  - Forward Push over `_succ` / `_pred` with Hebbian weights as transition
+    weights, hubs damped so `YOU` does not soak up the mass (§3.4);
   - retrieval score $r(v)$ = the §3.4 blend; weights `attention_alpha/beta/gamma` in config.
 - **Briefing core** — `interface/briefing.py`:
   - candidates: open threads (last session per app/project without a clean end),
@@ -275,20 +292,26 @@ above Level 3 depends on it.
   - delivered as a moment (F1) and on demand: `neuropaca briefing`.
 - `forget` and `panic` extended to the episode store.
 
-**Math.** Bi-temporal intervals (§3.3); Personalized PageRank (§3.4); greedy
-submodular selection with the $(1 - 1/e)$ guarantee (§3.9).
+**Math.** Bi-temporal intervals (§3.3); Forward Push Personalized PageRank (§3.4);
+greedy submodular selection with the $(1 - 1/e)$ guarantee (§3.9).
 
-**Load budget.** Writes batched off-loop; PPR ≤ 20 ms at 10k nodes or cached per
-tick; briefing composed once per trigger; zero model calls in the core (a model
+**Load budget.** Writes batched off-loop; PPR sub-5 ms typical, independent of
+graph size; watermark catch-up O(1) per tick, full rebuild O(all history) weekly
+only; briefing composed once per trigger; zero model calls in the core (a model
 may phrase, never decide).
 
 **Tests**
 - Span reconstruction from synthetic switch streams (overlaps, idle gaps, restarts).
 - Supersede: asserting a new topic closes the old interval; `at(t)` returns what
   was true then.
-- PPR matches a reference implementation on small graphs; converges; seeds matter.
+- PPR (Forward Push) matches a reference power-iteration implementation on small
+  graphs within $\varepsilon$; converges; seeds matter; cost independent of graph
+  size at fixed local density.
 - Submodular greedy: never picks near-duplicates; respects $k$.
 - Performance: 20k-switch storm — no loop lag over 5 ms; PPR timing at 10k nodes.
+- Watermark catch-up: dropped/out-of-order bus events are healed by the next
+  tick's `since(last_episode_seq)` replay; a full rebuild reproduces the live
+  graph exactly (deterministic replay).
 - `panic` wipes the store; `forget <app>` removes its episodes.
 - Egress: unchanged (the store is a local file).
 
@@ -296,10 +319,13 @@ may phrase, never decide).
 - [ ] 20 hand-written "what was I doing when…" queries answered correctly from the store.
 - [ ] Morning briefing on 7 dogfood days: 2–5 items, every one with evidence, zero wrong.
 - [ ] Retrieval < 50 ms; DB growth bounded and matching the projection in the soak.
+- [ ] A forced-drop bus event self-heals within one scheduler tick; a full
+      rebuild matches the live graph node-for-node.
 
-**Risks.** Store and graph drifting apart → the store is the log, the graph is the
-learned summary; a nightly consistency check. Briefing that states the obvious →
-S5's ranker and A3's feedback.
+**Risks.** Store and graph drifting apart → the store is the durable log, the
+graph a watermarked projection that self-heals via delta replay each tick, with
+a deterministic full rebuild as the rare repair path — not just a detect-and-alert
+check. Briefing that states the obvious → S5's ranker and A3's feedback.
 
 ---
 
@@ -402,33 +428,50 @@ a little more careful about that kind of moment in that kind of situation.
    morning, afternoon, evening} × recent dismissals {0, 1, 2+} = 36 buckets per
    moment kind — enough to learn, few enough to fill.
 3. Priors: from open question 6 — start conservative ($\text{Beta}(1, 3)$).
+4. **Cold-start burn-in.** A fresh $\text{Beta}(1,3)$ arm has a $12.5\%$ chance of
+   sampling $\tilde p > 0.5$ on the very first draw — enough to misfire on zero
+   evidence. Below a small per-arm count $N_0$ (target 5, cross-checked against
+   the ~39 switches/hour gate log for how fast buckets actually fill), use the
+   deterministic posterior mean instead of a sample (§3.6) rather than a hard
+   lockout — a lockout to $N \ge 50$ would silence entire moment kinds for weeks
+   against the always-proactive goal.
 
 **Design**
 - New `drive/guardian.py` — `Guardian(BaseModule)`:
   - subscribes `MOMENT_PROPOSED`; decides **deliver / hold / drop**;
-  - Thompson sampling per (kind, bucket) (§3.6): deliver iff
-    $\tilde p \cdot V(m) > C_{\text{interrupt}}(x)$ and the daily budget $B$ allows;
+  - Thompson sampling per (kind, bucket) (§3.6), with the burn-in: deliver iff
+    $\hat p_{m,x} \cdot V(m) > C_{\text{interrupt}}(x)$ and the daily budget $B$
+    allows, where $\hat p_{m,x}$ is the posterior mean while $N_{m,x} < N_0$ and
+    a Thompson sample thereafter;
   - `hold` during a focus session: queued (bounded, with `expires_at`) and
-    re-evaluated when the session ends;
+    re-evaluated when the session ends — unchanged, and independent of the
+    burn-in (a context override, not a cold-start fix);
   - updates posteriors from `MOMENT_FEEDBACK`; posteriors decay daily
     ($\gamma = 0.98$) so it follows you as you change;
   - state persisted in the episode store.
 - A0's direct path switches to going through the guardian.
 - Config: `nudge_daily_budget`, `interrupt_cost_focus`, `interrupt_cost_normal`,
-  `guardian_decay`.
+  `guardian_decay`, `guardian_burn_in_n` (default 5).
 
-**Math.** Beta–Bernoulli Thompson sampling with a context-dependent cost (§3.6).
+**Math.** Beta–Bernoulli Thompson sampling with a context-dependent cost and a
+deterministic-mean burn-in below $N_0$ (§3.6).
 
 **Tests**
 - Simulated users with known acceptance rates: the gate converges to delivering the
   welcome kinds and suppressing the unwelcome ones; regret grows sublinearly.
 - Nothing delivered while a focus session is active, whatever the sample.
 - The budget is never exceeded; held moments expire rather than pile up.
+- Cold-start: a fresh arm ($N=0$) never fires above what $a/(a+b) \cdot V(m)$
+  would allow, across 1000 simulated draws — the pre-$N_0$ misfire rate is zero,
+  not $12.5\%$; the arm starts sampling (and exploring) again as soon as
+  $N \ge N_0$.
 
 **Exit**
 - [ ] Zero moments mid-focus in a two-week dogfood.
 - [ ] Dismissal rate falls across the two weeks (H2: alternate weeks against a
       fixed-rule gate).
+- [ ] No bucket sits mute past $N_0$ observations; cold buckets show zero
+      variance-driven misfires in the simulated-user test.
 
 ---
 
