@@ -4690,6 +4690,92 @@ file on disk", not attempted here.
 
 ---
 
+### 21.16 S0 follow-up 2 · structural rebuild, hot-reload, a smarter self-heal, and doctor prep
+
+| | |
+| --- | --- |
+| **Branch** | `s0-episodic-stream-attention-briefing` (continuing §21.14/§21.15) |
+| **Outcome** | Full suite (`-m ""`): 936 → **951 collected, 948 passed**, 3 pre-existing skips. `ruff check .`, `ruff format --check .`, `mypy src/` all clean. No schema bump — `EpisodeRecord.object`/`attrs["browser"]` are existing, previously-unused columns; `GraphMemory.warm_activity_peers` is a new read method, not a stored field. |
+
+**In plain words.** §21.15 named four gaps. This closes three of them and
+prepares the fourth: `EpisodicWriter` now records enough for a rebuild to
+recreate `domain:*`/browser structure, not just the Hebbian mesh; a rebuilt
+graph can be picked up by a running daemon without a restart; the scheduler's
+per-tick self-heal does real Hebbian re-learning instead of only `mark_seen`;
+and `neuropaca doctor` now reports the episode store, so turning
+`episodes_enabled` on for real use (the gap that only real days can close)
+has monitoring in place from day one.
+
+**1. `EpisodicWriter` records domain and browser at focus time.** It gained
+its own `AppMap` (the same classification `SignalCorrelator._classify_into_graph`
+uses) and now writes a `focus_span`'s `object` as the domain the subject was
+classified into, and — for a webapp — `attrs["browser"]` as its browser's
+node id. Both columns already existed (`core/episodes.py`'s schema, unused
+until now); no migration needed. `core/graph_rebuild.py` reads them back and
+wires `PART_OF` edges exactly once per subject — proven directly (a new pair
+of tests wires a bare app to its domain and a webapp to both its browser and
+its own domain, plus a revisit test confirming no duplicate edge, which would
+have reset the edge's weight per T7).
+
+**2. Hot-reload, no restart.** `GraphMemory.load()` already fully replaces
+`self._graph` in place — BL-2's boot-recovery path re-enters it for exactly
+that reason — so "pick up a rebuilt graph live" needed no new mechanism, only
+a way to ask for it: a `reload-graph` op on `InterfaceLayer` (internal — not
+a `neuropaca` verb of its own, only `repair-graph`'s caller). `repair-graph`
+now checks whether a daemon is listening and, if so, sends the op over the
+socket automatically; a failed hot-reload only warns ("restart it to load the
+rebuilt one"), it never undoes the rebuild that already succeeded. Tested
+with a real Unix-socket stand-in daemon (not a mock of the client) so the
+JSONL round trip is exercised for real, both on success and on failure.
+
+**3. The scheduler's per-tick self-heal now re-learns, not just re-sights.**
+The honest limit §21.14 named — "only `mark_seen` is replayed" — is narrowed:
+a missed `focus_span` now gets `core/graph_rebuild.catch_up_focus_span`,
+which redoes the node, its structure (via the same idempotent-by-existence-
+check helper item 1 uses), and a Hebbian coactivation bump. The bump is
+**not** a byte-for-byte replay like the full rebuild's — it cannot be,
+because `SignalCorrelator`'s own in-memory `CoactivationWindow` is private
+state this module has no business reaching into (rules.md §0). Instead it
+derives "who was recently active" from the *graph's own* persisted
+`last_seen_at` — real, already-available, honestly approximate — via a new
+`GraphMemory.warm_activity_peers()`. That distinction (exact rebuild vs
+reasonable immediate self-heal) is the actual design point of §0's two-tier
+repair story, not a corner cut.
+
+*A performance number, not a guess.* The first version of
+`warm_activity_peers`-equivalent logic built a `Node` dataclass per candidate
+(the same cost `top_nodes_by_score`'s own docstring already warned about) and
+measured 72.4 ms at 10,000 nodes — over the 50 ms retrieval budget. Rewritten
+to read raw attribute dicts, matching `top_nodes_by_score`'s own pattern
+exactly, it dropped under 10 ms; a perf test at 10k nodes guards the number,
+not just the behaviour.
+
+**4. `neuropaca doctor` now reports the episode store.** Row count, on-disk
+size, schema version, newest row — read directly (no daemon needed, matching
+`doctor`'s own `graph.json` report) so turning `episodes_enabled` on has the
+same visibility the graph has always had. An unreadable store is a reported
+problem (non-zero exit), not a silent gap.
+
+**Rejected.** A `neuropaca reload-graph` verb of its own — the only caller is
+`repair-graph` immediately after a successful rebuild; a second, independent
+entry point for "swap the live graph out from under the daemon" is a feature
+this session was not asked for and did not need. An exact `CoactivationWindow`
+replay inside the scheduler's per-tick path — would require sharing live,
+in-process state across modules (rules.md §0), a materially different and
+riskier change than "derive warmth from what is already persisted"; the full
+rebuild stays the one place that guarantee is made, and is made honestly.
+
+**What is left**
+- Everything §21.15 already listed and did not close: the full decay/rebuild
+  path stays the exact-match one by design, not by omission, but the
+  scheduler's own catch-up is still an approximation, documented as one.
+- Turning `episodes_enabled` on for a real dogfood window — monitoring is now
+  in place (`doctor`), the decision and the days themselves are not something
+  a build session can supply.
+- `scripts/_provenance.py` — still needs `PROV_SECRET`.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.

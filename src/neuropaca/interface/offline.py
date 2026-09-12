@@ -26,11 +26,13 @@ config and files and imports no other layer — `rules.md §0` is intact.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
 import signal
 import socket
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -40,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from neuropaca.core.config import Config
-from neuropaca.core.episodes import EpisodeStore
+from neuropaca.core.episodes import EpisodeStore, episodes_schema_version
 from neuropaca.core.errors import ConfigError
 from neuropaca.core.graph_memory import graph_schema_version
 from neuropaca.core.graph_rebuild import rebuild_graph_to_file
@@ -51,6 +53,8 @@ _DEFAULT_CONFIG_PATH = "neuropaca.toml"
 # y/n keypress — the same reasoning as D-14's dangerous-action prompt.
 _PANIC_WORD = "PANIC"
 _REPAIR_WORD = "REBUILD"
+_RELOAD_CONNECT_TIMEOUT = 3.0
+_RELOAD_RESPONSE_TIMEOUT = 10.0  # a graph reload re-reads and re-parses the whole file
 
 OFFLINE_VERBS = ("doctor", "export", "panic", "repair-graph")
 
@@ -143,6 +147,45 @@ def _graph_report(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
     else:
         rows.append(("schema", f"v{on_disk} (this build reads up to v{current})"))
     return rows, problems
+
+
+def _episode_report(config: Config) -> tuple[list[tuple[str, str]], list[str]]:
+    """S0 · read the episode store the way `doctor` reads the graph — offline,
+    directly, no daemon. Prepares `neuropaca doctor` for `episodes_enabled`
+    actually being turned on: growth, row count and schema are visible from
+    day one, the same way they already are for the graph (RESEARCH_DOSSIER.md
+    §21.15's "what is left" — the dogfood window's own monitoring)."""
+    if not config.episodes_enabled:
+        return [("episodes", "disabled (episodes_enabled = false in config)")], []
+    path = Path(config.episodes_db_path)
+    if not path.exists():
+        return [("episodes", f"enabled, no store yet at {path} (created on next daemon start)")], []
+    try:
+        conn = sqlite3.connect(str(path), timeout=2.0)
+        try:
+            (count,) = conn.execute("SELECT COUNT(*) FROM episode").fetchone()
+            (newest,) = conn.execute("SELECT MAX(t_seen) FROM episode").fetchone()
+            version_row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return [("episodes", f"UNREADABLE at {path}: {exc}")], ["episode store unreadable"]
+
+    current = episodes_schema_version()
+    on_disk = int(version_row[0]) if version_row else None
+    rows = [("episodes", f"{path} · {_size(path)} · {count} row(s)")]
+    if on_disk is None:
+        rows.append(("episode schema", "no meta row — an empty or pre-schema store"))
+    elif on_disk > current:
+        rows.append(("episode schema", f"v{on_disk} on disk > v{current} supported"))
+        return rows, ["episode store is from a newer build"]
+    else:
+        rows.append(("episode schema", f"v{on_disk} (this build reads up to v{current})"))
+    if newest:
+        rows.append(("episodes", f"newest row: {newest}"))
+    return rows, []
 
 
 _SERVICE_UNIT = "neuropacad.service"
@@ -250,6 +293,10 @@ def doctor(argv: list[str]) -> int:
             )
         )
         problems.append("a previous boot recovered from an unreadable graph")
+
+    episode_rows, episode_problems = _episode_report(config)
+    rows.extend(episode_rows)
+    problems.extend(episode_problems)
 
     log_path = Path(config.log_file_path)
     if log_path.exists():
@@ -465,13 +512,17 @@ def repair_graph(argv: list[str]) -> int:
     """Rebuild the graph from the episode log and atomically replace the
     on-disk one (S0, VISION_PHASES.md: "graph-store consistency" — the rare,
     deterministic full-rebuild repair path, as opposed to the scheduler's
-    per-tick watermark self-heal).
+    per-tick watermark self-heal). If a daemon is running, asks it to reload
+    the rebuilt file over the socket (`reload-graph`) — no restart needed;
+    a hot-reload failure only warns, it never undoes the rebuild.
 
     **Scope, honestly** (`core/graph_rebuild.py`, RESEARCH_DOSSIER.md §21.15):
-    this reproduces the focus-driven Hebbian mesh and sightings exactly — not
-    yet `domain:*` / browser `PART_OF` structure or `insight:` / `idle:`
-    nodes, which the episode log does not carry today. The previous graph is
-    never deleted — it moves to `quarantine_path` first (rules.md §5.7).
+    this reproduces the focus-driven Hebbian mesh, sightings, and — for spans
+    recorded since `EpisodicWriter` started carrying it — `domain:*` / browser
+    `PART_OF` structure. It does not yet reproduce `insight:` / `idle:` nodes
+    (model output, not a deterministic function of the log). The previous
+    graph is never deleted — it moves to `quarantine_path` first (rules.md
+    §5.7).
     """
     from rich.console import Console
 
@@ -548,11 +599,45 @@ def repair_graph(argv: list[str]) -> int:
     )
     sock = _socket_path()
     if Path(sock).exists() and _daemon_pid(sock):
-        console.print(
-            "[yellow]![/yellow] the daemon is running with the old graph in memory — "
-            "restart it to load the rebuilt one"
-        )
+        reload_error = asyncio.run(_reload_live_daemon(sock))
+        if reload_error is None:
+            console.print(
+                "[green]✓[/green] the running daemon reloaded the rebuilt graph — no restart needed"
+            )
+        else:
+            console.print(
+                f"[yellow]![/yellow] could not hot-reload the running daemon ({reload_error}) — "
+                "restart it to load the rebuilt one"
+            )
     return 0
+
+
+async def _reload_live_daemon(socket_path: str) -> str | None:
+    """Ask a running daemon to pick up a graph `repair_graph` just wrote,
+    without a restart (S0's "atomically replaces the live one"). `None` on
+    success, an error string otherwise — the caller already knows a daemon is
+    listening, so a connection failure here is reported, not treated as
+    "no daemon"."""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(socket_path), _RELOAD_CONNECT_TIMEOUT
+        )
+    except (OSError, TimeoutError) as exc:
+        return f"could not connect: {exc}"
+    try:
+        writer.write((json.dumps({"op": "reload-graph"}) + "\n").encode("utf-8"))
+        await writer.drain()
+        line = await asyncio.wait_for(reader.readline(), _RELOAD_RESPONSE_TIMEOUT)
+    finally:
+        writer.close()
+        with contextlib.suppress(OSError):
+            await writer.wait_closed()
+    if not line:
+        return "daemon closed the connection without a response"
+    resp = json.loads(line)
+    if not resp.get("ok"):
+        return str(resp.get("error", "unknown error"))
+    return None
 
 
 def dispatch(argv: list[str]) -> int | None:

@@ -924,6 +924,33 @@ class GraphMemory:
         )
         return [self._node_from_attrs(node_id, self._graph.nodes[node_id]) for _, node_id in ranked]
 
+    def warm_activity_peers(
+        self, exclude: str, at: datetime, window_seconds: float
+    ) -> list[tuple[str, float]]:
+        """`app:` / `webapp:` nodes last seen within `window_seconds` before
+        `at`, as `(node_id, credit)` — credit falling linearly with the gap,
+        the same shape `CoactivationWindow.warm_peers` returns (S0's scheduler
+        catch-up, `core/graph_rebuild.catch_up_focus_span`, uses this to find
+        "recently active" from the graph's own persisted `last_seen_at`
+        instead of a live, in-memory window it has no access to).
+
+        Reads raw attribute dicts, never builds a `Node` per candidate — the
+        same reason `top_nodes_by_score` does (rules.md §3): this is an
+        O(graph size) scan, rare-path or not, and at 10k nodes constructing a
+        dataclass (datetime parsing included) per candidate is the difference
+        between this staying inside a retrieval budget and not."""
+        out: list[tuple[str, float]] = []
+        for node_id, data in self._graph.nodes(data=True):
+            if node_id == exclude or not _is_cooccurrence_node(node_id):
+                continue
+            last_seen = data.get("last_seen_at")
+            if last_seen is None:
+                continue
+            gap = (at - _as_dt(last_seen)).total_seconds()
+            if 0.0 <= gap < window_seconds:
+                out.append((node_id, 1.0 - gap / window_seconds))
+        return out
+
     def search_by_label(self, query: str, limit: int = 10) -> list[Node]:
         """L9 retrieval entry point (B5, A1). A deliberately dumb lexical match —
         **zero embeddings, zero inference** (rules.md §4, problems.md 1.6 spirit):

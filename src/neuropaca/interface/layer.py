@@ -8,7 +8,9 @@ Shape (B5, re-scoped in B12):
 - a **Unix-domain socket** at ``$XDG_RUNTIME_DIR/neuropaca.sock`` (JSONL framing:
   one JSON request per line, one JSON response per line). The thin CLI
   (`interface/cli.py`) is the only client. Ops: `health`, `insights`,
-  `notifications`, `confirmations`, `confirm`, `run`, `explain`, `briefing`.
+  `notifications`, `confirmations`, `confirm`, `run`, `explain`, `briefing`,
+  `reload-graph` (internal — `interface/offline.py`'s `repair-graph` verb is
+  the only caller, not a `neuropaca` verb of its own).
 - the terminal is a **read-only project guide** now: `neuropaca tell` / `overview`
   answer deterministically on the client side (`interface/describe.py`) and never
   reach this module. There is no natural-language query of the behavioural graph
@@ -49,6 +51,7 @@ from neuropaca.core.bitnet_runtime import BitNetRuntime
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType, MessageRole, NodeType
+from neuropaca.core.errors import GraphMemoryError
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
@@ -529,7 +532,23 @@ class InterfaceLayer(BaseModule):
         if op == "briefing":
             self._queries += 1
             return await self._request_briefing()
+        if op == "reload-graph":
+            return await self._reload_graph()
         return {"ok": False, "error": f"unknown op: {op!r}"}
+
+    async def _reload_graph(self) -> dict[str, Any]:
+        """S0 · pick up a graph `neuropaca repair-graph` just rebuilt, without
+        a restart. `GraphMemory.load()` already fully replaces `self._graph`
+        in place — BL-2's boot-recovery path re-enters it for that exact
+        reason — so hot-reloading the live singleton is calling it again,
+        nothing new. `self._graph` is the same object every other module in
+        this process holds too; a mutation-in-place is visible to all of them
+        the instant the lock releases, no restart, no re-wiring."""
+        try:
+            await self._graph.load()
+        except GraphMemoryError as exc:
+            return {"ok": False, "error": f"reload failed: {exc}"}
+        return {"ok": True, "nodes": self._graph.node_count, "edges": self._graph.edge_count}
 
     async def _request_health(self) -> dict[str, Any] | None:
         loop = asyncio.get_running_loop()

@@ -668,6 +668,30 @@ async def test_top_nodes_by_score_ranks_and_excludes(tmp_path) -> None:
     assert gm.top_nodes_by_score(0) == []
 
 
+async def test_warm_activity_peers_finds_recent_apps_within_the_window(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    at = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
+    await gm.add_node("app:code", NodeType.APP, {"label": "Code"})
+    await gm.add_node("app:terminal", NodeType.APP, {"label": "Terminal"})
+    await gm.add_node("app:stale", NodeType.APP, {"label": "Stale"})
+    await gm.add_node("file:/x", NodeType.FILE, {"label": "x"})
+    await gm.mark_seen("app:terminal", at - timedelta(seconds=30))
+    await gm.mark_seen("app:stale", at - timedelta(hours=2))  # outside a 300s window
+    await gm.mark_seen("file:/x", at)  # not an app/webapp node — excluded regardless
+
+    warm = dict(gm.warm_activity_peers("app:code", at, 300.0))
+    assert warm.keys() == {"app:terminal"}
+    assert warm["app:terminal"] == pytest.approx(1.0 - 30.0 / 300.0)
+
+
+async def test_warm_activity_peers_excludes_the_focus_node_itself(tmp_path) -> None:
+    gm = await _loaded_graph(tmp_path)
+    at = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
+    await gm.add_node("app:code", NodeType.APP, {"label": "Code"})
+    await gm.mark_seen("app:code", at)
+    assert gm.warm_activity_peers("app:code", at, 300.0) == []
+
+
 async def test_load_does_not_block_the_event_loop(tmp_path) -> None:
     """`load()` reads and decodes in a worker thread (it used to do both inline,
     holding `_lock`). Proof: the loop keeps ticking while a load is in flight."""

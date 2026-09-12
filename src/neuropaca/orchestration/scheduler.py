@@ -19,6 +19,7 @@ import logging
 from neuropaca.core.config import Config
 from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.graph_memory import GraphMemory
+from neuropaca.core.graph_rebuild import catch_up_focus_span
 
 _log = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class Scheduler:
     ) -> None:
         self._graph_memory = graph_memory
         self._episode_store = episode_store
+        self._config = config
         self._interval = float(config.graph_save_interval_seconds)
         self._task: asyncio.Task[None] | None = None
         self._running = False
@@ -79,22 +81,29 @@ class Scheduler:
 
     async def _catch_up_episode_watermark(self) -> None:
         """S0 · graph-store consistency (VISION_PHASES.md). The bus drops
-        events under backpressure by design, so a handler that never ran can
-        leave the graph's projection of the log behind. `since()` past the
-        graph's own watermark is O(1) in the normal case (zero or one missed
-        row) — the self-heal, not a detect-and-alert check. Only `mark_seen`
-        is replayed here: it is the one graph mutation that is safe to redo
-        idempotently for a span already applied by its live handler (V-10 —
-        it never touches `relevance_score` or an edge weight). A full,
-        decay-consistent Hebbian replay is the weekly/`repair-graph` rebuild's
-        job, not this tick's."""
+        events under backpressure by design, and an isolated subscriber
+        failure (rules.md §2) can leave `EpisodicWriter` recording an episode
+        that `SignalCorrelator` never got to mutate the graph for. `since()`
+        past the graph's own watermark is O(1) in the normal case (zero or
+        one missed row) — the self-heal, not a detect-and-alert check.
+
+        A missed `focus_span` gets `catch_up_focus_span` — the node, its
+        `domain:*`/browser structure, a Hebbian coactivation bump derived from
+        the live graph's own `last_seen_at` (not an exact replay, a reasonable
+        one — see that function's docstring), and the sighting. An `idle_span`
+        gets only `mark_seen`: `SignalCorrelator` never reacts to idle/activity
+        events in the first place, so there is nothing else to redo for it.
+        The exact-match repair, when that precision is worth its O(all
+        history) cost, is the full rebuild (`neuropaca repair-graph`)."""
         if self._episode_store is None:
             return
         rows = await self._episode_store.since(self._graph_memory.last_episode_seq)
         if not rows:
             return
         for row in rows:
-            if row.kind in ("focus_span", "idle_span") and row.t_end is not None:
+            if row.kind == "focus_span":
+                await catch_up_focus_span(self._graph_memory, row, self._config)
+            elif row.kind == "idle_span" and row.t_end is not None:
                 await self._graph_memory.mark_seen(row.subject, row.t_end)
         await self._graph_memory.advance_last_episode_seq(rows[-1].episode_seq)
         _log.debug("S0: replayed %d missed episode(s) past the graph's watermark", len(rows))

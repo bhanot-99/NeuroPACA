@@ -203,4 +203,79 @@ async def test_node_type_for_webapp_subject(tmp_path) -> None:
     await store.stop()
 
 
+async def test_rebuild_wires_domain_and_browser_structure(tmp_path) -> None:
+    store = EpisodeStore(tmp_path / "episodes.sqlite")
+    await store.start()
+    start = _BASE
+    store.record_span(
+        EpisodeKind.FOCUS_SPAN,
+        "app:code",
+        start,
+        start + timedelta(minutes=5),
+        obj="domain:engineering",
+    )
+    store.record_span(
+        EpisodeKind.FOCUS_SPAN,
+        "webapp:gmail",
+        start + timedelta(minutes=5),
+        start + timedelta(minutes=10),
+        obj="domain:comms",
+        attrs={"browser": "app:brave"},
+    )
+    await store.flush()
+
+    rebuilt, _stats = await rebuild_graph(
+        store, Config(inference_backend="fake"), target_path=str(tmp_path / "g.json")
+    )
+
+    code_edges = {(e.target_id, e.relation) for e in rebuilt.get_edges("app:code")}
+    assert ("domain:engineering", RelationType.PART_OF) in code_edges
+
+    gmail_edges = {(e.target_id, e.relation) for e in rebuilt.get_edges("webapp:gmail")}
+    assert ("app:brave", RelationType.PART_OF) in gmail_edges
+    assert ("domain:comms", RelationType.PART_OF) in gmail_edges
+    assert rebuilt.get_node("app:brave") is not None
+    await store.stop()
+
+
+async def test_rebuild_wires_structure_only_once_per_subject(tmp_path) -> None:
+    """A revisited app must not get a second PART_OF edge (which would reset
+    any weight on it) — mirrors `SignalCorrelator`'s `_known_apps` gate."""
+    store = EpisodeStore(tmp_path / "episodes.sqlite")
+    await store.start()
+    start = _BASE
+    store.record_span(
+        EpisodeKind.FOCUS_SPAN,
+        "app:code",
+        start,
+        start + timedelta(minutes=1),
+        obj="domain:engineering",
+    )
+    store.record_span(
+        EpisodeKind.FOCUS_SPAN,
+        "app:terminal",
+        start + timedelta(minutes=1),
+        start + timedelta(minutes=2),
+    )
+    store.record_span(
+        EpisodeKind.FOCUS_SPAN,
+        "app:code",
+        start + timedelta(minutes=2),
+        start + timedelta(minutes=3),
+        obj="domain:engineering",
+    )
+    await store.flush()
+
+    rebuilt, _stats = await rebuild_graph(
+        store, Config(inference_backend="fake"), target_path=str(tmp_path / "g.json")
+    )
+    part_of = [
+        e
+        for e in rebuilt.get_edges("app:code")
+        if e.relation is RelationType.PART_OF and e.target_id == "domain:engineering"
+    ]
+    assert len(part_of) == 1
+    await store.stop()
+
+
 # gen-ref: 2f6a9c14

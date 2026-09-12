@@ -14,15 +14,19 @@ graph (VISION_PHASES.md, "graph-store consistency"):
 actually records: the Hebbian coactivation mesh built from `focus_span`
 episodes (via the *same* `CoactivationWindow` the live `SignalCorrelator`
 uses — core/coactivation.py — so there is one source of truth for "fire
-together, wire together", not two that could drift) and sightings
-(`mark_seen`). It does **not** reproduce `domain:*` / browser `PART_OF`
-structure (that comes from `app_map`/`webapp_map` classification at focus
-time, which today's `focus_span` episode does not carry) or `insight:` /
-`idle:` nodes (those are model output, not a deterministic function of the
-log — replaying them would mean re-running inference, not a graph replay).
-A rebuilt graph is therefore the live one's Hebbian mesh exactly, not yet
-its full node set. Widening the episode schema to carry classification is
-the natural next step, not attempted here.
+together, wire together", not two that could drift), sightings (`mark_seen`),
+and — since `EpisodicWriter` started recording a span's `object` (the domain
+it was classified into at focus time) and, for a webapp, `attrs["browser"]`
+(its browser's own node id) — the `domain:*` / browser `PART_OF` structure
+too, wired exactly once per subject the same way `SignalCorrelator.
+_classify_into_graph` / `_classify_webapp_into_graph` do. It does **not**
+reproduce `insight:` / `idle:` nodes: those are model output, not a
+deterministic function of the log — replaying them would mean re-running
+inference, not a graph replay. A rebuild made from episodes recorded *before*
+this build's `EpisodicWriter` (which did not yet capture `object`/`browser`)
+simply carries no structural edges for those older spans — the same
+graceful-absence a v1 file's missing optional field gets elsewhere in this
+codebase, not an error.
 
 Decay is exact, not approximated: `decay_cooccurrence_edges(factor, floor)`'s
 factor is `0.5 ** (elapsed_hours / half_life)`, and
@@ -38,11 +42,9 @@ from datetime import datetime, timedelta
 
 from neuropaca.core.coactivation import CoactivationWindow
 from neuropaca.core.config import Config
-from neuropaca.core.enums import NodeType
-from neuropaca.core.episodes import EpisodeStore
+from neuropaca.core.enums import NodeType, RelationType
+from neuropaca.core.episodes import EpisodeRecord, EpisodeStore
 from neuropaca.core.graph_memory import GraphMemory
-
-_ACTIVITY_PREFIXES = ("app:", "webapp:")
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +75,39 @@ def _node_type_for(subject: str) -> NodeType | None:
     return None
 
 
+async def _wire_structure(
+    graph: GraphMemory,
+    row: EpisodeRecord,
+    node_type: NodeType,
+    *,
+    known_apps: set[str],
+    known_webapps: set[str],
+) -> None:
+    """`domain:*` / browser `PART_OF` edges, wired exactly once per subject —
+    mirroring `SignalCorrelator._classify_into_graph` /
+    `_classify_webapp_into_graph` (`diagnosis/correlator.py`) so a rebuild's
+    structure matches the live one's, not a fresh guess at it. A `focus_span`
+    from before `EpisodicWriter` recorded `object`/`attrs["browser"]` simply
+    has neither — no edge, not an error."""
+    if node_type is NodeType.APP:
+        if row.subject in known_apps:
+            return
+        known_apps.add(row.subject)
+        if row.object:
+            await graph.add_edge(row.subject, row.object, RelationType.PART_OF)
+        return
+
+    if row.subject in known_webapps:
+        return
+    known_webapps.add(row.subject)
+    browser_id = row.attrs.get("browser") if isinstance(row.attrs, dict) else None
+    if isinstance(browser_id, str) and browser_id:
+        await graph.upsert_node(browser_id, NodeType.APP, {})
+        await graph.add_edge(row.subject, browser_id, RelationType.PART_OF)
+    if row.object:
+        await graph.add_edge(row.subject, row.object, RelationType.PART_OF)
+
+
 async def rebuild_graph(
     store: EpisodeStore, config: Config, *, target_path: str
 ) -> tuple[GraphMemory, RebuildStats]:
@@ -97,6 +132,8 @@ async def rebuild_graph(
     prev_end: datetime | None = None
     anchor: datetime | None = None
     focus_count = idle_count = 0
+    known_apps: set[str] = set()
+    known_webapps: set[str] = set()
 
     for row in rows:
         if row.kind not in ("focus_span", "idle_span"):
@@ -127,6 +164,9 @@ async def rebuild_graph(
         node_type = _node_type_for(row.subject)
         if node_type is not None:
             await fresh.upsert_node(row.subject, node_type, {})
+            await _wire_structure(
+                fresh, row, node_type, known_apps=known_apps, known_webapps=known_webapps
+            )
             # Relative to `anchor`, never a raw `.timestamp()`: an epoch float
             # for "now" (~1.7e9 for 2026) leaves only ~6-7 digits of
             # sub-second precision in a float64 — enough to nudge a
@@ -167,6 +207,71 @@ async def rebuild_graph_to_file(
     fresh, stats = await rebuild_graph(store, config, target_path=target_path)
     await fresh.save()
     return stats
+
+
+def _has_part_of(graph: GraphMemory, source: str, target: str) -> bool:
+    return any(
+        e.target_id == target and e.relation is RelationType.PART_OF
+        for e in graph.get_edges(source)
+    )
+
+
+async def _wire_structure_if_missing(
+    graph: GraphMemory, row: EpisodeRecord, node_type: NodeType
+) -> None:
+    """`_wire_structure`'s logic (above), but idempotent by *existence check*
+    rather than a per-rebuild "known subjects" set — `Scheduler`'s per-tick
+    catch-up has no such set to carry across ticks, and re-adding a `PART_OF`
+    edge that is already there is a correctness risk (it resets weight, T7)
+    that an existence check avoids for a handful of edges at effectively no
+    extra cost."""
+    if node_type is NodeType.APP:
+        if row.object and not _has_part_of(graph, row.subject, row.object):
+            await graph.add_edge(row.subject, row.object, RelationType.PART_OF)
+        return
+    browser_id = row.attrs.get("browser") if isinstance(row.attrs, dict) else None
+    if isinstance(browser_id, str) and browser_id:
+        await graph.upsert_node(browser_id, NodeType.APP, {})
+        if not _has_part_of(graph, row.subject, browser_id):
+            await graph.add_edge(row.subject, browser_id, RelationType.PART_OF)
+    if row.object and not _has_part_of(graph, row.subject, row.object):
+        await graph.add_edge(row.subject, row.object, RelationType.PART_OF)
+
+
+async def catch_up_focus_span(graph: GraphMemory, row: EpisodeRecord, config: Config) -> None:
+    """`Scheduler`'s per-tick self-heal for one missed `focus_span` episode —
+    redo, on the *live* graph, what `SignalCorrelator.on_app_switch` would
+    have done had its handler not failed (the episode still landed:
+    `EpisodicWriter` is a separate, isolated bus subscriber — rules.md §2 —
+    so one handler failing does not stop the other from recording what
+    happened; only the graph mutation was lost).
+
+    Deliberately **not** a byte-for-byte replay like `rebuild_graph`'s (that
+    needs the whole log and a from-scratch `CoactivationWindow`, seeded on
+    nothing): "warm peers" here are derived from the *live* graph's own
+    `Node.last_seen_at` — a real, persisted, already-available signal — never
+    from `SignalCorrelator`'s private in-memory window (rules.md §0: no
+    module reaches into another's state). That makes this a reasonable,
+    immediate self-heal, not an exact one — the deterministic rebuild
+    (`rebuild_graph`, `neuropaca repair-graph`) stays the exact-match repair
+    path for whenever that precision actually matters.
+
+    O(graph size) per call (a scan for recently-seen peers) — acceptable
+    because a missed row is rare (§0's "zero or one in the normal case"); it
+    is never paid on the common, nothing-missed tick.
+    """
+    if row.kind != "focus_span" or row.t_start is None or row.t_end is None:
+        return
+    node_type = _node_type_for(row.subject)
+    if node_type is None:
+        return
+    await graph.upsert_node(row.subject, node_type, {})
+    await _wire_structure_if_missing(graph, row, node_type)
+
+    warm = graph.warm_activity_peers(row.subject, row.t_start, config.coactivation_window_seconds)
+    if warm:
+        await graph.wire_coactivation(row.subject, warm, rate=config.hebbian_delta)
+    await graph.mark_seen(row.subject, row.t_end)
 
 
 # gen-ref: 9d4c7b21

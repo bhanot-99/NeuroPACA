@@ -14,18 +14,21 @@ from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.episodic_writer import EpisodicWriter
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.models import Event, Moment
+from neuropaca.diagnosis.app_map import AppMap
 from neuropaca.learning.insight import Insight
 
 _NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
 
 
-async def _writer(tmp_path, clock=None) -> tuple[EpisodicWriter, EventBus, EpisodeStore]:
+async def _writer(
+    tmp_path, clock=None, app_map: AppMap | None = None
+) -> tuple[EpisodicWriter, EventBus, EpisodeStore]:
     bus = EventBus.get_instance()
     await bus.start()
     store = EpisodeStore(tmp_path / "episodes.sqlite")
     await store.start()
     cfg = Config(inference_backend="fake")
-    writer = EpisodicWriter(bus, cfg, store, clock=clock or FakeClock(wall=_NOW))
+    writer = EpisodicWriter(bus, cfg, store, clock=clock or FakeClock(wall=_NOW), app_map=app_map)
     await writer.initialize()
     await writer.start()
     return writer, bus, store
@@ -125,6 +128,57 @@ async def test_moment_feedback_is_recorded(tmp_path) -> None:
     assert len(rows) == 1
     assert rows[0].kind == "moment_feedback"
     assert rows[0].object == "dismissed"
+    await store.stop()
+    await bus.stop()
+
+
+async def test_focus_span_records_the_app_map_domain(tmp_path) -> None:
+    clock = FakeClock(wall=_NOW)
+    app_map = AppMap.from_dict({"app_id": {"code": "engineering"}})
+    writer, bus, store = await _writer(tmp_path, clock, app_map)
+
+    await writer.on_app_switch(
+        Event(event_type=EventType.APP_SWITCH, payload={"app_id": "code", "webapp": None})
+    )
+    await clock.advance(60.0)
+    await writer.on_app_switch(
+        Event(event_type=EventType.APP_SWITCH, payload={"app_id": "terminal", "webapp": None})
+    )
+    await store.flush()
+
+    rows = await store.since(0)
+    assert rows[0].subject == "app:code"
+    assert rows[0].object == "domain:engineering"
+    assert rows[0].attrs == {}
+    await store.stop()
+    await bus.stop()
+
+
+async def test_webapp_focus_span_records_its_domain_and_browser(tmp_path) -> None:
+    clock = FakeClock(wall=_NOW)
+    writer, bus, store = await _writer(tmp_path, clock)
+
+    await writer.on_app_switch(
+        Event(
+            event_type=EventType.APP_SWITCH,
+            payload={
+                "app_id": "brave-browser",
+                "webapp": "gmail",
+                "webapp_domain": "domain:comms",
+            },
+        )
+    )
+    await clock.advance(120.0)
+    await writer.on_app_switch(
+        Event(event_type=EventType.APP_SWITCH, payload={"app_id": "brave-browser", "webapp": None})
+    )
+    await store.flush()
+
+    rows = await store.since(0)
+    assert rows[0].subject == "webapp:gmail"
+    assert rows[0].object == "domain:comms"
+    # "brave-browser" is aliased to "brave" in the real app_identity.default.toml
+    assert rows[0].attrs == {"browser": "app:brave"}
     await store.stop()
     await bus.stop()
 

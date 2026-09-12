@@ -12,7 +12,13 @@ another; the bus is the only channel).
 - **focus spans** — open on `APP_SWITCH` (remembering the subject and start
   time), closed the moment the *next* `APP_SWITCH` or `IDLE_DETECTED` arrives.
   A switch with an unresolvable subject (no `app_id`, no `webapp`) still
-  closes whatever was open — it just does not open a new one.
+  closes whatever was open — it just does not open a new one. Each span's
+  `object` carries the domain it was classified into at focus time — the same
+  `AppMap` lookup `SignalCorrelator._classify_into_graph` uses for a bare app,
+  `webapp_domain` for a tab — and, for a webapp span, `attrs["browser"]` names
+  its browser's own node id. `core/graph_rebuild.py` reads both back to
+  recreate the `domain:*` / browser `PART_OF` structure a rebuild used to
+  miss (RESEARCH_DOSSIER.md §21.15's "what is left" — now closed).
 - **idle spans** — open on `IDLE_DETECTED`, closed on `ACTIVITY_DETECTED`
   (`idle_seconds` on the payload lets the span reproduce even if this module
   missed the original `IDLE_DETECTED` — the fallback path in
@@ -43,6 +49,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, Moment, system_error_event
 from neuropaca.diagnosis.app_identity import AppIdentity
+from neuropaca.diagnosis.app_map import AppMap
 from neuropaca.learning.insight import Insight
 
 _log = logging.getLogger(__name__)
@@ -57,14 +64,20 @@ class EpisodicWriter(BaseModule):
         *,
         clock: Clock | None = None,
         identity: AppIdentity | None = None,
+        app_map: AppMap | None = None,
     ) -> None:
         super().__init__("episodic_writer", event_bus, config)
         self._store = episode_store
         self._clock: Clock = clock or SystemClock()
         self._identity_path = config.app_identity_path
         self._identity = identity if identity is not None else AppIdentity.empty()
+        self._app_map_path = config.app_map_path
+        self._app_map = app_map if app_map is not None else AppMap.empty()
+        self._app_map_provided = app_map is not None
         self._focus_subject: str | None = None
         self._focus_start: datetime | None = None
+        self._focus_domain: str | None = None
+        self._focus_browser: str | None = None
         self._idle_start: datetime | None = None
         self._spans_written = 0
         self._facts_written = 0
@@ -75,6 +88,8 @@ class EpisodicWriter(BaseModule):
     async def initialize(self) -> None:
         if self._identity.alias_count == 0:
             self._identity = AppIdentity.from_file(self._identity_path)
+        if not self._app_map_provided:
+            self._app_map = AppMap.from_file(self._app_map_path)
         self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
         self.event_bus.subscribe(EventType.IDLE_DETECTED, self.on_idle_detected)
         self.event_bus.subscribe(EventType.ACTIVITY_DETECTED, self.on_activity_detected)
@@ -116,15 +131,21 @@ class EpisodicWriter(BaseModule):
             now = self._clock.now()
             self._close_focus_span(now)
             payload = event.payload
+            raw_app_id = payload.get("app_id")
+            app_id = raw_app_id if isinstance(raw_app_id, str) and raw_app_id else None
+            browser_id = f"app:{self._identity.resolve(app_id) or app_id}" if app_id else None
+
             webapp = payload.get("webapp")
             if isinstance(webapp, str) and webapp:
+                raw_wdom = payload.get("webapp_domain")
                 self._focus_subject = f"webapp:{webapp}"
+                self._focus_domain = raw_wdom if isinstance(raw_wdom, str) and raw_wdom else None
+                self._focus_browser = browser_id
                 self._focus_start = now
-                return
-            app_id = payload.get("app_id")
-            if isinstance(app_id, str) and app_id:
-                key = self._identity.resolve(app_id) or app_id
-                self._focus_subject = f"app:{key}"
+            elif browser_id is not None and app_id is not None:
+                self._focus_subject = browser_id
+                self._focus_domain = self._app_map.classify(app_id)
+                self._focus_browser = None
                 self._focus_start = now
             self._last_at = now
         except Exception as exc:  # a handler never raises (rules.md §2)
@@ -220,10 +241,15 @@ class EpisodicWriter(BaseModule):
     def _close_focus_span(self, now: datetime) -> None:
         subject, start = self._focus_subject, self._focus_start
         if subject is not None and start is not None and now > start:
-            self._store.record_span(EpisodeKind.FOCUS_SPAN, subject, start, now)
+            attrs = {"browser": self._focus_browser} if self._focus_browser else {}
+            self._store.record_span(
+                EpisodeKind.FOCUS_SPAN, subject, start, now, obj=self._focus_domain, attrs=attrs
+            )
             self._spans_written += 1
         self._focus_subject = None
         self._focus_start = None
+        self._focus_domain = None
+        self._focus_browser = None
 
     def _on_error(self, exc: Exception) -> None:
         self._errors += 1

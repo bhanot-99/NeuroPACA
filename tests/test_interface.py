@@ -476,6 +476,49 @@ async def test_health_op_bridges_request_and_report_over_the_bus(tmp_path) -> No
     assert resp["health"]["uptime_seconds"] == 42.0
 
 
+async def test_reload_graph_op_picks_up_a_rebuilt_file(tmp_path) -> None:
+    import json as _json
+
+    w = await _wired(tmp_path)
+    try:
+        assert w.graph.has_node("app:webpack")
+        graph_path = tmp_path / "graph.json"
+        await w.graph.save()
+        rebuilt = _json.loads(graph_path.read_text("utf-8"))
+        rebuilt["nodes"] = [n for n in rebuilt["nodes"] if n["id"] != "app:webpack"] + [
+            {
+                "id": "app:rebuilt",
+                "node_type": "app",
+                "label": "rebuilt",
+                "created_at": "2026-09-15T00:00:00+00:00",
+                "last_accessed": "2026-09-15T00:00:00+00:00",
+                "access_count": 1,
+                "relevance_score": 0.0,
+                "priority": 0,
+                "activity": 1.0,
+            }
+        ]
+        graph_path.write_text(_json.dumps(rebuilt), encoding="utf-8")
+
+        resp = await w.request({"op": "reload-graph"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is True
+    assert not w.graph.has_node("app:webpack")
+    assert w.graph.has_node("app:rebuilt")
+
+
+async def test_reload_graph_op_reports_a_corrupt_file_without_crashing(tmp_path) -> None:
+    w = await _wired(tmp_path)
+    try:
+        (tmp_path / "graph.json").write_text("not json", encoding="utf-8")
+        resp = await w.request({"op": "reload-graph"})
+    finally:
+        await _teardown(w)
+    assert resp["ok"] is False
+    assert "reload failed" in resp["error"]
+
+
 async def test_health_op_times_out_cleanly_when_l10_is_silent(tmp_path) -> None:
     w = await _wired(tmp_path)
     try:
