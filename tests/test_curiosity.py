@@ -167,3 +167,6 @@ def test_top_information_gain_pairs_respects_top_n() -> None:
         rows, ["app:a", "app:b", "app:c", "app:d"], window_seconds=300.0, top_n=2
     )
     assert len(ranked) == 2  # C(4,2) = 6 possible pairs, capped at top_n
+
+
+# gen-ref: ffdc3aeb

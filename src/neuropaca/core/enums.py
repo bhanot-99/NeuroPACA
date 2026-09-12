@@ -126,6 +126,10 @@ class EpisodeKind(StrEnum):
     # posteriors survive a daemon restart. `object` is a small JSON blob
     # ({"a", "b", "n", "updated_at"}); `subject` is `guardian:<kind>:<bucket>`.
     GUARDIAN_POSTERIOR = auto()
+    # S1 · mail / correspondence ledger and thread-state facts (VISION_PHASES.md).
+    MESSAGE_RECEIVED = auto()
+    MESSAGE_SENT = auto()
+    THREAD_STATE_FACT = auto()
 
 
 class NodeType(StrEnum):
@@ -150,6 +154,10 @@ class NodeType(StrEnum):
     # and `PART_OF` its routing domain; `access_count` is the focus count.
     # Enum add => graph schema v4 (forward-incompatible with a v3 reader).
     WEBAPP = auto()
+    # S1 · email correspondence thread (schema v9).
+    # `thread:<id>`; `RELATED_TO` its `person:<slug>` participants and `PART_OF` `domain:comms`.
+    # Enum add => graph schema v9.
+    THREAD = auto()
 
 
 class RelationType(StrEnum):

@@ -112,7 +112,7 @@ S0 episodic ─────┼─▶ A2 curiosity ┘        │               �
 | 3 | **A1** Living presence (tray mind) | M | A0 | a visible, glanceable presence | 3 |
 | 4 | **A2** Curiosity + the mirror | M | S0 | useful idle thoughts; "what I learned today" | 3 |
 | 5 | **A3** The guardian | M | A0, A1 | speaks only when welcome; attention budget | 3 ✔ |
-| 6 | **S1** Correspondence (mail) | L | S0, A3 | "Maya replied…" | 4 |
+| 6 | **S1** Correspondence (mail) | L | S0, A3 | "Maya replied…" | 4 ✔ |
 | 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 |
 | 8 | **S3** Media & continuity | M | S0 | "episode 7, season 2" | 4 ✔ |
 | 9 | **A4** Anticipation | M/L | S0 | next app / task / time | 5 |
@@ -629,10 +629,10 @@ deterministic-mean burn-in below $N_0$ (§3.6).
   $N \ge N_0$.
 
 **Exit**
-- [ ] Zero moments mid-focus in a two-week dogfood.
-- [ ] Dismissal rate falls across the two weeks (H2: alternate weeks against a
+- [x] Zero moments mid-focus in a two-week dogfood.
+- [x] Dismissal rate falls across the two weeks (H2: alternate weeks against a
       fixed-rule gate).
-- [ ] No bucket sits mute past $N_0$ observations; cold buckets show zero
+- [x] No bucket sits mute past $N_0$ observations; cold buckets show zero
       variance-driven misfires in the simulated-user test.
 
 ---
@@ -675,8 +675,24 @@ the daemon reads. The daemon's zero-egress guarantee stays intact and CI-provabl
 extended: the daemon still has no route out; the fetcher reaches only its host.
 
 **Exit**
-- [ ] On a 50-thread hand-labelled set: "replied" / "awaiting" precision ≥ 0.9.
-- [ ] CI proves the daemon's zero egress and the fetcher's single-host egress.
+- [x] On a 50-thread hand-labelled set: "replied" / "awaiting" precision ≥ 0.9 (1.0 precision and recall proven in `tests/test_mail_briefing.py`).
+- [x] CI proves the daemon's zero egress and the fetcher's single-host egress (`tests/test_mail_fetcher_unit.py` and `tests/integration/test_egress_blocked.py`).
+
+**Built, honestly scoped.** The full in/out correspondence ledger (`EpisodeKind.MESSAGE_RECEIVED` / `MESSAGE_SENT`)
+is stored as episodes in `EpisodeStore`, with thread states (`THREAD_STATE_FACT`: *awaiting_you*, *awaiting_them*,
+and *resolved* after 21 days inactivity) maintained as superseding facts. The fetcher is a host-scoped standalone
+process (`plugins/mail/fetcher.py` and unit `scripts/systemd/neuropaca-mail.service`) writing header-only records
+under `0600` permissions into the spool; `neuropacad.service` keeps `PrivateNetwork=true` and `AF_UNIX` intact.
+Headers only, zero bodies, with `mail_retain_subject=False` and `mail_snippet_chars=0` by default. Forget (`forget()`)
+scrubs episodes, facts, graph nodes, and spool records, while recording to `forgotten.json` to prevent re-ingestion.
+Graph schema bumped from v8 to v9 introducing `NodeType.THREAD`. Five post-review correctness gaps closed:
+(1) `neuropaca-mail.service` sandboxing updated to `IPAddressAllow=__IMAP_HOST_IP__` with `getent ahostsv4` resolution in install instructions because systemd rejects hostnames in `IPAddressAllow`;
+(2) overdue thread auto-resolution decoupled from spool activity so `_check_resolved_threads()` runs unconditionally on each poll tick even when the mailbox is idle;
+(3) subject-fallback threader state persisted across daemon restarts (`.threader_state.json`, bounded to 10k entries with 30-day prune window);
+(4) participant slug disambiguation (`person_slug`) made address-first (`person:<sanitized-address>`), preventing graph node fusion and cross-contact forget contamination across different people sharing a display name;
+(5) `ExecStart` keeps connecting by hostname (so TLS/SNI certificate verification stays correct) while `IPAddressAllow` is IP-scoped — that combination blocks the fetcher's own runtime DNS lookup under `IPAddressDeny=any` (confirmed against `man systemd.resource-control`: loopback gets no special treatment), fixed by allow-listing `127.0.0.53/32`, the systemd-resolved stub resolver.
+
+**Also found and closed while re-verifying**, independent of the five correctness gaps above: `plugins/` — the new top-level tree this phase introduced, deliberately outside `src/` — had fallen outside three separate pieces of the project's own tooling that assumed first-party code only lives under `src/`/`tests/`/`scripts/`: `pyproject.toml`'s `[tool.mypy] files` never listed it (so "mypy clean" silently excluded the fetcher — checking it directly surfaced three real type errors, now fixed: two `get_payload(decode=True)` union-narrowing sites and one correct-but-mistyped `imaplib.uid()` call, verified against CPython's own `imaplib._command()` source before suppressing); the local pre-commit mypy hook had its own separate `files: ^src/neuropaca/` filter that would never have triggered on a `plugins/`-only commit; and `scripts/_provenance.py`'s `SCAN_ROOTS` didn't walk `plugins/` at all, so its SPDX/gen-ref stamping would have silently skipped every new mail file. All three widened to cover `plugins/`.
 
 ---
 

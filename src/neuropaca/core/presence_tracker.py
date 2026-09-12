@@ -191,3 +191,6 @@ class PresenceTracker(BaseModule):
                 focused_since=self._focused_since,
             )
         )
+
+
+# gen-ref: 54375224

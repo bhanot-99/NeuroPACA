@@ -61,6 +61,14 @@ _FORBIDDEN_IMPORTS = {
     "telnetlib",
     "xmlrpc.client",
     "aiohttp",
+    # S1: mail is fetched by a separate process (`plugins/mail/fetcher.py`,
+    # outside this package) writing to a local spool — the daemon-side
+    # `sensing/mail_ingest.py` only ever reads that spool. If this module
+    # ever collapses the two and imports a mail-protocol client directly,
+    # that is exactly the egress regression this file exists to catch.
+    "imaplib",
+    "poplib",
+    "nntplib",
 }
 
 requires_blocked_network = pytest.mark.skipif(

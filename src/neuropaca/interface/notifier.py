@@ -193,3 +193,6 @@ class NotificationDispatcher(BaseModule):
         self.event_bus.publish(
             system_error_event(module="notifier", exception=str(exc), severity="handler")
         )
+
+
+# gen-ref: 9a782011

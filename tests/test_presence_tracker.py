@@ -175,3 +175,6 @@ async def test_stop_is_idempotent() -> None:
     await tracker.stop()
     await tracker.stop()  # must not raise
     await bus.stop()
+
+
+# gen-ref: c79311ce

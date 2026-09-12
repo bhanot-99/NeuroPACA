@@ -273,3 +273,6 @@ async def test_a_broken_episode_read_falls_back_rather_than_raising(tmp_path) ->
             await bus.stop()
     finally:
         await store.stop()
+
+
+# gen-ref: fb1400b4

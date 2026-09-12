@@ -26,13 +26,14 @@ rule, checked on every `APP_SWITCH` / `ACTIVITY_DETECTED`. Two paths out:
 from __future__ import annotations
 
 import logging
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EventType
+from neuropaca.core.enums import EpisodeKind, EventType
 from neuropaca.core.episodes import EpisodeRecord, EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
@@ -158,6 +159,219 @@ def _insight_candidates(gm: GraphMemory, rows: list[EpisodeRecord]) -> list[Brie
     return items
 
 
+def _format_duration_human(seconds: float) -> str:
+    if seconds < 3600:
+        mins = max(1, int(seconds // 60))
+        return f"{mins} minute" if mins == 1 else f"{mins} minutes"
+    if seconds < 86400:
+        hours = max(1, round(seconds / 3600))
+        return f"{hours} hour" if hours == 1 else f"{hours} hours"
+    days = max(1, round(seconds / 86400))
+    return f"{days} day" if days == 1 else f"{days} days"
+
+
+async def _mail_reply_candidates(
+    gm: GraphMemory,
+    store: EpisodeStore,
+    *,
+    now: datetime,
+    lookback: timedelta = timedelta(days=7),
+) -> list[BriefingItem]:
+    """1. Replies received to threads you started."""
+    recent = await store.between(now - lookback, now)
+    received_rows = [r for r in recent if r.kind == str(EpisodeKind.MESSAGE_RECEIVED)]
+    if not received_rows:
+        return []
+
+    items: list[BriefingItem] = []
+    seen_threads: set[str] = set()
+
+    for recv in received_rows:
+        thread_id = recv.subject
+        if thread_id in seen_threads or not gm.has_node(thread_id):
+            continue
+        seen_threads.add(thread_id)
+
+        thread_history = await store.for_entity(thread_id)
+        msg_rows = [
+            r
+            for r in thread_history
+            if r.kind in (str(EpisodeKind.MESSAGE_SENT), str(EpisodeKind.MESSAGE_RECEIVED))
+        ]
+        if not msg_rows:
+            continue
+
+        # Thread must have been started by the user (earliest message sent)
+        if msg_rows[0].kind != str(EpisodeKind.MESSAGE_SENT):
+            continue
+
+        # Thread must currently be awaiting your reply (unresolved)
+        facts = [
+            r
+            for r in thread_history
+            if r.kind == str(EpisodeKind.THREAD_STATE_FACT) and r.t_invalid is None
+        ]
+        if facts and facts[-1].object != "awaiting_you":
+            continue
+
+        person_entity = recv.object or ""
+        person_name = (
+            gm.display_name(person_entity)
+            if (person_entity and gm.has_node(person_entity))
+            else "Someone"
+        )
+
+        started_at = msg_rows[0].t_start
+        if started_at:
+            age = (now - started_at).days
+            day_str = started_at.strftime("%A") if age < 7 else started_at.strftime("%b %d")
+        else:
+            day_str = "earlier"
+
+        evidence = (
+            (thread_id, person_entity)
+            if (person_entity and gm.has_node(person_entity))
+            else (thread_id,)
+        )
+        items.append(
+            BriefingItem(
+                anchor=thread_id,
+                text=f"{person_name} replied to the thread you started on {day_str}.",
+                evidence=evidence,
+                value=0.0,
+            )
+        )
+    return items
+
+
+async def _mail_overdue_candidates(
+    gm: GraphMemory,
+    store: EpisodeStore,
+    *,
+    now: datetime,
+    overdue_days: int = 3,
+    resolved_after_days: int = 21,
+) -> list[BriefingItem]:
+    """2. Threads awaiting you past mail_overdue_days."""
+    open_facts = await store.at(now)
+    awaiting_facts = [
+        f
+        for f in open_facts
+        if f.kind == str(EpisodeKind.THREAD_STATE_FACT) and f.object == "awaiting_you"
+    ]
+    items: list[BriefingItem] = []
+
+    for fact in awaiting_facts:
+        thread_id = fact.subject
+        if not gm.has_node(thread_id) or not fact.t_valid:
+            continue
+
+        age_days = (now - fact.t_valid).days
+        if age_days < overdue_days or age_days >= resolved_after_days:
+            continue
+
+        participant = fact.attrs.get("participant", "")
+        person_entity = (
+            f"person:{participant}"
+            if participant and not participant.startswith("person:")
+            else participant
+        )
+        person_name = (
+            gm.display_name(person_entity)
+            if (person_entity and gm.has_node(person_entity))
+            else "them"
+        )
+
+        days_str = "one day" if age_days == 1 else f"{age_days} days"
+        evidence = (
+            (thread_id, person_entity)
+            if (person_entity and gm.has_node(person_entity))
+            else (thread_id,)
+        )
+        items.append(
+            BriefingItem(
+                anchor=thread_id,
+                text=f"You haven't answered {person_name} in {days_str}.",
+                evidence=evidence,
+                value=0.0,
+            )
+        )
+    return items
+
+
+async def _mail_overdue_person_candidates(
+    gm: GraphMemory,
+    store: EpisodeStore,
+    *,
+    now: datetime,
+) -> list[BriefingItem]:
+    """3. Threads overdue compared to personal median reply latency."""
+    open_facts = await store.at(now)
+    awaiting_facts = [
+        f
+        for f in open_facts
+        if f.kind == str(EpisodeKind.THREAD_STATE_FACT) and f.object == "awaiting_you"
+    ]
+    items: list[BriefingItem] = []
+
+    for fact in awaiting_facts:
+        thread_id = fact.subject
+        if not gm.has_node(thread_id) or not fact.t_valid:
+            continue
+
+        current_age = (now - fact.t_valid).total_seconds()
+        participant = fact.attrs.get("participant", "")
+        person_entity = (
+            f"person:{participant}"
+            if participant and not participant.startswith("person:")
+            else participant
+        )
+        if not person_entity:
+            continue
+
+        person_history = await store.for_entity(person_entity)
+        by_thread: dict[str, list[EpisodeRecord]] = {}
+        for row in person_history:
+            if row.kind in (str(EpisodeKind.MESSAGE_RECEIVED), str(EpisodeKind.MESSAGE_SENT)):
+                by_thread.setdefault(row.subject, []).append(row)
+
+        latencies: list[float] = []
+        for _tid, trows in by_thread.items():
+            trows.sort(key=lambda r: r.t_start or r.t_seen)
+            for i, r_recv in enumerate(trows):
+                if r_recv.kind == str(EpisodeKind.MESSAGE_RECEIVED) and r_recv.t_start:
+                    for r_sent in trows[i + 1 :]:
+                        if r_sent.kind == str(EpisodeKind.MESSAGE_SENT) and r_sent.t_start:
+                            lat = (r_sent.t_start - r_recv.t_start).total_seconds()
+                            if lat > 0:
+                                latencies.append(lat)
+                            break
+
+        if not latencies:
+            continue
+
+        median_lat = statistics.median(latencies)
+        if current_age > median_lat and current_age >= 3600:
+            person_name = (
+                gm.display_name(person_entity) if gm.has_node(person_entity) else participant
+            )
+            lat_str = _format_duration_human(median_lat)
+            age_str = _format_duration_human(current_age)
+            evidence = (thread_id, person_entity) if gm.has_node(person_entity) else (thread_id,)
+            items.append(
+                BriefingItem(
+                    anchor=thread_id,
+                    text=(
+                        f"You usually reply to {person_name} within {lat_str}, "
+                        f"but this thread has been waiting for {age_str}."
+                    ),
+                    evidence=evidence,
+                    value=0.0,
+                )
+            )
+    return items
+
+
 async def build_candidates(
     gm: GraphMemory,
     store: EpisodeStore,
@@ -165,12 +379,28 @@ async def build_candidates(
     now: datetime,
     last_briefing_seq: int,
     lookback: timedelta = timedelta(days=7),
+    config: Config | None = None,
 ) -> list[BriefingItem]:
     """Everything the briefing might say, unranked and unfiltered: open threads
-    (from recent focus spans) and insights since the last briefing."""
+    (from recent focus spans), insights since the last briefing, and mail candidates."""
     recent = await store.between(now - lookback, now)
     since_last = await store.since(last_briefing_seq)
-    return [*_open_thread_candidates(gm, recent, now=now), *_insight_candidates(gm, since_last)]
+    candidates: list[BriefingItem] = [
+        *_open_thread_candidates(gm, recent, now=now),
+        *_insight_candidates(gm, since_last),
+    ]
+
+    overdue_days = getattr(config, "mail_overdue_days", 3) if config else 3
+    resolved_days = getattr(config, "mail_resolved_after_days", 21) if config else 21
+
+    candidates.extend(await _mail_reply_candidates(gm, store, now=now, lookback=lookback))
+    candidates.extend(
+        await _mail_overdue_candidates(
+            gm, store, now=now, overdue_days=overdue_days, resolved_after_days=resolved_days
+        )
+    )
+    candidates.extend(await _mail_overdue_person_candidates(gm, store, now=now))
+    return candidates
 
 
 def rank_candidates(
@@ -217,7 +447,9 @@ async def compose_briefing(
     render. `None` when there is nothing grounded to say (F1's grounding
     check — every candidate here already required a live graph node, so
     nothing ungrounded can reach this point)."""
-    raw = await build_candidates(gm, store, now=now, last_briefing_seq=last_briefing_seq)
+    raw = await build_candidates(
+        gm, store, now=now, last_briefing_seq=last_briefing_seq, config=config
+    )
     ranked = rank_candidates(gm, raw, focus_history=focus_history, now=now, config=config)
     ranked = [item for item in ranked if item.value > 0.0]
     if not ranked:

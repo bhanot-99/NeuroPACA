@@ -432,3 +432,6 @@ class Guardian(BaseModule):
         self.event_bus.publish(
             system_error_event(module="guardian", exception=str(exc), severity="handler")
         )
+
+
+# gen-ref: 5d1335fa

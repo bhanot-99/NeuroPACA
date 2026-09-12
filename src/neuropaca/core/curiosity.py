@@ -127,3 +127,6 @@ def top_information_gain_pairs(
             scored.append((u, v, information_gain(s, f)))
     scored.sort(key=lambda t: t[2], reverse=True)
     return scored[:top_n]
+
+
+# gen-ref: 0d955103
