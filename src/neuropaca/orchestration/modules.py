@@ -30,6 +30,9 @@ than a live request, for `scripts/neuropaca_tray.py`.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from neuropaca.action.executor import ActionExecutor
 from neuropaca.agents.supervisor import AgentSupervisor
 from neuropaca.core.base_module import BaseModule
@@ -57,6 +60,17 @@ from neuropaca.sensing.media_ingest import MediaIngest
 from neuropaca.sensing.plugin_host import Plugin, PluginHost
 from neuropaca.sensing.project_ingest import ProjectIngest
 from neuropaca.sensing.raw_recorder import RawMetricsRecorder
+
+
+def _ensure_repo_root_importable() -> None:
+    """`plugins/` (S4 domain plugins) lives outside the installed `neuropaca`
+    package — a normal `neuropaca daemon` process (not `python script.py`)
+    doesn't get the repo root on `sys.path` for free, so importing
+    `plugins.*` fails unless it's added explicitly. Idempotent; cheap enough
+    to call unconditionally rather than duplicate the try/except per plugin."""
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 
 def build_modules(
@@ -151,17 +165,11 @@ def build_modules(
         modules.append(MediaIngest(event_bus, config, graph_memory, episode_store=episode_store))
 
     domain_plugins: list[Plugin] = []
+    if config.calendar_enabled or config.reading_enabled:
+        _ensure_repo_root_importable()
     if config.calendar_enabled:
-        try:
-            from plugins.calendar.calendar_plugin import CalendarPlugin
-        except ModuleNotFoundError:
-            import sys
-            from pathlib import Path
+        from plugins.calendar.calendar_plugin import CalendarPlugin
 
-            repo_root = Path(__file__).resolve().parent.parent.parent.parent
-            if str(repo_root) not in sys.path:
-                sys.path.insert(0, str(repo_root))
-            from plugins.calendar.calendar_plugin import CalendarPlugin
         domain_plugins.append(
             CalendarPlugin(
                 calendar_path=config.calendar_ics_path,
@@ -169,16 +177,8 @@ def build_modules(
             )
         )
     if config.reading_enabled:
-        try:
-            from plugins.reading.reading_plugin import ReadingListPlugin
-        except ModuleNotFoundError:
-            import sys
-            from pathlib import Path
+        from plugins.reading.reading_plugin import ReadingListPlugin
 
-            repo_root = Path(__file__).resolve().parent.parent.parent.parent
-            if str(repo_root) not in sys.path:
-                sys.path.insert(0, str(repo_root))
-            from plugins.reading.reading_plugin import ReadingListPlugin
         domain_plugins.append(
             ReadingListPlugin(
                 reading_list_path=config.reading_list_path,

@@ -177,6 +177,11 @@ class PluginHost(BaseModule):
     def manifest_violations(self) -> tuple[str, ...]:
         return tuple(self._manifest_violations)
 
+    def last_poll_for(self, plugin_name: str) -> datetime | None:
+        """The last poll timestamp for one registered plugin, or None if it
+        has never been polled."""
+        return self._last_poll.get(plugin_name)
+
     @property
     def open_spans(self) -> dict[str, tuple[str, datetime, PluginItem]]:
         return dict(self._open_spans)

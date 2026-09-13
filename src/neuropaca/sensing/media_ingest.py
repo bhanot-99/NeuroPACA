@@ -159,11 +159,9 @@ class MediaPlugin:
                 return await self._parent._run_busctl(*args, timeout_seconds=timeout_seconds)
             except TypeError:
                 return await self._parent._run_busctl(*args)
-        return await self._default_run_busctl(*args, timeout_seconds=timeout_seconds)
+        return await self.run_busctl_default(*args, timeout_seconds=timeout_seconds)
 
-    async def _default_run_busctl(
-        self, *args: str, timeout_seconds: float = 5.0
-    ) -> tuple[int, str]:
+    async def run_busctl_default(self, *args: str, timeout_seconds: float = 5.0) -> tuple[int, str]:
         """Strictly read-only busctl invocation."""
         proc = await asyncio.create_subprocess_exec(
             "busctl",
@@ -424,6 +422,9 @@ class MediaPlugin:
     def open_spans(self) -> dict[str, tuple[str, datetime, dict[str, Any]]]:
         return dict(self._open_spans)
 
+    def clear_open_spans(self) -> None:
+        self._open_spans.clear()
+
     @property
     def titles_dropped(self) -> int:
         return self._titles_dropped
@@ -496,7 +497,7 @@ class MediaIngest(BaseModule):
 
     @property
     def _last_poll(self) -> datetime | None:
-        return self._host._last_poll.get("media")
+        return self._host.last_poll_for("media")
 
     async def initialize(self) -> None:
         if not shutil.which("busctl"):
@@ -518,7 +519,7 @@ class MediaIngest(BaseModule):
     async def stop(self) -> None:
         self.is_running = False
         await self._host.stop()
-        self._plugin._open_spans.clear()
+        self._plugin.clear_open_spans()
 
     def health(self) -> ModuleHealth:
         if not self._available:
@@ -537,7 +538,7 @@ class MediaIngest(BaseModule):
         )
 
     async def _run_busctl(self, *args: str, timeout_seconds: float = 5.0) -> tuple[int, str]:
-        return await self._plugin._default_run_busctl(*args, timeout_seconds=timeout_seconds)
+        return await self._plugin.run_busctl_default(*args, timeout_seconds=timeout_seconds)
 
     def extract_media(
         self, metadata: dict[str, Any], position_us: int = 0
