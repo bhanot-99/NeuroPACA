@@ -5585,7 +5585,43 @@ Two review passes before merge, neither surfaced by the initial passing suite be
 - **Broken churn suppression, then a residual gap (pass 1, refined in pass 2):** including `position_seconds` in the churn key defeated suppression entirely (position advances every tick, so almost every tick looked "new"). Pass 1 removed position from the key — correct, but as a side effect froze the stored position at the *first* tick an episode was detected, since nothing else ever triggered a refresh. Pass 2 added a forced refresh at span close (pause/stop/track-change/shutdown) using the last real observation, gated by a second cache (`_last_written`, identity + rounded position) so a close that observed nothing new since the last write doesn't duplicate the fact. Regression test drives an advancing position across several suppressed ticks, then a real stop, and asserts the stored value is the stop-time position, not the first one.
 - **A real `EpisodeStore.flush()` race, found while writing that regression test:** `flush()` fast-pathed on `Queue.empty()`, but the writer task calls `Queue.get()` (emptying the queue) *before* running the blocking insert in a thread and calling `task_done()` — a caller in that window sees an empty queue and wrongly concludes the write landed. This is S0 infrastructure every phase's tests rely on (`await store.flush()` then read back), not S3-specific; only S3's particular access pattern (many `FakeClock.advance()` yields) reliably exposed the window. Fixed to always `Queue.join()` when a writer task is alive — correct and free for the already-empty case, since `join()` already returns immediately with zero unfinished tasks. New deterministic regression test in `tests/test_episodes.py` forces the exact race (a monkeypatched slow write + one `asyncio.sleep(0)`) and fails reliably on the old code.
 - **Exit criterion (pass 1):** reset from a self-graded `[x]` to `[ ]` with an honest note — the mechanical/simulated verification is real, but "checked by the user" on real multi-day usage has not happened.
-- **Constructor, dead code, import placement (pass 1):** collapsed the redundant `store`/`episode_store` constructor parameters to one; removed a `Config.validate()` method that did nothing and was never meaningfully called; moved a stray function-local `import re` to module scope.
+---
+
+### 21.26 S4 · The plugin contract — centralized host, side-effect-free readers, manifest enforcement
+
+| | |
+| --- | --- |
+| **Branch** | `s4-plugin-contract` |
+| **Outcome** | Full suite (`pytest -m ""`): 1047 collected, 1017 passed, 5 skipped, 24 deselected, 1 xfailed (Personalized PageRank scale budget from S0). Zero new dependencies. 0 regressions. S1 (`MailIngest`), S2 (`ProjectIngest`), and S3 (`MediaIngest`) refactored onto the shared `PluginHost` (`src/neuropaca/sensing/plugin_host.py`). Two new domain plugins added (`plugins/calendar/` for `domain:meetings`, `plugins/reading/` for `domain:learning`). Both exit criteria verified and green. |
+
+**In plain words.** Adding a domain to NeuroPaca no longer requires writing GraphMemory integration, fact churn suppression, span closure bookkeeping, and V-10 non-inflation logic from scratch. A plugin is a pure, side-effect-free reader that yields `PluginItem` observations. The centralized `PluginHost` manages all graph sightings, episode spans, and facts, while validating plugin security manifests against unauthorized filesystem and network access.
+
+**Design & Architecture.**
+1. **The Plugin Contract (`src/neuropaca/sensing/plugin_host.py`):**
+   - Defined `Plugin(Protocol)`: `describe() -> PluginDescriptor`, `items(since: datetime) -> list[PluginItem]`, `entities() -> frozenset[str]`, `forget(entity: str) -> int`.
+   - `PluginDescriptor`: metadata declaring name, primary node type, domain hub, poll interval, and security `PluginManifest`.
+   - `PluginItem`: immutable observation dataclass carrying `entity_id`, `label`, `node_type`, `node_attributes`, `span`, `span_kind`, `span_obj`, `span_attrs`, `fact`, `state_key`, `active`, `extra_nodes`, `edges`, and `events`.
+2. **Centralized Ingest & Invariance Guarantees in `PluginHost`:**
+   - *V-10 Non-inflation:* brand-new nodes are created via `upsert_node`; subsequent polling sightings call `mark_seen` without inflating access counts or relevance scores.
+   - *Fact Churn Suppression:* facts are checked against `state_key` (derived or explicit) and written only on true identity change.
+   - *Span-Close Stopping Position Refresh:* when an active ongoing session transitions from active to inactive, its span is recorded and its fact is force-refreshed to the exact stopping position with duplicate suppression.
+   - *Orphan & Hub Wiring:* automatic connection of primary and extra nodes to domain hubs (`domain:*`) and between related nodes.
+   - *Unified Forget:* purges entity across GraphMemory, EpisodeStore, host tracking caches, and delegates internal cleanup to plugins.
+3. **Manifest Enforcement & Doctor:**
+   - `PluginManifest` specifies `allowed_read_paths`, `allowed_write_paths`, `allow_network`, and `allow_subprocesses`.
+   - `PluginHost.validate_manifests()` and `doctor(host)` flag plugins accessing paths outside their sandbox or attempting prohibited network calls, reflecting directly in `host.health().ok = False`.
+4. **Refactored Ingest Modules:**
+   - `ProjectIngest` wraps `ProjectPlugin` (`domain:engineering`).
+   - `MediaIngest` wraps `MediaPlugin` (`domain:media`).
+   - `MailIngest` wraps `MailPlugin` (`domain:comms`).
+   - 100% backward-compatible: all test assertions on internal counters and methods pass unchanged.
+5. **New Fourth and Fifth Domains:**
+   - `plugins/calendar/` (`CalendarPlugin`, `domain:meetings`): standard-library RFC 5545 `.ics` reader. No third-party dependencies.
+   - `plugins/reading/` (`ReadingListPlugin`, `domain:learning`): standard-library JSON / Markdown reading list reader.
+
+**Verification & Exit Criteria:**
+- Exit Criterion 1 ("A fourth domain touches only its own plugin directory"): verified via `tests/test_plugin_exit_criteria.py::test_exit_criterion_1_fourth_domain_touches_only_its_own_plugin_dir` and `tests/test_calendar_plugin.py`. Adding `plugins/calendar/` and `plugins/reading/` required zero modifications to core architecture.
+- Exit Criterion 2 ("`doctor` flags any plugin exceeding its manifest"): verified via `tests/test_plugin_exit_criteria.py::test_exit_criterion_2_doctor_flags_plugin_exceeding_manifest` and `tests/test_plugin_contract.py::test_manifest_validation_flags_violations`. Rogue plugins accessing files outside allowed read paths or attempting network connections are immediately flagged and set health to degraded.
 
 ---
 

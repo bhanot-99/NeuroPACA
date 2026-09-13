@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""S1 · `MailIngest` — correspondence ledger and thread state (VISION_PHASES.md).
+"""S1/S4 · `MailIngest` & `MailPlugin` — correspondence ledger and thread state.
+
+Migrated under S4 Plugin Contract:
+- `MailPlugin` implements the pure `Plugin` reader protocol over the mail spool.
+- `MailIngest` hosts `MailPlugin` via `PluginHost`.
 
 Tails the mail spool (`data/plugins/mail/spool/*.jsonl`) using byte-offset watermarks,
 writing:
@@ -38,8 +42,16 @@ from neuropaca.sensing.mail_threading import (
     normalize_email_address,
     person_slug,
 )
+from neuropaca.sensing.plugin_host import (
+    PluginDescriptor,
+    PluginHost,
+    PluginItem,
+    PluginManifest,
+)
 
 _log = logging.getLogger(__name__)
+
+__all__ = ["MailIngest", "MailPlugin"]
 
 
 def _parse_iso_utc(ts: str | None) -> datetime:
@@ -54,22 +66,18 @@ def _parse_iso_utc(ts: str | None) -> datetime:
         return datetime.now(UTC)
 
 
-class MailIngest(BaseModule):
-    """Daemon-side correspondence sensor reading from the external spool."""
+class MailPlugin:
+    """Pure plugin reader tailing mail spool files and resolving threads."""
 
     def __init__(
         self,
-        event_bus: EventBus,
         config: Config,
-        graph_memory: GraphMemory,
-        episode_store: EpisodeStore | None = None,
-        *,
         clock: Clock | None = None,
+        store: EpisodeStore | None = None,
     ) -> None:
-        super().__init__("mail_ingest", event_bus, config)
-        self._gm = graph_memory
-        self._store = episode_store
+        self.config = config
         self._clock: Clock = clock or SystemClock()
+        self._store = store
         self._spool_dir = Path(config.mail_spool_dir)
         self._watermark_path = self._spool_dir / ".watermark.json"
         self._forgotten_path = self._spool_dir / "forgotten.json"
@@ -78,8 +86,8 @@ class MailIngest(BaseModule):
         self._watermarks: dict[str, int] = {}
         self._forgotten: set[str] = set()
         self._ingested_count = 0
-        self._poll_task: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
+        self._last_batch_processed = 0
+        self._entities: set[str] = set()
 
     @property
     def spool_dir(self) -> Path:
@@ -89,94 +97,53 @@ class MailIngest(BaseModule):
     def ingested_count(self) -> int:
         return self._ingested_count
 
-    # ---------------------------------------------------------------- lifecycle
     async def initialize(self) -> None:
         self._spool_dir.mkdir(parents=True, exist_ok=True)
         await self._load_watermarks()
         await self._load_forgotten()
         await self._load_threader_state()
 
-    async def start(self) -> None:
-        if self.is_running:
-            return
-        self.is_running = True
-        # Ingest whatever is waiting in the spool
-        await self.ingest_spool()
-        # Start background polling task
-        self._poll_task = asyncio.create_task(self._poll_loop())
-
-    async def stop(self) -> None:
-        if not self.is_running:
-            return
-        self.is_running = False
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
-        await self._save_watermarks()
-        await self._save_threader_state()
-
-    def health(self) -> ModuleHealth:
-        return ModuleHealth(
-            name=self.name,
-            ok=True,
-            detail=(
-                f"messages_ingested={self._ingested_count}, "
-                f"tracked_files={len(self._watermarks)}, "
-                f"forgotten_count={len(self._forgotten)}"
+    def describe(self) -> PluginDescriptor:
+        spool_p = self._spool_dir.expanduser().resolve()
+        return PluginDescriptor(
+            name="mail",
+            node_type=NodeType.THREAD,
+            domain_hub="domain:comms",
+            poll_interval_seconds=self.config.mail_poll_interval_seconds,
+            span_kind=EpisodeKind.MESSAGE_RECEIVED,
+            manifest=PluginManifest(
+                allowed_read_paths=(spool_p,),
+                allowed_write_paths=(spool_p,),
+                allow_network=False,
+                allow_subprocesses=False,
             ),
         )
 
-    # ----------------------------------------------------------- spool ingestion
-    async def _poll_loop(self) -> None:
-        while self.is_running:
-            try:
-                await self.poll_tick()
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                _log.exception("MailIngest error in poll loop")
-            await asyncio.sleep(self.config.mail_poll_interval_seconds)
+    def _is_record_forgotten(self, record: dict[str, Any]) -> bool:
+        if not self._forgotten:
+            return False
+        sender = record.get("sender", "")
+        sender_addr = record.get("sender_address", "")
+        name, addr = normalize_email_address(sender)
+        slug = person_slug(name or sender, addr or sender_addr)
+        if (
+            f"person:{slug}" in self._forgotten
+            or slug in self._forgotten
+            or addr in self._forgotten
+            or sender_addr in self._forgotten
+        ):
+            return True
 
-    async def poll_tick(self) -> int:
-        """Run a single polling cycle: ingest pending records and resolve timed-out threads."""
-        processed = await self.ingest_spool()
-        await self.check_resolved_threads()
-        return processed
-
-    async def ingest_spool(self) -> int:
-        """Tail all *.jsonl files in spool_dir from their saved watermark offsets."""
-        async with self._lock:
-            await self._load_forgotten()
-            if not self._spool_dir.exists():
-                return 0
-
-            spool_files = sorted(self._spool_dir.glob("*.jsonl"))
-            total_processed = 0
-
-            for spool_file in spool_files:
-                if spool_file.name.startswith("."):
-                    continue
-                records, new_offset = await asyncio.to_thread(
-                    self._read_new_records_blocking, spool_file
-                )
-                for record in records:
-                    await self._process_record(record)
-                    total_processed += 1
-                self._watermarks[spool_file.name] = new_offset
-
-            if total_processed > 0:
-                if self._store is not None:
-                    await self._store.flush()
-                await self._check_resolved_threads()
-                await self._save_watermarks()
-                await self._save_threader_state()
-
-            self._ingested_count += total_processed
-            return total_processed
+        for to_val in record.get("to", []):
+            t_name, t_addr = normalize_email_address(to_val)
+            t_slug = person_slug(t_name or to_val, t_addr)
+            if (
+                f"person:{t_slug}" in self._forgotten
+                or t_slug in self._forgotten
+                or t_addr in self._forgotten
+            ):
+                return True
+        return False
 
     def _read_new_records_blocking(self, path: Path) -> tuple[list[dict[str, Any]], int]:
         offset = self._watermarks.get(path.name, 0)
@@ -205,34 +172,7 @@ class MailIngest(BaseModule):
             new_offset = fh.tell()
         return records, new_offset
 
-    def _is_record_forgotten(self, record: dict[str, Any]) -> bool:
-        if not self._forgotten:
-            return False
-        sender = record.get("sender", "")
-        sender_addr = record.get("sender_address", "")
-        name, addr = normalize_email_address(sender)
-        slug = person_slug(name or sender, addr or sender_addr)
-        if (
-            f"person:{slug}" in self._forgotten
-            or slug in self._forgotten
-            or addr in self._forgotten
-            or sender_addr in self._forgotten
-        ):
-            return True
-
-        for to_val in record.get("to", []):
-            t_name, t_addr = normalize_email_address(to_val)
-            t_slug = person_slug(t_name or to_val, t_addr)
-            if (
-                f"person:{t_slug}" in self._forgotten
-                or t_slug in self._forgotten
-                or t_addr in self._forgotten
-            ):
-                return True
-        return False
-
-    async def _process_record(self, record: dict[str, Any]) -> None:
-        """Dispatch a single parsed record to EpisodeStore and GraphMemory."""
+    def _item_from_record(self, record: dict[str, Any]) -> PluginItem:
         msg_id = record.get("message_id", "")
         in_reply_to = record.get("in_reply_to")
         references = record.get("references", [])
@@ -283,6 +223,8 @@ class MailIngest(BaseModule):
         p_slug = person_slug(p_name, p_addr)
         thread_entity = f"thread:{thread_id}"
         person_entity = f"person:{p_slug}"
+        self._entities.add(thread_entity)
+        self._entities.add(person_entity)
 
         attrs: dict[str, Any] = {
             "message_id": msg_id,
@@ -297,46 +239,95 @@ class MailIngest(BaseModule):
         if self.config.mail_snippet_chars > 0 and snippet:
             attrs["snippet"] = str(snippet)[: self.config.mail_snippet_chars]
 
-        # 1. Record episode ledger row
-        if self._store is not None:
-            self._store.record_span(
-                kind,
-                thread_entity,
-                start=date,
-                end=date,
-                obj=person_entity,
-                source="mail",
-                attrs=attrs,
-            )
-            # 2. Record superseding thread state fact
-            self._store.assert_fact(
-                EpisodeKind.THREAD_STATE_FACT,
-                thread_entity,
-                thread_state,
-                valid_from=date,
-                source="mail",
-                attrs={"participant": p_slug, "last_message_id": msg_id},
-            )
-
-        # 3. Upsert graph nodes and edges
         thread_label = (
             subject_raw if (self.config.mail_retain_subject and subject_raw) else thread_entity
         )
-        await self._upsert_graph_nodes(thread_entity, thread_label, person_entity, p_name)
+        fact_attrs = {
+            "participant": p_slug,
+            "last_message_id": msg_id,
+            "valid_from": date,
+        }
 
-    async def _upsert_graph_nodes(
-        self, thread_entity: str, thread_label: str, person_entity: str, person_name: str
-    ) -> None:
-        await self._gm.upsert_node(
-            thread_entity, NodeType.THREAD, attributes={"label": thread_label}
+        return PluginItem(
+            entity_id=thread_entity,
+            label=thread_label,
+            node_type=NodeType.THREAD,
+            span=(date, date),
+            span_kind=kind,
+            span_obj=person_entity,
+            span_attrs=attrs,
+            fact=(EpisodeKind.THREAD_STATE_FACT, thread_state, fact_attrs),
+            state_key=(thread_entity, thread_state, msg_id),
+            extra_nodes=((person_entity, p_name, NodeType.PERSON),),
+            edges=(
+                (thread_entity, person_entity, RelationType.RELATED_TO),
+                (person_entity, "domain:comms", RelationType.PART_OF),
+            ),
         )
-        await self._gm.upsert_node(
-            person_entity, NodeType.PERSON, attributes={"label": person_name}
-        )
-        await self._gm.add_edge(thread_entity, person_entity, relation=RelationType.RELATED_TO)
-        if self._gm.has_node("domain:comms"):
-            await self._gm.add_edge(thread_entity, "domain:comms", relation=RelationType.PART_OF)
-            await self._gm.add_edge(person_entity, "domain:comms", relation=RelationType.PART_OF)
+
+    async def items(self, since: datetime) -> list[PluginItem]:
+        await self._load_forgotten()
+        items: list[PluginItem] = []
+        if not self._spool_dir.exists():
+            self._last_batch_processed = 0
+            return items
+
+        spool_files = sorted(self._spool_dir.glob("*.jsonl"))
+        total_processed = 0
+
+        for spool_file in spool_files:
+            if spool_file.name.startswith("."):
+                continue
+            records, new_offset = await asyncio.to_thread(
+                self._read_new_records_blocking, spool_file
+            )
+            for record in records:
+                items.append(self._item_from_record(record))
+                total_processed += 1
+            self._watermarks[spool_file.name] = new_offset
+
+        if total_processed > 0:
+            await self._save_watermarks()
+            await self._save_threader_state()
+
+        self._ingested_count += total_processed
+        self._last_batch_processed = total_processed
+
+        # Check resolved threads and yield items for any timed-out threads
+        resolved_items = await self._check_resolved_thread_items()
+        items.extend(resolved_items)
+
+        return items
+
+    async def _check_resolved_thread_items(self) -> list[PluginItem]:
+        if self._store is None:
+            return []
+        now = self._clock.now() if self._clock else datetime.now(UTC)
+        cutoff = now - timedelta(days=self.config.mail_resolved_after_days)
+        open_records = await self._store.at(now)
+        items: list[PluginItem] = []
+        for record in open_records:
+            if (
+                record.kind == str(EpisodeKind.THREAD_STATE_FACT)
+                and record.object in ("awaiting_them", "awaiting_you")
+                and record.t_valid is not None
+                and record.t_valid < cutoff
+            ):
+                valid_from = record.t_valid + timedelta(days=self.config.mail_resolved_after_days)
+                items.append(
+                    PluginItem(
+                        entity_id=record.subject,
+                        label=record.subject,
+                        node_type=NodeType.THREAD,
+                        fact=(
+                            EpisodeKind.THREAD_STATE_FACT,
+                            "resolved",
+                            {"resolved_reason": "timeout", "valid_from": valid_from},
+                        ),
+                        state_key=(record.subject, "resolved"),
+                    )
+                )
+        return items
 
     async def check_resolved_threads(self) -> int:
         """Close open threads that have passed mail_resolved_after_days."""
@@ -367,47 +358,33 @@ class MailIngest(BaseModule):
             await self._store.flush()
         return resolved_count
 
-    _check_resolved_threads = check_resolved_threads
+    def entities(self) -> frozenset[str]:
+        return frozenset(self._entities)
 
-    # ---------------------------------------------------------------- forget
     async def forget(self, person: str) -> int:
-        """Scrub person from episodes, facts, graph, and spool, and record in forgotten.json."""
-        async with self._lock:
-            raw = (
-                person.removeprefix("person:").strip()
-                if person.startswith("person:")
-                else person.strip()
-            )
-            name, addr = normalize_email_address(raw)
-            slug = person_slug(name or raw, addr)
-            person_entity = f"person:{slug}"
+        raw = (
+            person.removeprefix("person:").strip()
+            if person.startswith("person:")
+            else person.strip()
+        )
+        name, addr = normalize_email_address(raw)
+        slug = person_slug(name or raw, addr)
+        person_entity = f"person:{slug}"
 
-            # 1. Update forgotten.json deny-list
-            self._forgotten.add(person_entity)
-            self._forgotten.add(slug)
-            if addr:
-                self._forgotten.add(addr)
-            if person:
-                self._forgotten.add(person.strip().lower())
-            if raw:
-                self._forgotten.add(raw.lower())
-            await self._save_forgotten()
+        self._forgotten.add(person_entity)
+        self._forgotten.add(slug)
+        if addr:
+            self._forgotten.add(addr)
+        if person:
+            self._forgotten.add(person.strip().lower())
+        if raw:
+            self._forgotten.add(raw.lower())
+        await self._save_forgotten()
 
-            # 2. Scrub spool files
-            scrubbed_lines = await asyncio.to_thread(self._scrub_spool_blocking)
+        self._entities.discard(person_entity)
+        self._entities.discard(person)
 
-            # 3. Scrub EpisodeStore
-            removed_episodes = 0
-            if self._store is not None:
-                removed_episodes += await self._store.forget(person_entity)
-                if addr:
-                    removed_episodes += await self._store.forget(addr)
-
-            # 4. Remove from GraphMemory
-            if self._gm.has_node(person_entity):
-                await self._gm.delete_node(person_entity)
-
-            return scrubbed_lines + removed_episodes
+        return await asyncio.to_thread(self._scrub_spool_blocking)
 
     def _scrub_spool_blocking(self) -> int:
         scrubbed = 0
@@ -433,7 +410,6 @@ class MailIngest(BaseModule):
                     else:
                         lines.append(raw)
             if modified:
-                # Atomically overwrite spool file
                 with tempfile.NamedTemporaryFile(
                     mode="w", encoding="utf-8", dir=self._spool_dir, delete=False
                 ) as tf:
@@ -447,7 +423,6 @@ class MailIngest(BaseModule):
                 self._watermarks[spool_file.name] = spool_file.stat().st_size
         return scrubbed
 
-    # ------------------------------------------------------------- state IO
     async def _load_watermarks(self) -> None:
         if self._watermark_path.exists():
             try:
@@ -518,4 +493,119 @@ class MailIngest(BaseModule):
         os.replace(tmp_path, self._threader_path)
 
 
-# gen-ref: ecefd81c
+class MailIngest(BaseModule):
+    """Daemon-side correspondence sensor reading from the external spool.
+
+    Hosts MailPlugin within PluginHost under S4 plugin contract.
+    """
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        config: Config,
+        graph_memory: GraphMemory,
+        episode_store: EpisodeStore | None = None,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
+        super().__init__("mail_ingest", event_bus, config)
+        self._gm = graph_memory
+        self._store = episode_store
+        self._clock: Clock = clock or SystemClock()
+        self._lock = asyncio.Lock()
+
+        self._plugin = MailPlugin(config, clock=self._clock, store=episode_store)
+        self._host = PluginHost(
+            event_bus,
+            config,
+            graph_memory,
+            episode_store,
+            plugins=[self._plugin],
+            clock=self._clock,
+        )
+
+    @property
+    def spool_dir(self) -> Path:
+        return self._plugin.spool_dir
+
+    @property
+    def ingested_count(self) -> int:
+        return self._plugin.ingested_count
+
+    @property
+    def _watermarks(self) -> dict[str, int]:
+        return self._plugin._watermarks
+
+    @property
+    def _forgotten(self) -> set[str]:
+        return self._plugin._forgotten
+
+    @property
+    def _threader(self) -> Threader:
+        return self._plugin._threader
+
+    async def initialize(self) -> None:
+        await self._plugin.initialize()
+        await self._host.initialize()
+
+    async def start(self) -> None:
+        if self.is_running:
+            return
+        self.is_running = True
+        await self.ingest_spool()
+        await self._host.start()
+
+    async def stop(self) -> None:
+        self.is_running = False
+        await self._host.stop()
+        await self._plugin._save_watermarks()
+        await self._plugin._save_threader_state()
+
+    def health(self) -> ModuleHealth:
+        return ModuleHealth(
+            name=self.name,
+            ok=True,
+            detail=(
+                f"messages_ingested={self.ingested_count}, "
+                f"tracked_files={len(self._watermarks)}, "
+                f"forgotten_count={len(self._forgotten)}"
+            ),
+        )
+
+    async def ingest_spool(self) -> int:
+        """Tail all *.jsonl files in spool_dir from their saved watermark offsets."""
+        async with self._lock:
+            await self._host.poll_tick("mail")
+            if self._plugin._last_batch_processed > 0:
+                await self.check_resolved_threads()
+            return self._plugin._last_batch_processed
+
+    async def poll_tick(self) -> int:
+        """Run a single polling cycle: ingest pending records and resolve timed-out threads."""
+        processed = await self.ingest_spool()
+        await self.check_resolved_threads()
+        return processed
+
+    async def check_resolved_threads(self) -> int:
+        """Close open threads that have passed mail_resolved_after_days."""
+        return await self._plugin.check_resolved_threads()
+
+    _check_resolved_threads = check_resolved_threads
+
+    async def forget(self, person: str) -> int:
+        """Scrub person from episodes, facts, graph, and spool, and record in forgotten.json."""
+        async with self._lock:
+            raw = (
+                person.removeprefix("person:").strip()
+                if person.startswith("person:")
+                else person.strip()
+            )
+            name, addr = normalize_email_address(raw)
+            slug = person_slug(name or raw, addr)
+            person_entity = f"person:{slug}"
+
+            scrubbed_lines = await self._plugin.forget(person)
+            removed_episodes = await self._host.forget(person_entity)
+            if addr and self._store is not None:
+                removed_episodes += await self._store.forget(addr)
+            return scrubbed_lines + removed_episodes

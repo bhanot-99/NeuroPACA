@@ -1,38 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""S2 · `ProjectIngest` — software project collector and thread context (VISION_PHASES.md).
+"""S2/S4 · `ProjectIngest` & `ProjectPlugin` — software project collector and thread context.
 
-Periodically inspects repositories under `config.watch_paths` using read-only local git
-plumbing and filesystem checks:
-- Branch, dirty file count, last commit time, top recently modified files
-- Last failing pytest tests (`.pytest_cache/v/cache/lastfailed`)
-- Explicit next step note (`.neuropaca/next`), capped at `project_next_max_chars`
-
-Emits:
-- `EpisodeKind.PROJECT_STATE_FACT` — superseding fact per repo, recorded only when state changes.
-- `NodeType.PROJECT` graph nodes (`project:<slug>`), linked `PART_OF` `domain:engineering`.
-- `Moment(kind="thread")` proposed when a repo whose last commit is older than
-  `project_stale_days` picks up uncommitted changes again (see `_maybe_fire_thread_moment`).
+Migrated under S4 Plugin Contract:
+- `ProjectPlugin` implements the pure `Plugin` reader protocol.
+- `ProjectIngest` hosts `ProjectPlugin` via `PluginHost`.
 
 Zero repo mutation: all operations are strictly read-only.
-
-**Why the thread moment is triggered from git state, not `APP_SWITCH`.**
-VISION.md §1.4 ("the thread") wants this to fire when you *return* to a stale
-project. The obvious trigger would be the focused window changing to that
-project — but nothing in this codebase can make that correlation: `WindowInfo`
-(`sensing/activity/window.py`) carries only `app_id`/`title`, no PID and no cwd
-(the Wayland toplevel protocols this daemon binds don't expose either), and the
-raw title never leaves the sensing collector onto the bus at all (B14's
-membrane — `APP_SWITCH`'s payload is `app_id`/`webapp`/`webapp_domain` only, see
-`sensing/activity/collector.py::_on_window_switch`). Matching an `app_id` like
-`"code"` against a repo path is therefore never more than a name coincidence.
-Instead, this module fires straight from what it already measures accurately:
-a repo's own last-commit timestamp is real, immutable ground truth for
-staleness (unlike this module's own poll-cadence bookkeeping, which would
-just measure "since the daemon last restarted"), and uncommitted changes
-appearing after a stale gap is a fact, not a guess, that you are back working
-in it.
 """
 
 from __future__ import annotations
@@ -48,17 +23,23 @@ from typing import Any
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EpisodeKind, EventType, NodeType, RelationType
+from neuropaca.core.enums import EpisodeKind, EventType, NodeType
 from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, Moment
 from neuropaca.core.project_format import format_project_left_off
+from neuropaca.sensing.plugin_host import (
+    PluginDescriptor,
+    PluginHost,
+    PluginItem,
+    PluginManifest,
+)
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["ProjectIngest", "format_project_left_off", "project_slug"]
+__all__ = ["ProjectIngest", "ProjectPlugin", "format_project_left_off", "project_slug"]
 
 
 def project_slug(path: Path | str) -> str:
@@ -69,77 +50,37 @@ def project_slug(path: Path | str) -> str:
     return slug or "project"
 
 
-class ProjectIngest(BaseModule):
-    """Daemon-side project sensor inspecting git repositories under watch_paths."""
+class ProjectPlugin:
+    """Read-only plugin reader inspecting git repositories under watch_paths."""
 
     def __init__(
         self,
-        event_bus: EventBus,
         config: Config,
-        graph_memory: GraphMemory,
-        episode_store: EpisodeStore | None = None,
-        *,
         clock: Clock | None = None,
     ) -> None:
-        super().__init__("project_ingest", event_bus, config)
-        self._gm = graph_memory
-        self._store = episode_store
+        self.config = config
         self._clock: Clock = clock or SystemClock()
-        self._poll_task: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
-
+        self.watch_paths: list[str] = list(config.watch_paths)
         self._last_seen_state: dict[str, tuple[Any, ...]] = {}
         self._repo_states: dict[str, dict[str, Any]] = {}
         self._thread_fired: set[str] = set()
-        self._facts_written = 0
+        self._entities: set[str] = set()
         self._moments_proposed = 0
 
-    # ---------------------------------------------------------------- lifecycle
-    async def initialize(self) -> None:
-        pass
-
-    async def start(self) -> None:
-        if self.is_running:
-            return
-        self.is_running = True
-        await self.poll_tick()
-        self._poll_task = asyncio.create_task(self._poll_loop())
-
-    async def stop(self) -> None:
-        if not self.is_running:
-            return
-        self.is_running = False
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
-
-    def health(self) -> ModuleHealth:
-        return ModuleHealth(
-            name=self.name,
-            ok=True,
-            detail=(
-                f"tracked_repos={len(self._repo_states)}, "
-                f"facts_written={self._facts_written}, "
-                f"thread_moments={self._moments_proposed}"
+    def describe(self) -> PluginDescriptor:
+        allowed = tuple(Path(p).expanduser().resolve() for p in self.config.watch_paths)
+        return PluginDescriptor(
+            name="project",
+            node_type=NodeType.PROJECT,
+            domain_hub="domain:engineering",
+            poll_interval_seconds=self.config.project_poll_interval_seconds,
+            span_kind=None,
+            manifest=PluginManifest(
+                allowed_read_paths=allowed,
+                allow_network=False,
+                allow_subprocesses=True,
             ),
         )
-
-    # -------------------------------------------------------------- poll loop
-    async def _poll_loop(self) -> None:
-        while self.is_running:
-            try:
-                await asyncio.sleep(self.config.project_poll_interval_seconds)
-                if not self.is_running:
-                    break
-                await self.poll_tick()
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                _log.exception("ProjectIngest error in poll loop")
 
     def find_watched_repos(self) -> list[Path]:
         """Find all git repositories located directly or 1 level under watch_paths."""
@@ -166,134 +107,6 @@ class ProjectIngest(BaseModule):
                     continue
         return repos
 
-    async def poll_tick(self) -> int:
-        """Run a single polling cycle over all discovered repositories."""
-        async with self._lock:
-            repos = self.find_watched_repos()
-            facts_before = self._facts_written
-            now = self._clock.now()
-
-            for repo_path in repos:
-                info = await self._inspect_repo(repo_path)
-                if info is None:
-                    continue
-
-                project_entity = info["project_entity"]
-                state_key = (
-                    info["branch"],
-                    info["dirty_count"],
-                    info["last_commit_timestamp"],
-                    tuple(info["recent_files"]),
-                    tuple(info["last_failing_tests"]),
-                    info["next_note"],
-                )
-
-                if self._last_seen_state.get(project_entity) != state_key:
-                    self._last_seen_state[project_entity] = state_key
-                    if self._store is not None:
-                        self._store.assert_fact(
-                            EpisodeKind.PROJECT_STATE_FACT,
-                            project_entity,
-                            info["branch"],
-                            valid_from=now,
-                            source="project",
-                            attrs={
-                                "repo_path": info["path"],
-                                "repo_name": info["name"],
-                                "branch": info["branch"],
-                                "dirty_count": info["dirty_count"],
-                                "last_commit_timestamp": info["last_commit_timestamp"],
-                                "recent_files": info["recent_files"],
-                                "last_failing_tests": info["last_failing_tests"],
-                                "next_note": info["next_note"],
-                            },
-                        )
-                        self._facts_written += 1
-
-                # V-10: a poll is a *sighting*, not an access — `mark_seen` (or,
-                # for a brand-new node, a plain create) must not bump
-                # `activity`/`access_count`/`relevance_score` the way
-                # `upsert_node` does on every call to an existing node
-                # (GraphMemory._touch_unsafe). Polling every repo under
-                # `watch_paths` every `project_poll_interval_seconds` must not
-                # by itself make a repo look more "important" than one the
-                # user actually opens.
-                if not self._gm.has_node(project_entity):
-                    await self._gm.upsert_node(
-                        project_entity,
-                        NodeType.PROJECT,
-                        attributes={"label": info["name"], "path": info["path"]},
-                    )
-                else:
-                    await self._gm.mark_seen(project_entity, now)
-                    await self._gm.update_node(
-                        project_entity, {"label": info["name"], "path": info["path"]}
-                    )
-                if self._gm.has_node("domain:engineering"):
-                    await self._gm.add_edge(
-                        project_entity, "domain:engineering", relation=RelationType.PART_OF
-                    )
-
-                prev_info = self._repo_states.get(project_entity)
-                self._repo_states[project_entity] = info
-                await self._maybe_fire_thread_moment(project_entity, prev_info, info, now)
-
-            if self._facts_written > facts_before and self._store is not None:
-                await self._store.flush()
-
-            return len(repos)
-
-    async def _maybe_fire_thread_moment(
-        self,
-        project_entity: str,
-        prev_info: dict[str, Any] | None,
-        info: dict[str, Any],
-        now: datetime,
-    ) -> None:
-        """The thread moment (VISION.md §1.4): fire once when a repo whose last
-        commit is older than `project_stale_days` picks up its first
-        uncommitted change since we last looked — real git ground truth, no
-        window/focus correlation (see the module docstring for why)."""
-        last_commit_ts = info["last_commit_timestamp"]
-        was_stale = last_commit_ts is not None and (
-            now - datetime.fromtimestamp(last_commit_ts, tz=UTC)
-        ) >= timedelta(days=self.config.project_stale_days)
-
-        prev_dirty = prev_info["dirty_count"] if prev_info is not None else 0
-        became_active = info["dirty_count"] > 0 and prev_dirty == 0
-
-        if was_stale and became_active and project_entity not in self._thread_fired:
-            text = format_project_left_off(
-                name=info["name"],
-                branch=info["branch"],
-                dirty_count=info["dirty_count"],
-                last_failing_tests=info["last_failing_tests"],
-                next_note=info["next_note"],
-            )
-            moment = Moment(
-                kind="thread",
-                text=text,
-                evidence=(project_entity,),
-                value=0.8,
-                context={"project": project_entity, "hour": now.hour},
-                expires_at=now + timedelta(minutes=30),
-            )
-            self._moments_proposed += 1
-            self.event_bus.publish(
-                Event(
-                    event_type=EventType.MOMENT_PROPOSED,
-                    source="project_ingest",
-                    payload={"moment": moment},
-                )
-            )
-            self._thread_fired.add(project_entity)
-
-        if info["dirty_count"] == 0:
-            # A commit landed (or changes were discarded) — the next stale ->
-            # dirty transition is a new "return" and may fire again.
-            self._thread_fired.discard(project_entity)
-
-    # ------------------------------------------------------ git repo inspection
     async def _run_git(
         self, repo_path: Path, *args: str, timeout_seconds: float = 5.0
     ) -> tuple[int, str, str]:
@@ -393,23 +206,215 @@ class ProjectIngest(BaseModule):
             "next_note": next_note,
         }
 
-    # ---------------------------------------------------------------- forget
+    def _maybe_create_thread_moment(
+        self,
+        project_entity: str,
+        prev_info: dict[str, Any] | None,
+        info: dict[str, Any],
+        now: datetime,
+    ) -> Event | None:
+        last_commit_ts = info["last_commit_timestamp"]
+        was_stale = last_commit_ts is not None and (
+            now - datetime.fromtimestamp(last_commit_ts, tz=UTC)
+        ) >= timedelta(days=self.config.project_stale_days)
+
+        prev_dirty = prev_info["dirty_count"] if prev_info is not None else 0
+        became_active = info["dirty_count"] > 0 and prev_dirty == 0
+
+        event: Event | None = None
+        if was_stale and became_active and project_entity not in self._thread_fired:
+            text = format_project_left_off(
+                name=info["name"],
+                branch=info["branch"],
+                dirty_count=info["dirty_count"],
+                last_failing_tests=info["last_failing_tests"],
+                next_note=info["next_note"],
+            )
+            moment = Moment(
+                kind="thread",
+                text=text,
+                evidence=(project_entity,),
+                value=0.8,
+                context={"project": project_entity, "hour": now.hour},
+                expires_at=now + timedelta(minutes=30),
+            )
+            self._moments_proposed += 1
+            event = Event(
+                event_type=EventType.MOMENT_PROPOSED,
+                source="project_ingest",
+                payload={"moment": moment},
+            )
+            self._thread_fired.add(project_entity)
+
+        if info["dirty_count"] == 0:
+            self._thread_fired.discard(project_entity)
+
+        return event
+
+    async def items(self, since: datetime) -> list[PluginItem]:
+        now = self._clock.now()
+        repos = self.find_watched_repos()
+        result: list[PluginItem] = []
+
+        for repo_path in repos:
+            info = await self._inspect_repo(repo_path)
+            if info is None:
+                continue
+
+            project_entity = info["project_entity"]
+            self._entities.add(project_entity)
+            state_key = (
+                info["branch"],
+                info["dirty_count"],
+                info["last_commit_timestamp"],
+                tuple(info["recent_files"]),
+                tuple(info["last_failing_tests"]),
+                info["next_note"],
+            )
+            self._last_seen_state[project_entity] = state_key
+
+            prev_info = self._repo_states.get(project_entity)
+            self._repo_states[project_entity] = info
+
+            events: list[Event] = []
+            ev = self._maybe_create_thread_moment(project_entity, prev_info, info, now)
+            if ev is not None:
+                events.append(ev)
+
+            result.append(
+                PluginItem(
+                    entity_id=project_entity,
+                    label=info["name"],
+                    node_type=NodeType.PROJECT,
+                    node_attributes={"label": info["name"], "path": info["path"]},
+                    fact=(
+                        EpisodeKind.PROJECT_STATE_FACT,
+                        info["branch"],
+                        {
+                            "repo_path": info["path"],
+                            "repo_name": info["name"],
+                            "branch": info["branch"],
+                            "dirty_count": info["dirty_count"],
+                            "last_commit_timestamp": info["last_commit_timestamp"],
+                            "recent_files": info["recent_files"],
+                            "last_failing_tests": info["last_failing_tests"],
+                            "next_note": info["next_note"],
+                        },
+                    ),
+                    state_key=state_key,
+                    events=tuple(events),
+                )
+            )
+
+        return result
+
+    def entities(self) -> frozenset[str]:
+        return frozenset(self._entities)
+
+    async def forget(self, entity: str) -> int:
+        slug = project_slug(entity)
+        project_entity = f"project:{slug}"
+        self._entities.discard(project_entity)
+        self._entities.discard(str(entity))
+        self._last_seen_state.pop(project_entity, None)
+        self._last_seen_state.pop(str(entity), None)
+        self._repo_states.pop(project_entity, None)
+        self._repo_states.pop(str(entity), None)
+        self._thread_fired.discard(project_entity)
+        self._thread_fired.discard(str(entity))
+        return 1
+
+
+class ProjectIngest(BaseModule):
+    """Daemon-side project sensor inspecting git repositories under watch_paths.
+
+    Implemented using PluginHost and ProjectPlugin under the S4 plugin contract.
+    """
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        config: Config,
+        graph_memory: GraphMemory,
+        episode_store: EpisodeStore | None = None,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
+        super().__init__("project_ingest", event_bus, config)
+        self._gm = graph_memory
+        self._store = episode_store
+        self._clock: Clock = clock or SystemClock()
+        self._plugin = ProjectPlugin(config=config, clock=self._clock)
+        self._host = PluginHost(
+            event_bus,
+            config,
+            graph_memory,
+            episode_store,
+            plugins=[self._plugin],
+            clock=self._clock,
+        )
+        self._lock = asyncio.Lock()
+        self._last_seen_state: dict[str, tuple[Any, ...]] = {}
+
+    @property
+    def _repo_states(self) -> dict[str, dict[str, Any]]:
+        return self._plugin._repo_states
+
+    @property
+    def _thread_fired(self) -> set[str]:
+        return self._plugin._thread_fired
+
+    @property
+    def _facts_written(self) -> int:
+        return self._host._facts_written
+
+    @property
+    def _moments_proposed(self) -> int:
+        return self._plugin._moments_proposed
+
+    async def initialize(self) -> None:
+        await self._host.initialize()
+
+    async def start(self) -> None:
+        if self.is_running:
+            return
+        self.is_running = True
+        await self.poll_tick()
+        await self._host.start()
+
+    async def stop(self) -> None:
+        self.is_running = False
+        await self._host.stop()
+
+    def health(self) -> ModuleHealth:
+        return ModuleHealth(
+            name=self.name,
+            ok=True,
+            detail=(
+                f"tracked_repos={len(self._repo_states)}, "
+                f"facts_written={self._facts_written}, "
+                f"thread_moments={self._moments_proposed}"
+            ),
+        )
+
+    def find_watched_repos(self) -> list[Path]:
+        return self._plugin.find_watched_repos()
+
+    async def poll_tick(self) -> int:
+        async with self._lock:
+            await self._host.poll_tick("project")
+            for entity, state in self._plugin._last_seen_state.items():
+                self._last_seen_state[entity] = state
+            return len(self.find_watched_repos())
+
     async def forget(self, project: str | Path) -> int:
-        """Scrub project facts, episodes, graph node, and in-memory caches."""
         async with self._lock:
             slug = project_slug(project)
             project_entity = f"project:{slug}"
-            removed = 0
+            removed = await self._host.forget(project_entity)
             if self._store is not None:
-                removed += await self._store.forget(project_entity)
                 removed += await self._store.forget(str(project))
-            if self._gm.has_node(project_entity):
-                await self._gm.delete_node(project_entity)
-
+            await self._plugin.forget(str(project))
             self._last_seen_state.pop(project_entity, None)
-            self._repo_states.pop(project_entity, None)
-            self._thread_fired.discard(project_entity)
+            self._last_seen_state.pop(str(project), None)
             return removed
-
-
-# gen-ref: 86c879b5

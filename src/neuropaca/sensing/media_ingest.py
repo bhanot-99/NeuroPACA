@@ -1,15 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""S3 · `MediaIngest` — media and continuity collector (VISION_PHASES.md).
+"""S3/S4 · `MediaIngest` & `MediaPlugin` — media and continuity collector (VISION_PHASES.md).
 
-Periodically inspects active MPRIS media players over the user session D-Bus
-(`busctl --user --json=short`) to track playback continuity:
-- Watched & listened spans (`EpisodeKind.MEDIA_SPAN`) opened on PlaybackStatus=Playing
-  and closed on pause/stop/track-change/module stop.
-- Superseding position facts (`EpisodeKind.MEDIA_POSITION_FACT`) recording show,
-  season, episode, position, and duration with churn suppression.
-- `NodeType.SERIES` graph nodes (`series:<slug>`) linked `PART_OF` `domain:media`.
+Migrated under S4 Plugin Contract:
+- `MediaPlugin` implements the pure `Plugin` reader protocol over MPRIS D-Bus.
+- `MediaIngest` hosts `MediaPlugin` via `PluginHost`.
 
 Dual trust membrane:
 - Music (xesam:artist / xesam:album populated): trusted structured metadata.
@@ -40,10 +36,17 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.media_format import format_media_continuity, series_slug
+from neuropaca.sensing.plugin_host import (
+    PluginDescriptor,
+    PluginHost,
+    PluginItem,
+    PluginManifest,
+)
 
 _log = logging.getLogger(__name__)
 
-# Built-in fallback patterns in case the configuration file is missing or unreadable
+__all__ = ["MediaIngest", "MediaPlugin", "format_media_continuity", "series_slug"]
+
 _FALLBACK_SUFFIXES = (
     r"\s*[-|•:]?\s*(?:Watch\s+All\s+Episodes.*|Watch\s+Online.*|Full\s+Episode.*|"
     r"Hianime.*|Crunchyroll.*|Netflix.*|YouTube.*|Funimation.*|AnimePahe.*)$"
@@ -77,45 +80,22 @@ _FALLBACK_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
-class MediaIngest(BaseModule):
-    """MPRIS media collector and continuity tracker."""
+class MediaPlugin:
+    """Pure MPRIS reader plugin extracting media state."""
 
     def __init__(
         self,
-        bus: EventBus,
         config: Config,
-        gm: GraphMemory,
-        episode_store: EpisodeStore | None = None,
-        *,
         clock: Clock | None = None,
+        parent: MediaIngest | None = None,
     ) -> None:
-        super().__init__("media_ingest", bus, config)
-        self._gm = gm
-        self._store = episode_store
+        self.config = config
         self._clock: Clock = clock if clock is not None else SystemClock()
-        self._poll_task: asyncio.Task[None] | None = None
-        self._poll_interval = config.media_poll_interval_seconds
+        self._parent = parent
         self._patterns_path = Path(config.media_patterns_path)
-
-        self._available = True
-        self._last_poll: datetime | None = None
-        self._facts_written = 0
-        self._spans_written = 0
         self._titles_dropped = 0
-
-        # Bookkeeping: active open spans: player_service -> (entity_id, start_time,
-        # last extracted media dict — kept fresh every tick so a span that closes
-        # without a fresh read this tick (player vanished) can still refresh the
-        # position fact from the last real observation, not the first one).
         self._open_spans: dict[str, tuple[str, datetime, dict[str, Any]]] = {}
-        # Fact churn suppression: entity_id -> identity state_key (show/season/
-        # episode/artist/album/title — never position, see _assert_position_fact).
-        self._last_state: dict[str, tuple[Any, ...]] = {}
-        # entity_id -> identity + rounded position of the last fact actually
-        # written. A forced (span-close) refresh skips the write when this is
-        # unchanged — nothing new was observed since the last write, so
-        # forcing one anyway would just be a redundant duplicate.
-        self._last_written: dict[str, tuple[Any, ...]] = {}
+        self._entities: set[str] = set()
 
         self._cleanup_regex: re.Pattern[str] = re.compile(_FALLBACK_SUFFIXES, re.IGNORECASE)
         self._compiled_patterns: list[tuple[str, re.Pattern[str]]] = [
@@ -123,12 +103,22 @@ class MediaIngest(BaseModule):
         ]
 
     async def initialize(self) -> None:
-        if not shutil.which("busctl"):
-            _log.warning("busctl not found in PATH; MediaIngest disabling itself")
-            self._available = False
-            return
-
         self._load_patterns()
+
+    def describe(self) -> PluginDescriptor:
+        patterns_p = self._patterns_path.expanduser().resolve()
+        return PluginDescriptor(
+            name="media",
+            node_type=NodeType.SERIES,
+            domain_hub="domain:media",
+            poll_interval_seconds=self.config.media_poll_interval_seconds,
+            span_kind=EpisodeKind.MEDIA_SPAN,
+            manifest=PluginManifest(
+                allowed_read_paths=(patterns_p,),
+                allow_network=False,
+                allow_subprocesses=True,
+            ),
+        )
 
     def _load_patterns(self) -> None:
         if not self._patterns_path.is_file():
@@ -162,59 +152,17 @@ class MediaIngest(BaseModule):
                 exc,
             )
 
-    async def start(self) -> None:
-        if not self._available or not self.config.media_tracking_enabled:
-            return
-        if self._poll_task is None:
-            self._poll_task = asyncio.create_task(self._poll_loop(), name="media_ingest_poll")
-
-    async def stop(self) -> None:
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
-
-        # Close any remaining open spans on shutdown, refreshing each one's
-        # position fact to the last real observation rather than leaving it
-        # frozen at whenever the episode/track was first detected.
-        now = self._clock.now()
-        for _player, (entity_id, start_time, last_extracted) in list(self._open_spans.items()):
-            if self._store is not None:
-                self._store.record_span(EpisodeKind.MEDIA_SPAN, entity_id, start_time, now)
-                self._spans_written += 1
-            self._assert_position_fact(entity_id, last_extracted, now, force=True)
-        self._open_spans.clear()
-
-    def health(self) -> ModuleHealth:
-        if not self._available:
-            return ModuleHealth(name=self.name, ok=True, detail="disabled (busctl missing)")
-        if not self.config.media_tracking_enabled:
-            return ModuleHealth(name=self.name, ok=True, detail="disabled (config)")
-        return ModuleHealth(
-            name=self.name,
-            ok=True,
-            detail=(
-                f"facts_written={self._facts_written}, "
-                f"spans_written={self._spans_written}, "
-                f"titles_dropped={self._titles_dropped}"
-            ),
-            last_event_at=self._last_poll,
-        )
-
-    async def _poll_loop(self) -> None:
-        while True:
-            try:
-                await asyncio.sleep(self._poll_interval)
-                await self.poll_tick()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                _log.warning("MediaIngest poll tick error: %s", exc)
-
     async def _run_busctl(self, *args: str, timeout_seconds: float = 5.0) -> tuple[int, str]:
+        if self._parent is not None:
+            try:
+                return await self._parent._run_busctl(*args, timeout_seconds=timeout_seconds)
+            except TypeError:
+                return await self._parent._run_busctl(*args)
+        return await self._default_run_busctl(*args, timeout_seconds=timeout_seconds)
+
+    async def _default_run_busctl(
+        self, *args: str, timeout_seconds: float = 5.0
+    ) -> tuple[int, str]:
         """Strictly read-only busctl invocation."""
         proc = await asyncio.create_subprocess_exec(
             "busctl",
@@ -351,22 +299,13 @@ class MediaIngest(BaseModule):
                     continue
         return active
 
-    def _assert_position_fact(
+    def _build_item(
         self,
         entity_id: str,
+        label: str,
         extracted: dict[str, Any],
-        now: datetime,
-        *,
-        force: bool = False,
-    ) -> bool:
-        """Write `EpisodeKind.MEDIA_POSITION_FACT` when the media identity
-        changed since the last write, or — when `force` (span close: pause /
-        stop / track-change / shutdown) — when the position has moved since
-        the last write, so the recorded position is the real stopping point
-        rather than frozen at first detection. A forced call whose reading is
-        byte-identical to what's already recorded is a no-op: nothing new was
-        observed since the last write (e.g. it closed on the very next tick),
-        so writing again would just be a redundant duplicate."""
+        active: bool,
+    ) -> PluginItem:
         media_type = extracted["media_type"]
         show = extracted["show"]
         season = extracted["season"]
@@ -376,20 +315,6 @@ class MediaIngest(BaseModule):
         title = extracted["title"]
         pos_s = extracted["position_seconds"]
         dur_s = extracted["duration_seconds"]
-        label = extracted["label"]
-        state_key: tuple[Any, ...] = (media_type, show, season, episode, artist, album, title)
-        written_key: tuple[Any, ...] = (*state_key, round(pos_s))
-
-        if force:
-            if self._last_written.get(entity_id) == written_key:
-                return False
-        elif self._last_state.get(entity_id) == state_key:
-            return False
-
-        self._last_state[entity_id] = state_key
-        self._last_written[entity_id] = written_key
-        if self._store is None:
-            return False
 
         summary_text = format_media_continuity(
             media_type=media_type,
@@ -400,51 +325,47 @@ class MediaIngest(BaseModule):
             album=album,
             title=title,
         )
-        self._store.assert_fact(
-            EpisodeKind.MEDIA_POSITION_FACT,
-            entity_id,
-            str(episode if episode is not None else title or label),
-            valid_from=now,
-            source="mpris",
-            attrs={
-                "media_type": media_type,
-                "show": show,
-                "season": season,
-                "episode": episode,
-                "artist": artist,
-                "album": album,
-                "title": title,
-                "position_seconds": pos_s,
-                "duration_seconds": dur_s,
-                "summary_text": summary_text,
-            },
+        fact_obj = str(episode if episode is not None else title or label)
+        attrs = {
+            "media_type": media_type,
+            "show": show,
+            "season": season,
+            "episode": episode,
+            "artist": artist,
+            "album": album,
+            "title": title,
+            "position_seconds": pos_s,
+            "duration_seconds": dur_s,
+            "summary_text": summary_text,
+        }
+        state_key = (media_type, show, season, episode, artist, album, title)
+
+        return PluginItem(
+            entity_id=entity_id,
+            label=label,
+            node_type=NodeType.SERIES,
+            node_attributes={"label": label, "media_type": media_type},
+            active=active,
+            span_kind=EpisodeKind.MEDIA_SPAN,
+            fact=(EpisodeKind.MEDIA_POSITION_FACT, fact_obj, attrs),
+            state_key=state_key,
+            edges=((entity_id, "domain:media", RelationType.PART_OF),),
         )
-        self._facts_written += 1
-        return True
 
-    async def poll_tick(self) -> int:
-        """One scan across active MPRIS media players."""
+    async def items(self, since: datetime) -> list[PluginItem]:
         now = self._clock.now()
-        self._last_poll = now
-
-        if not self._available:
-            return 0
-
         players = await self._query_active_players()
         active_player_names = {svc for svc, _ in players}
+        items: list[PluginItem] = []
 
-        # 1. Close open spans for players that are no longer active — refresh
-        # the position fact from the last real observation before dropping it.
+        # 1. Detect players that vanished
         for svc in list(self._open_spans.keys()):
             if svc not in active_player_names:
-                entity_id, start_time, last_extracted = self._open_spans.pop(svc)
-                if self._store is not None:
-                    self._store.record_span(EpisodeKind.MEDIA_SPAN, entity_id, start_time, now)
-                    self._spans_written += 1
-                self._assert_position_fact(entity_id, last_extracted, now, force=True)
+                entity_id, _start_time, last_extracted = self._open_spans.pop(svc)
+                label = last_extracted.get("label", entity_id)
+                items.append(self._build_item(entity_id, label, last_extracted, active=False))
 
-        facts_this_tick = 0
-
+        # 2. Process active players
         for svc, props in players:
             playback_status = self._unwrap_variant(props.get("PlaybackStatus", "Stopped"))
             position_us = int(self._unwrap_variant(props.get("Position", 0)))
@@ -452,15 +373,10 @@ class MediaIngest(BaseModule):
 
             extracted = self.extract_media(metadata, position_us=position_us)
             if extracted is None:
-                # No valid media or dropped title; if player had open span, close
-                # it and refresh its position fact from the last good reading.
                 if svc in self._open_spans:
-                    entity_id, start_time, last_extracted = self._open_spans.pop(svc)
-                    if self._store is not None:
-                        self._store.record_span(EpisodeKind.MEDIA_SPAN, entity_id, start_time, now)
-                        self._spans_written += 1
-                    if self._assert_position_fact(entity_id, last_extracted, now, force=True):
-                        facts_this_tick += 1
+                    entity_id, _start_time, last_extracted = self._open_spans.pop(svc)
+                    label = last_extracted.get("label", entity_id)
+                    items.append(self._build_item(entity_id, label, last_extracted, active=False))
                 continue
 
             media_type = extracted["media_type"]
@@ -469,7 +385,6 @@ class MediaIngest(BaseModule):
             artist = extracted["artist"]
             title = extracted["title"]
 
-            # Generate entity ID and label
             if media_type == "video" and show:
                 entity_id = f"series:{series_slug(show)}"
                 label = show
@@ -478,91 +393,148 @@ class MediaIngest(BaseModule):
                 entity_id = f"series:{series_slug(music_name)}"
                 label = music_name
             extracted["label"] = label
+            self._entities.add(entity_id)
 
-            # Span management
             if playback_status == "Playing":
                 if svc in self._open_spans:
                     old_entity_id, start_time, old_extracted = self._open_spans[svc]
                     if old_entity_id != entity_id:
-                        # Track/show changed: close previous span (refreshing its
-                        # final position), start a new one.
-                        if self._store is not None:
-                            self._store.record_span(
-                                EpisodeKind.MEDIA_SPAN, old_entity_id, start_time, now
-                            )
-                            self._spans_written += 1
-                        closed = self._assert_position_fact(
-                            old_entity_id, old_extracted, now, force=True
+                        # Different show/track: close previous span
+                        old_label = old_extracted.get("label", old_entity_id)
+                        items.append(
+                            self._build_item(old_entity_id, old_label, old_extracted, active=False)
                         )
-                        if closed:
-                            facts_this_tick += 1
                         self._open_spans[svc] = (entity_id, now, extracted)
                     else:
-                        # Same episode/track still playing — keep the cached
-                        # reading fresh for whenever this span eventually closes.
                         self._open_spans[svc] = (entity_id, start_time, extracted)
                 else:
                     self._open_spans[svc] = (entity_id, now, extracted)
 
-                # Superseding fact, churn-suppressed on identity — the position
-                # itself is refreshed for real when the span eventually closes.
-                if self._assert_position_fact(entity_id, extracted, now):
-                    facts_this_tick += 1
+                items.append(self._build_item(entity_id, label, extracted, active=True))
             else:
-                # Paused or Stopped — this tick's reading is the real stopping
-                # position, so refresh it here (forced) rather than waiting for
-                # a possibly much later close-from-inactivity tick.
+                # Paused / Stopped
                 if svc in self._open_spans:
-                    old_entity_id, start_time, _old_extracted = self._open_spans.pop(svc)
-                    if self._store is not None:
-                        self._store.record_span(
-                            EpisodeKind.MEDIA_SPAN, old_entity_id, start_time, now
-                        )
-                        self._spans_written += 1
-                    if self._assert_position_fact(entity_id, extracted, now, force=True):
-                        facts_this_tick += 1
+                    self._open_spans.pop(svc)
+                    items.append(self._build_item(entity_id, label, extracted, active=False))
 
-            # GraphMemory integration
-            if self._gm is not None:
-                if not self._gm.has_node(entity_id):
-                    await self._gm.upsert_node(
-                        entity_id,
-                        NodeType.SERIES,
-                        attributes={
-                            "label": label,
-                            "media_type": media_type,
-                        },
-                    )
-                    if self._gm.has_node("domain:media"):
-                        await self._gm.add_edge(
-                            entity_id,
-                            "domain:media",
-                            relation=RelationType.PART_OF,
-                        )
-                await self._gm.mark_seen(entity_id, now)
+        return items
 
-        return facts_this_tick
+    def entities(self) -> frozenset[str]:
+        return frozenset(self._entities)
 
-    async def forget(self, series: str) -> int:
-        """Purge all facts, episodes, and graph nodes associated with this series."""
-        entity_id = series if series.startswith("series:") else f"series:{series_slug(series)}"
-
-        # Close and remove any active open spans
+    async def forget(self, entity: str) -> int:
+        entity_id = entity if entity.startswith("series:") else f"series:{series_slug(entity)}"
         for svc, (span_entity, _start_time, _extracted) in list(self._open_spans.items()):
             if span_entity == entity_id:
                 del self._open_spans[svc]
-
-        self._last_state.pop(entity_id, None)
-        self._last_written.pop(entity_id, None)
-
-        forgotten = 0
-        if self._store is not None:
-            forgotten = await self._store.forget(entity_id)
-
-        if self._gm is not None and self._gm.has_node(entity_id):
-            await self._gm.delete_node(entity_id)
-
-        return forgotten
+        self._entities.discard(entity_id)
+        return 1
 
 
-# gen-ref: 35aa005c
+class MediaIngest(BaseModule):
+    """MPRIS media collector and continuity tracker.
+
+    Hosts MediaPlugin within PluginHost under the S4 plugin contract.
+    """
+
+    def __init__(
+        self,
+        bus: EventBus,
+        config: Config,
+        gm: GraphMemory,
+        episode_store: EpisodeStore | None = None,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
+        super().__init__("media_ingest", bus, config)
+        self._gm = gm
+        self._store = episode_store
+        self._clock: Clock = clock if clock is not None else SystemClock()
+        self._patterns_path = Path(config.media_patterns_path)
+        self._available = True
+
+        self._plugin = MediaPlugin(config=config, clock=self._clock, parent=self)
+        self._host = PluginHost(
+            bus,
+            config,
+            gm,
+            episode_store,
+            plugins=[self._plugin],
+            clock=self._clock,
+        )
+
+    @property
+    def _open_spans(self) -> dict[str, tuple[str, datetime, dict[str, Any]]]:
+        return self._plugin._open_spans
+
+    @property
+    def _titles_dropped(self) -> int:
+        return self._plugin._titles_dropped
+
+    @property
+    def _facts_written(self) -> int:
+        return self._host._facts_written
+
+    @property
+    def _spans_written(self) -> int:
+        return self._host._spans_written
+
+    @property
+    def _last_poll(self) -> datetime | None:
+        return self._host._last_poll.get("media")
+
+    async def initialize(self) -> None:
+        if not shutil.which("busctl"):
+            _log.warning("busctl not found in PATH; MediaIngest disabling itself")
+            self._available = False
+            return
+
+        await self._plugin.initialize()
+        await self._host.initialize()
+
+    async def start(self) -> None:
+        if not self._available or not self.config.media_tracking_enabled:
+            return
+        if self.is_running:
+            return
+        self.is_running = True
+        await self._host.start()
+
+    async def stop(self) -> None:
+        self.is_running = False
+        await self._host.stop()
+        self._plugin._open_spans.clear()
+
+    def health(self) -> ModuleHealth:
+        if not self._available:
+            return ModuleHealth(name=self.name, ok=True, detail="disabled (busctl missing)")
+        if not self.config.media_tracking_enabled:
+            return ModuleHealth(name=self.name, ok=True, detail="disabled (config)")
+        return ModuleHealth(
+            name=self.name,
+            ok=True,
+            detail=(
+                f"facts_written={self._facts_written}, "
+                f"spans_written={self._spans_written}, "
+                f"titles_dropped={self._titles_dropped}"
+            ),
+            last_event_at=self._last_poll,
+        )
+
+    async def _run_busctl(self, *args: str, timeout_seconds: float = 5.0) -> tuple[int, str]:
+        return await self._plugin._default_run_busctl(*args, timeout_seconds=timeout_seconds)
+
+    def extract_media(
+        self, metadata: dict[str, Any], position_us: int = 0
+    ) -> dict[str, Any] | None:
+        return self._plugin.extract_media(metadata, position_us=position_us)
+
+    async def poll_tick(self) -> int:
+        if not self._available:
+            return 0
+        return await self._host.poll_tick("media")
+
+    async def forget(self, series: str) -> int:
+        entity_id = series if series.startswith("series:") else f"series:{series_slug(series)}"
+        await self._plugin.forget(entity_id)
+        return await self._host.forget(entity_id)
