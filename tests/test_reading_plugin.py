@@ -166,3 +166,6 @@ async def test_reading_plugin_host_integration_and_v10(
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: 835e5cc8

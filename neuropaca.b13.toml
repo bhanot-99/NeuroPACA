@@ -92,11 +92,13 @@ mail_password_command = "secret-tool lookup service neuropaca-mail account bhano
 mail_user_address = "bhanot1054@gmail.com"
 mail_folders = ["INBOX", "Sent"]
 
-# S1 · mail is NOT enabled here: mail_enabled=true alone would not do anything
-# useful yet — mail_imap_host / mail_imap_user / mail_password_command /
-# mail_user_address are unset everywhere in this repo, and the external
-# scripts/systemd/neuropaca-mail.service fetcher has never been installed on
-# this machine. Needs the user's real IMAP details before it can turn on.
+# S4 · the plugin contract (live, user decision 2026-09-13). Both plugins run
+# in-process, zero credentials, zero network. Defaults point at files that
+# don't exist yet on this machine — that's fine, both self-disable to "no
+# items this poll" until a real .ics / reading list is placed there; nothing
+# to crash on a missing file (see plugins/calendar, plugins/reading).
+calendar_enabled = true
+reading_enabled = true
 
 # L5 · drive. Shipped gradient, unmodified.
 pressure_low_threshold = 1.0

@@ -644,3 +644,6 @@ def doctor(host: PluginHost) -> list[str]:
     (VISION_PHASES.md §S4).
     """
     return host.validate_manifests()
+
+
+# gen-ref: 77d7ac7a

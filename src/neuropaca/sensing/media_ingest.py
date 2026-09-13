@@ -554,3 +554,6 @@ class MediaIngest(BaseModule):
         entity_id = series if series.startswith("series:") else f"series:{series_slug(series)}"
         await self._plugin.forget(entity_id)
         return await self._host.forget(entity_id)
+
+
+# gen-ref: 35aa005c

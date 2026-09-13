@@ -453,3 +453,6 @@ class ProjectIngest(BaseModule):
             self._last_seen_state.pop(project_entity, None)
             self._last_seen_state.pop(str(project), None)
             return removed
+
+
+# gen-ref: 86c879b5

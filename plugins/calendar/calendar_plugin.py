@@ -233,3 +233,6 @@ class CalendarPlugin:
         self._entities.discard(event_entity)
         self._entities.discard(entity)
         return 1 if was_tracked else 0
+
+
+# gen-ref: 9be7a9a3

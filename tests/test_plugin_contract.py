@@ -421,3 +421,6 @@ async def test_domain_plugins_wired_in_build_modules(tmp_path: Path) -> None:
     host = plugin_hosts[0]
     assert "calendar" in host.plugins
     assert "reading_list" in host.plugins
+
+
+# gen-ref: 24d89851

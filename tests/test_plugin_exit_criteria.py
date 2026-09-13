@@ -194,3 +194,6 @@ async def test_exit_criterion_2_doctor_flags_plugin_exceeding_manifest(
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: 60a221f5

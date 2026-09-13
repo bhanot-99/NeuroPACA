@@ -6,3 +6,6 @@
 from plugins.reading.reading_plugin import ReadingListPlugin
 
 __all__ = ["ReadingListPlugin"]
+
+
+# gen-ref: c36b468f

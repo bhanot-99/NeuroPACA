@@ -167,3 +167,6 @@ class ReadingListPlugin:
         self._entities.discard(reading_entity)
         self._entities.discard(entity)
         return 1 if was_tracked else 0
+
+
+# gen-ref: 37dbea61

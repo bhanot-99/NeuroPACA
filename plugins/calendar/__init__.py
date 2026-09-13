@@ -6,3 +6,6 @@
 from plugins.calendar.calendar_plugin import CalendarPlugin
 
 __all__ = ["CalendarPlugin"]
+
+
+# gen-ref: c9390b9b

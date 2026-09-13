@@ -150,3 +150,6 @@ async def test_calendar_plugin_host_integration_and_v10(
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: fad47acd

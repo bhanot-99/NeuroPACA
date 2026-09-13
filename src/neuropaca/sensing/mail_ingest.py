@@ -643,3 +643,6 @@ class MailIngest(BaseModule):
             if addr and self._store is not None:
                 removed_episodes += await self._store.forget(addr)
             return scrubbed_lines + removed_episodes
+
+
+# gen-ref: ecefd81c
