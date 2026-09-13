@@ -344,6 +344,11 @@ class Config:
     mail_password_command: str = ""
     mail_folders: list[str] = field(default_factory=lambda: ["INBOX", "Sent"])
     mail_user_address: str = ""
+    # S2 · software projects / repositories (VISION_PHASES.md).
+    project_tracking_enabled: bool = False
+    project_poll_interval_seconds: float = 300.0
+    project_stale_days: int = 3
+    project_next_max_chars: int = 200
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -522,6 +527,16 @@ class Config:
             errs.append(f"mail_snippet_chars must be >= 0, got {self.mail_snippet_chars}")
         if self.mail_enabled and not self.mail_spool_dir:
             errs.append("mail_spool_dir must not be empty when mail_enabled is on")
+
+        for name in (
+            "project_poll_interval_seconds",
+            "project_stale_days",
+        ):
+            if getattr(self, name) <= 0:
+                errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if self.project_next_max_chars < 0:
+            errs.append(f"project_next_max_chars must be >= 0, got {self.project_next_max_chars}")
 
         for name in (
             "attention_alpha",
