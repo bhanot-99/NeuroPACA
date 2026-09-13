@@ -1,0 +1,84 @@
+[
+  {
+    "service": "org.mpris.MediaPlayer2.brave.instance9888",
+    "pid": 9888,
+    "process": "brave",
+    "properties": {
+      "CanControl": {
+        "type": "b",
+        "data": true
+      },
+      "CanGoNext": {
+        "type": "b",
+        "data": false
+      },
+      "CanGoPrevious": {
+        "type": "b",
+        "data": false
+      },
+      "CanPause": {
+        "type": "b",
+        "data": true
+      },
+      "CanPlay": {
+        "type": "b",
+        "data": true
+      },
+      "CanSeek": {
+        "type": "b",
+        "data": true
+      },
+      "MaximumRate": {
+        "type": "d",
+        "data": 1.0
+      },
+      "Metadata": {
+        "type": "a{sv}",
+        "data": {
+          "mpris:length": {
+            "type": "x",
+            "data": 1450111999
+          },
+          "mpris:trackid": {
+            "type": "o",
+            "data": "/com/brave/MediaPlayer2/TrackList/Track8F26044CC680386845366818D630828A"
+          },
+          "xesam:album": {
+            "type": "s",
+            "data": ""
+          },
+          "xesam:artist": {
+            "type": "as",
+            "data": [
+              ""
+            ]
+          },
+          "xesam:title": {
+            "type": "s",
+            "data": "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime"
+          }
+        }
+      },
+      "MinimumRate": {
+        "type": "d",
+        "data": 1.0
+      },
+      "PlaybackStatus": {
+        "type": "s",
+        "data": "Playing"
+      },
+      "Position": {
+        "type": "x",
+        "data": 783516611
+      },
+      "Rate": {
+        "type": "d",
+        "data": 1.0
+      },
+      "Volume": {
+        "type": "d",
+        "data": 1.0
+      }
+    }
+  }
+]
