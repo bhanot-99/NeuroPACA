@@ -35,6 +35,7 @@ from typing import Any
 _log = logging.getLogger("neuropaca-mail-fetcher")
 
 _MSGID_RE = re.compile(r"<[^>]+>")
+_IMAP_TIMEOUT_SECONDS = 30.0
 
 
 def _decode_header_str(raw: str | None) -> str:
@@ -292,7 +293,12 @@ def fetch_imap(
     total_written = 0
 
     _log.info("Connecting to IMAP %s:%d as %s", host, port, user)
-    client = imaplib.IMAP4_SSL(host, port)
+    # Found in real use: no timeout means a stalled connection (server accepts
+    # the TCP handshake but stops answering mid-fetch) hangs the blocking
+    # read() forever — nothing to retry, nothing for systemd's Restart= to
+    # act on. The per-loop `except Exception` above already logs and moves on
+    # to the next poll cycle, so a bounded timeout here is enough to recover.
+    client = imaplib.IMAP4_SSL(host, port, timeout=_IMAP_TIMEOUT_SECONDS)
     try:
         client.login(user, password)
         for folder in folders:
