@@ -76,6 +76,59 @@ async def test_find_related_depth2_averages_under_50ms(graph_10k: tuple[Path, di
     )
 
 
+@pytest.mark.xfail(
+    reason=(
+        "S0 exit criterion currently FAILS at scale, not just unverified: "
+        "personalized_pagerank averages ~600-700ms at the 10k fixture with "
+        "the shipped default eps=1e-4 (budget is 50ms) — a single default-eps "
+        "seed alone measures ~725ms; eps=1e-3 measures ~37ms. Either Forward "
+        "Push's cost isn't actually independent of graph size the way §3.4 "
+        "claims (a real implementation bug — hub damping not limiting fan-out "
+        "enough, or missing convergence bookkeeping), or attention_ppr_eps's "
+        "shipped default is simply too tight for real graph density and needs "
+        "a deliberate, documented loosening (a precision/speed tradeoff, not "
+        "a free fix). Needs its own investigation before this can go green — "
+        "not something to paper over here. Not urgent for the live daemon "
+        "today (real graph is ~25 nodes), but load-bearing for the briefing "
+        "once the graph grows toward this scale."
+    ),
+    strict=True,
+)
+async def test_personalized_pagerank_under_50ms_at_10k_nodes(
+    graph_10k: tuple[Path, dict],
+) -> None:
+    """S0 exit criterion (VISION_PHASES.md §S0): "Retrieval < 50 ms" — the
+    attention/PPR call the briefing makes on every trigger, at the 10k-node
+    fixture. Forward Push's cost is bounded by O(1/(eps*alpha)), independent
+    of graph size (§3.4), so this is the load-bearing scale check — not just
+    correctness (already covered by tests/test_ppr.py on small graphs)."""
+    path, _ = graph_10k
+    gm = await _loaded(path)
+
+    rng = random.Random(5678)
+    leaves = [n for n in gm.node_ids if n not in HUB_NODE_IDS]
+    seeds_sample = rng.sample(leaves, _SAMPLE)
+
+    durations: list[float] = []
+    for node_id in seeds_sample:
+        # §3.4's own seed shape: current focus node weighted highest, a couple
+        # of recent ones behind it — not a single-seed toy call.
+        seeds = {node_id: 1.0}
+        others = [n for n in leaves if n != node_id]
+        for extra, weight in zip(rng.sample(others, 2), (0.5, 0.25), strict=False):
+            seeds[extra] = weight
+        start = time.perf_counter()
+        gm.personalized_pagerank(seeds, eps=1e-4, alpha=0.15)
+        durations.append(time.perf_counter() - start)
+
+    average = sum(durations) / len(durations)
+    assert average < _TRAVERSAL_BUDGET_S, (
+        f"personalized_pagerank averaged {average * 1000:.1f} ms over {_SAMPLE} runs "
+        f"(budget {_TRAVERSAL_BUDGET_S * 1000:.0f} ms); "
+        f"per-run {[round(d * 1000, 1) for d in durations]}"
+    )
+
+
 async def test_find_related_excludes_hub_through_routes_at_scale(
     graph_10k: tuple[Path, dict],
 ) -> None:

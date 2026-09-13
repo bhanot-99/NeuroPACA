@@ -69,6 +69,35 @@ mem_pressure_sustain_seconds = 180.0
 
 watch_paths = ["/home/bhanot/NeuroPaca"]
 
+# S2 · projects (live, user decision 2026-09-13). watch_paths above is what it
+# scans. Read-only git plumbing only — see RESEARCH_DOSSIER.md §21.24.
+project_tracking_enabled = true
+
+# S3 · media and continuity (live, user decision 2026-09-13). No credentials
+# needed — polls active MPRIS players over the session D-Bus. See §21.25.
+media_tracking_enabled = true
+
+# S1 · mail (live, user decision 2026-09-13). The daemon here only tails the
+# local spool (data/plugins/mail/spool) — never touches the network itself
+# (PrivateNetwork=true holds). Fetching is done by the separate, host-scoped
+# neuropaca-mail.service (scripts/systemd/neuropaca-mail.service), installed
+# and started outside this config. Password is never in this file — retrieved
+# at connect time via mail_password_command from the system keyring.
+mail_enabled = true
+mail_imap_host = "imap.gmail.com"
+mail_imap_port = 993
+mail_imap_user = "bhanot1054@gmail.com"
+mail_imap_ssl = true
+mail_password_command = "secret-tool lookup service neuropaca-mail account bhanot1054@gmail.com"
+mail_user_address = "bhanot1054@gmail.com"
+mail_folders = ["INBOX", "Sent"]
+
+# S1 · mail is NOT enabled here: mail_enabled=true alone would not do anything
+# useful yet — mail_imap_host / mail_imap_user / mail_password_command /
+# mail_user_address are unset everywhere in this repo, and the external
+# scripts/systemd/neuropaca-mail.service fetcher has never been installed on
+# this machine. Needs the user's real IMAP details before it can turn on.
+
 # L5 · drive. Shipped gradient, unmodified.
 pressure_low_threshold = 1.0
 pressure_high_threshold = 3.0
