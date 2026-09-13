@@ -5623,6 +5623,22 @@ Two review passes before merge, neither surfaced by the initial passing suite be
 - Exit Criterion 1 ("A fourth domain touches only its own plugin directory"): verified via `tests/test_plugin_exit_criteria.py::test_exit_criterion_1_fourth_domain_touches_only_its_own_plugin_dir` and `tests/test_calendar_plugin.py`. Adding `plugins/calendar/` and `plugins/reading/` required zero modifications to core architecture.
 - Exit Criterion 2 ("`doctor` flags any plugin exceeding its manifest"): verified via `tests/test_plugin_exit_criteria.py::test_exit_criterion_2_doctor_flags_plugin_exceeding_manifest` and `tests/test_plugin_contract.py::test_manifest_validation_flags_violations`. Rogue plugins accessing files outside allowed read paths or attempting network connections are immediately flagged and set health to degraded.
 
+**Review & Hardening Pass:**
+1. **Insulating Live Attention Systems from Plugin Spans (Critical):**
+   - *Finding:* `CalendarPlugin` initially reused `EpisodeKind.FOCUS_SPAN` and `TOPIC_FACT`. Reusing `FOCUS_SPAN` polluted four live production systems: `interface/briefing.py` treated meetings as focused app windows ("You were last in Sprint Retrospective"); `core/graph_rebuild.py` replayed meetings into Hebbian co-activation weights; `orchestration/scheduler.py` replayed meetings through `catch_up_focus_span`.
+   - *Fix:* Added `EpisodeKind.PLUGIN_SPAN`, `EpisodeKind.PLUGIN_FACT`, and `EpisodeKind.MEETING_SPAN` to `enums.py`. `CalendarPlugin` uses `MEETING_SPAN` for spans and `PLUGIN_FACT` for meeting metadata; `ReadingListPlugin` uses `PLUGIN_FACT`. Generic plugins can leverage `PLUGIN_SPAN` and `PLUGIN_FACT` with zero core enum modifications.
+2. **Guarded `forget()` Routing (Medium):**
+   - *Finding:* `PluginHost.forget()` previously broadcasted any entity string to every hosted plugin unconditionally. `MailPlugin.forget()` normalized foreign entity IDs (e.g. `project:neuropaca`) into contact slugs and added them to its persistent denylist (`forgotten.json`), permanently suppressing future contacts matching that slug.
+   - *Fix:* Added `owns_entity(self, entity: str) -> bool` and `entity_prefixes` on `PluginDescriptor`. `PluginHost.forget()` dispatches internal cleanup only to plugins owning the entity. `MailPlugin.forget()` guards against non-person/thread IDs and returns 0 without polluting its denylist.
+3. **Daemon Production Wiring:**
+   - Added `calendar_enabled`, `calendar_ics_path`, `calendar_poll_interval_seconds`, `reading_enabled`, `reading_list_path`, and `reading_poll_interval_seconds` to `Config` with boundary validation.
+   - Wired `domain_plugins` host in `orchestration/modules.py` to instantiate `CalendarPlugin` and `ReadingListPlugin` when enabled, with dynamic module path resolution.
+4. **Doctor & Health Integration:**
+   - Wired `doctor(host)` directly into `PluginHost.initialize()` and `PluginHost.health()`, actively degrading `ModuleHealth.ok = False` if any plugin exceeds its manifest.
+5. **Style & Class Boundary Cleanliness:**
+   - Replaced cross-class private attribute inspection (`_plugin._repo_states`, `_plugin._open_spans`) with clean public properties (`repo_states`, `open_spans`, `thread_fired`, `watermarks`).
+   - Formatted all files with `ruff format .` (228 files 100% compliant). 1019 tests passing.
+
 ---
 
 ## Appendix A — decision log index

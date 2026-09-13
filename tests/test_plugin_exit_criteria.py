@@ -103,12 +103,12 @@ END:VCALENDAR
             datetime(2026, 9, 13, 15, 59, tzinfo=UTC),
             datetime(2026, 9, 13, 17, 1, tzinfo=UTC),
         )
-        spans = [r for r in records if r.kind == str(EpisodeKind.FOCUS_SPAN)]
+        spans = [r for r in records if r.kind == str(EpisodeKind.MEETING_SPAN)]
         assert len(spans) == 1
         assert spans[0].subject == entity_id
 
         # 4. Meeting fact recorded in EpisodeStore
-        facts_recorded = [r for r in records if r.kind == str(EpisodeKind.TOPIC_FACT)]
+        facts_recorded = [r for r in records if r.kind == str(EpisodeKind.PLUGIN_FACT)]
         assert len(facts_recorded) == 1
         assert facts_recorded[0].attrs["location"] == "Conference Room B"
     finally:

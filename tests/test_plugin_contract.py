@@ -74,7 +74,12 @@ class FakeSensingPlugin:
     def entities(self) -> frozenset[str]:
         return frozenset(self._entities)
 
+    def owns_entity(self, entity: str) -> bool:
+        return entity in self._entities or entity in self.forgotten or entity.startswith("tool:")
+
     async def forget(self, entity: str) -> int:
+        if not self.owns_entity(entity):
+            return 0
         self.forgotten.append(entity)
         self._entities.discard(entity)
         return 1
@@ -226,9 +231,7 @@ async def test_force_refresh_on_span_close(tmp_path: Path, fake_clock: FakeClock
         GraphMemory._reset_for_tests()
 
 
-async def test_discrete_spans_and_event_publishing(
-    tmp_path: Path, fake_clock: FakeClock
-) -> None:
+async def test_discrete_spans_and_event_publishing(tmp_path: Path, fake_clock: FakeClock) -> None:
     plugin = FakeSensingPlugin()
     host, _gm, store, bus = await _setup_host(tmp_path, fake_clock, plugin)
     events_received: list[Event] = []
@@ -300,9 +303,7 @@ async def test_host_forget(tmp_path: Path, fake_clock: FakeClock) -> None:
         GraphMemory._reset_for_tests()
 
 
-async def test_manifest_validation_flags_violations(
-    tmp_path: Path, fake_clock: FakeClock
-) -> None:
+async def test_manifest_validation_flags_violations(tmp_path: Path, fake_clock: FakeClock) -> None:
     """Startup validation flags a plugin exceeding its manifest."""
     allowed_dir = tmp_path / "allowed"
     allowed_dir.mkdir()
@@ -333,3 +334,90 @@ async def test_manifest_validation_flags_violations(
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+async def test_forget_does_not_pollute_unrelated_plugins(
+    tmp_path: Path, fake_clock: FakeClock
+) -> None:
+    """PluginHost.forget() routes only to plugins that own the entity,
+
+    preventing MailPlugin denylist pollution when forgetting projects.
+    """
+    from neuropaca.sensing.mail_ingest import MailPlugin
+    from neuropaca.sensing.project_ingest import ProjectPlugin
+
+    GraphMemory._reset_for_tests()
+    bus = EventBus()
+    await bus.start()
+
+    cfg = Config(inference_backend="fake", mail_spool_dir=str(tmp_path / "spool"))
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    await gm.load()
+    store = EpisodeStore(tmp_path / "episodes.db")
+    await store.start()
+
+    mail_plugin = MailPlugin(cfg, clock=fake_clock, store=store)
+    project_plugin = ProjectPlugin(cfg, clock=fake_clock)
+    await mail_plugin.initialize()
+
+    host = PluginHost(
+        bus,
+        cfg,
+        gm,
+        store,
+        plugins=[mail_plugin, project_plugin],
+        clock=fake_clock,
+    )
+    await host.initialize()
+
+    try:
+        # Forget a project entity
+        removed = await host.forget("project:neuropaca")
+        assert removed == 0
+
+        # MailPlugin should NOT have received this entity or denylisted it
+        assert "project:neuropaca" not in mail_plugin.forgotten
+        assert "neuropaca" not in mail_plugin.forgotten
+        assert len(mail_plugin.forgotten) == 0
+
+        # MailPlugin owns person entities, not projects
+        assert not mail_plugin.owns_entity("project:neuropaca")
+        assert mail_plugin.owns_entity("person:alice")
+        assert mail_plugin.owns_entity("bob@example.com")
+    finally:
+        await host.stop()
+        await bus.stop()
+        await store.stop()
+        GraphMemory._reset_for_tests()
+
+
+async def test_domain_plugins_wired_in_build_modules(tmp_path: Path) -> None:
+    """When calendar_enabled and reading_enabled are True in Config,
+
+    build_modules builds a domain_plugins PluginHost containing both plugins.
+    """
+    from neuropaca.core.bitnet_runtime import BitNetRuntime
+    from neuropaca.orchestration.modules import build_modules
+
+    ics_path = tmp_path / "test.ics"
+    ics_path.write_text("BEGIN:VCALENDAR\nEND:VCALENDAR\n", encoding="utf-8")
+    json_path = tmp_path / "test.json"
+    json_path.write_text("[]", encoding="utf-8")
+
+    cfg = Config(
+        inference_backend="fake",
+        calendar_enabled=True,
+        calendar_ics_path=str(ics_path),
+        reading_enabled=True,
+        reading_list_path=str(json_path),
+    )
+    bus = EventBus()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    bitnet = BitNetRuntime.get_instance()
+
+    modules = build_modules(cfg, bus, gm, bitnet)
+    plugin_hosts = [m for m in modules if isinstance(m, PluginHost) and m.name == "domain_plugins"]
+    assert len(plugin_hosts) == 1
+    host = plugin_hosts[0]
+    assert "calendar" in host.plugins
+    assert "reading_list" in host.plugins

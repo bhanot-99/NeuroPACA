@@ -80,6 +80,7 @@ class ProjectPlugin:
                 allow_network=False,
                 allow_subprocesses=True,
             ),
+            entity_prefixes=("project:",),
         )
 
     def find_watched_repos(self) -> list[Path]:
@@ -308,12 +309,46 @@ class ProjectPlugin:
 
         return result
 
+    @property
+    def repo_states(self) -> dict[str, dict[str, Any]]:
+        return dict(self._repo_states)
+
+    @property
+    def thread_fired(self) -> set[str]:
+        return set(self._thread_fired)
+
+    @property
+    def last_seen_state(self) -> dict[str, tuple[Any, ...]]:
+        return dict(self._last_seen_state)
+
+    @property
+    def moments_proposed(self) -> int:
+        return self._moments_proposed
+
     def entities(self) -> frozenset[str]:
         return frozenset(self._entities)
 
+    def owns_entity(self, entity: str) -> bool:
+        slug = project_slug(entity)
+        return (
+            entity in self._entities
+            or f"project:{slug}" in self._entities
+            or str(entity) in self._repo_states
+            or f"project:{slug}" in self._repo_states
+            or entity.startswith("project:")
+        )
+
     async def forget(self, entity: str) -> int:
+        if not self.owns_entity(entity):
+            return 0
         slug = project_slug(entity)
         project_entity = f"project:{slug}"
+        was_tracked = (
+            project_entity in self._entities
+            or str(entity) in self._entities
+            or project_entity in self._repo_states
+            or str(entity) in self._repo_states
+        )
         self._entities.discard(project_entity)
         self._entities.discard(str(entity))
         self._last_seen_state.pop(project_entity, None)
@@ -322,7 +357,7 @@ class ProjectPlugin:
         self._repo_states.pop(str(entity), None)
         self._thread_fired.discard(project_entity)
         self._thread_fired.discard(str(entity))
-        return 1
+        return 1 if was_tracked else 0
 
 
 class ProjectIngest(BaseModule):
@@ -358,19 +393,19 @@ class ProjectIngest(BaseModule):
 
     @property
     def _repo_states(self) -> dict[str, dict[str, Any]]:
-        return self._plugin._repo_states
+        return self._plugin.repo_states
 
     @property
     def _thread_fired(self) -> set[str]:
-        return self._plugin._thread_fired
+        return self._plugin.thread_fired
 
     @property
     def _facts_written(self) -> int:
-        return self._host._facts_written
+        return self._host.facts_written
 
     @property
     def _moments_proposed(self) -> int:
-        return self._plugin._moments_proposed
+        return self._plugin.moments_proposed
 
     async def initialize(self) -> None:
         await self._host.initialize()
@@ -403,7 +438,7 @@ class ProjectIngest(BaseModule):
     async def poll_tick(self) -> int:
         async with self._lock:
             await self._host.poll_tick("project")
-            for entity, state in self._plugin._last_seen_state.items():
+            for entity, state in self._plugin.last_seen_state.items():
                 self._last_seen_state[entity] = state
             return len(self.find_watched_repos())
 

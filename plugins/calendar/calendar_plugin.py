@@ -49,9 +49,7 @@ def _parse_ics_datetime(val: str) -> datetime | None:
     elif len(clean) == 8 and clean.isdigit():
         # All-day date format: YYYYMMDD
         year, month, day = int(clean[:4]), int(clean[4:6]), int(clean[6:8])
-        return datetime.combine(
-            datetime(year, month, day, tzinfo=UTC).date(), time.min, tzinfo=UTC
-        )
+        return datetime.combine(datetime(year, month, day, tzinfo=UTC).date(), time.min, tzinfo=UTC)
     return None
 
 
@@ -76,12 +74,14 @@ class CalendarPlugin:
             node_type=NodeType.CONCEPT,
             domain_hub="domain:meetings",
             poll_interval_seconds=self.poll_interval,
-            span_kind=EpisodeKind.FOCUS_SPAN,
+            span_kind=EpisodeKind.MEETING_SPAN,
             manifest=PluginManifest(
                 allowed_read_paths=(self.calendar_path,),
+                allowed_episode_kinds=(EpisodeKind.MEETING_SPAN, EpisodeKind.PLUGIN_FACT),
                 allow_network=False,
                 allow_subprocesses=False,
             ),
+            entity_prefixes=("event:", "calendar:", "meeting:"),
         )
 
     def _unfold_lines(self, text: str) -> list[str]:
@@ -209,8 +209,8 @@ class CalendarPlugin:
                         node_type=NodeType.CONCEPT,
                         node_attributes={"label": summary, "location": location},
                         span=(start_dt, end_dt),
-                        span_kind=EpisodeKind.FOCUS_SPAN,
-                        fact=(EpisodeKind.TOPIC_FACT, summary, attrs),
+                        span_kind=EpisodeKind.MEETING_SPAN,
+                        fact=(EpisodeKind.PLUGIN_FACT, summary, attrs),
                         state_key=state_key,
                         edges=((entity_id, "domain:meetings", RelationType.PART_OF),),
                     )
@@ -221,8 +221,15 @@ class CalendarPlugin:
     def entities(self) -> frozenset[str]:
         return frozenset(self._entities)
 
+    def owns_entity(self, entity: str) -> bool:
+        return entity in self._entities or entity.startswith(("event:", "calendar:", "meeting:"))
+
     async def forget(self, entity: str) -> int:
+        if not self.owns_entity(entity):
+            return 0
         slug = _event_slug(entity.removeprefix("event:"))
-        self._entities.discard(f"event:{slug}")
+        event_entity = f"event:{slug}"
+        was_tracked = event_entity in self._entities or entity in self._entities
+        self._entities.discard(event_entity)
         self._entities.discard(entity)
-        return 1
+        return 1 if was_tracked else 0

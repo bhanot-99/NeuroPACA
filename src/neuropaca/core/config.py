@@ -354,6 +354,13 @@ class Config:
     media_poll_interval_seconds: float = 30.0
     media_stale_days: int = 7
     media_patterns_path: str = "data/media_title_patterns.default.toml"
+    # S4 · domain plugins (VISION_PHASES.md).
+    calendar_enabled: bool = False
+    calendar_ics_path: str = "data/plugins/calendar/events.ics"
+    calendar_poll_interval_seconds: float = 300.0
+    reading_enabled: bool = False
+    reading_list_path: str = "data/plugins/reading/reading_list.json"
+    reading_poll_interval_seconds: float = 300.0
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -546,9 +553,16 @@ class Config:
         for name in (
             "media_poll_interval_seconds",
             "media_stale_days",
+            "calendar_poll_interval_seconds",
+            "reading_poll_interval_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if self.calendar_enabled and not self.calendar_ics_path:
+            errs.append("calendar_ics_path must not be empty when calendar_enabled is on")
+        if self.reading_enabled and not self.reading_list_path:
+            errs.append("reading_list_path must not be empty when reading_enabled is on")
 
         for name in (
             "attention_alpha",

@@ -61,6 +61,7 @@ class PluginManifest:
     allowed_write_paths: tuple[Path, ...] = ()
     allow_network: bool = False
     allow_subprocesses: bool = False
+    allowed_episode_kinds: tuple[EpisodeKind | str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,7 @@ class PluginDescriptor:
     poll_interval_seconds: float = 60.0
     span_kind: EpisodeKind | str | None = None
     manifest: PluginManifest = field(default_factory=PluginManifest)
+    entity_prefixes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +117,10 @@ class Plugin(Protocol):
         """Perform plugin-internal cleanup (e.g. local cache files). Returns cleaned count."""
         ...
 
+    def owns_entity(self, entity: str) -> bool:
+        """Return True if this plugin owns or tracks the given entity identifier."""
+        ...
+
 
 class PluginHost(BaseModule):
     """Centralized host managing plugin lifecycles, V-10 invariance, and episodic writes."""
@@ -128,8 +134,9 @@ class PluginHost(BaseModule):
         *,
         plugins: Sequence[Plugin] | None = None,
         clock: Clock | None = None,
+        name: str = "plugin_host",
     ) -> None:
-        super().__init__("plugin_host", event_bus, config)
+        super().__init__(name, event_bus, config)
         self._gm = graph_memory
         self._store = episode_store
         self._clock: Clock = clock or SystemClock()
@@ -169,6 +176,18 @@ class PluginHost(BaseModule):
     @property
     def manifest_violations(self) -> tuple[str, ...]:
         return tuple(self._manifest_violations)
+
+    @property
+    def open_spans(self) -> dict[str, tuple[str, datetime, PluginItem]]:
+        return dict(self._open_spans)
+
+    @property
+    def last_state(self) -> dict[str, tuple[Any, ...]]:
+        return dict(self._last_state)
+
+    @property
+    def last_written(self) -> dict[str, tuple[Any, ...]]:
+        return dict(self._last_written)
 
     def register(self, plugin: Plugin) -> None:
         desc = plugin.describe()
@@ -231,13 +250,22 @@ class PluginHost(BaseModule):
                             f"plugin '{name}': network access '{net_val}' prohibited by manifest"
                         )
 
+            # Check episode kind constraints
+            if manifest.allowed_episode_kinds and desc.span_kind:
+                allowed_kinds = {str(k) for k in manifest.allowed_episode_kinds}
+                if str(desc.span_kind) not in allowed_kinds:
+                    violations.append(
+                        f"plugin '{name}': span_kind '{desc.span_kind}' "
+                        f"not in manifest allowed_episode_kinds"
+                    )
+
         self._manifest_violations = violations
         return violations
 
     async def initialize(self) -> None:
-        self.validate_manifests()
-        if self._manifest_violations:
-            for v in self._manifest_violations:
+        violations = doctor(self)
+        if violations:
+            for v in violations:
                 _log.warning("PluginHost manifest warning: %s", v)
 
         for name, plugin in self._plugins.items():
@@ -277,10 +305,7 @@ class PluginHost(BaseModule):
         for host_key, (entity_id, start_time, last_item) in list(self._open_spans.items()):
             plugin_name = host_key.split(":", 1)[0]
             desc = self._plugins[plugin_name].describe() if plugin_name in self._plugins else None
-            raw_span_kind = (
-                last_item.span_kind
-                or (desc.span_kind if desc else None)
-            )
+            raw_span_kind = last_item.span_kind or (desc.span_kind if desc else None)
             if raw_span_kind and self._store is not None:
                 self._store.record_span(
                     EpisodeKind(raw_span_kind),
@@ -313,11 +338,12 @@ class PluginHost(BaseModule):
                     _log.error("Failed to stop plugin '%s': %s", name, exc)
 
     def health(self) -> ModuleHealth:
-        if self._manifest_violations:
+        violations = doctor(self)
+        if violations:
             return ModuleHealth(
                 name=self.name,
                 ok=False,
-                detail=f"manifest violations: {'; '.join(self._manifest_violations)}",
+                detail=f"manifest violations: {'; '.join(violations)}",
             )
         last_poll_ts = max(self._last_poll.values()) if self._last_poll else None
         return ModuleHealth(
@@ -489,24 +515,18 @@ class PluginHost(BaseModule):
             attrs.update(item.node_attributes)
 
         if not self._gm.has_node(item.entity_id):
-            await self._gm.upsert_node(
-                item.entity_id, node_type, attributes=attrs
-            )
+            await self._gm.upsert_node(item.entity_id, node_type, attributes=attrs)
         else:
             await self._gm.mark_seen(item.entity_id, now)
             await self._gm.update_node(item.entity_id, attrs)
 
         if desc.domain_hub and self._gm.has_node(desc.domain_hub):
-            await self._gm.add_edge(
-                item.entity_id, desc.domain_hub, relation=RelationType.PART_OF
-            )
+            await self._gm.add_edge(item.entity_id, desc.domain_hub, relation=RelationType.PART_OF)
 
         # Auxiliary nodes
         for extra_id, extra_label, extra_type in item.extra_nodes:
             if not self._gm.has_node(extra_id):
-                await self._gm.upsert_node(
-                    extra_id, extra_type, attributes={"label": extra_label}
-                )
+                await self._gm.upsert_node(extra_id, extra_type, attributes={"label": extra_label})
                 if desc.domain_hub and self._gm.has_node(desc.domain_hub):
                     await self._gm.add_edge(
                         extra_id, desc.domain_hub, relation=RelationType.PART_OF
@@ -596,9 +616,20 @@ class PluginHost(BaseModule):
                     if k.endswith(f":{entity}") or k == entity:
                         d.pop(k, None)
 
-            # 4. Delegate plugin-internal cleanup
+            # 4. Delegate plugin-internal cleanup only to plugins that own this entity
             for plugin in self._plugins.values():
-                cleaned += await plugin.forget(entity)
+                owns_fn = getattr(plugin, "owns_entity", None)
+                is_owner = False
+                if callable(owns_fn):
+                    is_owner = bool(owns_fn(entity))
+                else:
+                    desc = plugin.describe()
+                    prefixes = getattr(desc, "entity_prefixes", ())
+                    is_owner = (entity in plugin.entities()) or any(
+                        entity.startswith(p) for p in prefixes
+                    )
+                if is_owner:
+                    cleaned += await plugin.forget(entity)
 
             return cleaned
 

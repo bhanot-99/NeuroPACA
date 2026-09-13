@@ -118,6 +118,7 @@ class MediaPlugin:
                 allow_network=False,
                 allow_subprocesses=True,
             ),
+            entity_prefixes=("series:", "media:", "track:"),
         )
 
     def _load_patterns(self) -> None:
@@ -419,16 +420,30 @@ class MediaPlugin:
 
         return items
 
+    @property
+    def open_spans(self) -> dict[str, tuple[str, datetime, dict[str, Any]]]:
+        return dict(self._open_spans)
+
+    @property
+    def titles_dropped(self) -> int:
+        return self._titles_dropped
+
     def entities(self) -> frozenset[str]:
         return frozenset(self._entities)
 
+    def owns_entity(self, entity: str) -> bool:
+        return entity in self._entities or entity.startswith(("series:", "media:", "track:"))
+
     async def forget(self, entity: str) -> int:
+        if not self.owns_entity(entity):
+            return 0
         entity_id = entity if entity.startswith("series:") else f"series:{series_slug(entity)}"
         for svc, (span_entity, _start_time, _extracted) in list(self._open_spans.items()):
             if span_entity == entity_id:
                 del self._open_spans[svc]
+        was_tracked = entity_id in self._entities
         self._entities.discard(entity_id)
-        return 1
+        return 1 if was_tracked else 0
 
 
 class MediaIngest(BaseModule):
@@ -465,19 +480,19 @@ class MediaIngest(BaseModule):
 
     @property
     def _open_spans(self) -> dict[str, tuple[str, datetime, dict[str, Any]]]:
-        return self._plugin._open_spans
+        return self._plugin.open_spans
 
     @property
     def _titles_dropped(self) -> int:
-        return self._plugin._titles_dropped
+        return self._plugin.titles_dropped
 
     @property
     def _facts_written(self) -> int:
-        return self._host._facts_written
+        return self._host.facts_written
 
     @property
     def _spans_written(self) -> int:
-        return self._host._spans_written
+        return self._host.spans_written
 
     @property
     def _last_poll(self) -> datetime | None:

@@ -70,7 +70,7 @@ async def test_calendar_ics_parsing(tmp_path: Path) -> None:
     assert sync_item.span is not None
     assert sync_item.span[0] == datetime(2026, 9, 13, 10, 0, tzinfo=UTC)
     assert sync_item.span[1] == datetime(2026, 9, 13, 10, 30, tzinfo=UTC)
-    assert sync_item.span_kind == EpisodeKind.FOCUS_SPAN
+    assert sync_item.span_kind == EpisodeKind.MEETING_SPAN
 
     # Check unfolded description
     assert sync_item.fact is not None
@@ -127,7 +127,7 @@ async def test_calendar_plugin_host_integration_and_v10(
             datetime(2026, 9, 13, 9, 59, tzinfo=UTC),
             datetime(2026, 9, 13, 10, 31, tzinfo=UTC),
         )
-        spans = [r for r in records if r.kind == str(EpisodeKind.FOCUS_SPAN)]
+        spans = [r for r in records if r.kind == str(EpisodeKind.MEETING_SPAN)]
         assert len(spans) == 1
         assert spans[0].subject == sync_entity
 

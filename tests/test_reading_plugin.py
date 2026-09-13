@@ -140,12 +140,12 @@ async def test_reading_plugin_host_integration_and_v10(
             for e in gm.get_edges(entity_id)
         )
 
-        # Topic fact asserted
+        # Plugin fact asserted
         records = await store.at(fake_clock.now())
-        topic_facts = [r for r in records if r.kind == str(EpisodeKind.TOPIC_FACT)]
-        assert len(topic_facts) == 1
-        assert topic_facts[0].subject == entity_id
-        assert topic_facts[0].attrs["progress"] == 40
+        plugin_facts = [r for r in records if r.kind == str(EpisodeKind.PLUGIN_FACT)]
+        assert len(plugin_facts) == 1
+        assert plugin_facts[0].subject == entity_id
+        assert plugin_facts[0].attrs["progress"] == 40
 
         # Tick 2: repeat poll unchanged -> churn suppressed
         await fake_clock.advance(60.0)

@@ -117,6 +117,7 @@ class MailPlugin:
                 allow_network=False,
                 allow_subprocesses=False,
             ),
+            entity_prefixes=("person:", "thread:"),
         )
 
     def _is_record_forgotten(self, record: dict[str, Any]) -> bool:
@@ -358,10 +359,37 @@ class MailPlugin:
             await self._store.flush()
         return resolved_count
 
+    @property
+    def watermarks(self) -> dict[str, int]:
+        return dict(self._watermarks)
+
+    @property
+    def forgotten(self) -> set[str]:
+        return set(self._forgotten)
+
+    @property
+    def threader(self) -> Threader:
+        return self._threader
+
+    @property
+    def last_batch_processed(self) -> int:
+        return self._last_batch_processed
+
     def entities(self) -> frozenset[str]:
         return frozenset(self._entities)
 
+    def owns_entity(self, entity: str) -> bool:
+        if entity in self._entities:
+            return True
+        if entity.startswith(("person:", "thread:")):
+            return True
+        if "@" in entity:
+            return True
+        return False
+
     async def forget(self, person: str) -> int:
+        if not self.owns_entity(person):
+            return 0
         raw = (
             person.removeprefix("person:").strip()
             if person.startswith("person:")
@@ -492,6 +520,12 @@ class MailPlugin:
         os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, self._threader_path)
 
+    async def save_watermarks(self) -> None:
+        await self._save_watermarks()
+
+    async def save_threader_state(self) -> None:
+        await self._save_threader_state()
+
 
 class MailIngest(BaseModule):
     """Daemon-side correspondence sensor reading from the external spool.
@@ -534,15 +568,15 @@ class MailIngest(BaseModule):
 
     @property
     def _watermarks(self) -> dict[str, int]:
-        return self._plugin._watermarks
+        return self._plugin.watermarks
 
     @property
     def _forgotten(self) -> set[str]:
-        return self._plugin._forgotten
+        return self._plugin.forgotten
 
     @property
     def _threader(self) -> Threader:
-        return self._plugin._threader
+        return self._plugin.threader
 
     async def initialize(self) -> None:
         await self._plugin.initialize()
@@ -558,8 +592,8 @@ class MailIngest(BaseModule):
     async def stop(self) -> None:
         self.is_running = False
         await self._host.stop()
-        await self._plugin._save_watermarks()
-        await self._plugin._save_threader_state()
+        await self._plugin.save_watermarks()
+        await self._plugin.save_threader_state()
 
     def health(self) -> ModuleHealth:
         return ModuleHealth(
@@ -576,9 +610,9 @@ class MailIngest(BaseModule):
         """Tail all *.jsonl files in spool_dir from their saved watermark offsets."""
         async with self._lock:
             await self._host.poll_tick("mail")
-            if self._plugin._last_batch_processed > 0:
+            if self._plugin.last_batch_processed > 0:
                 await self.check_resolved_threads()
-            return self._plugin._last_batch_processed
+            return self._plugin.last_batch_processed
 
     async def poll_tick(self) -> int:
         """Run a single polling cycle: ingest pending records and resolve timed-out threads."""

@@ -55,9 +55,11 @@ class ReadingListPlugin:
             span_kind=None,
             manifest=PluginManifest(
                 allowed_read_paths=(self.reading_list_path,),
+                allowed_episode_kinds=(EpisodeKind.PLUGIN_FACT,),
                 allow_network=False,
                 allow_subprocesses=False,
             ),
+            entity_prefixes=("reading:", "book:", "article:"),
         )
 
     def _parse_file(self, path: Path) -> list[dict[str, Any]]:
@@ -142,7 +144,7 @@ class ReadingListPlugin:
                     label=title,
                     node_type=NodeType.CONCEPT,
                     node_attributes={"label": title, "author": author, "status": status},
-                    fact=(EpisodeKind.TOPIC_FACT, title, attrs),
+                    fact=(EpisodeKind.PLUGIN_FACT, title, attrs),
                     state_key=state_key,
                     edges=((entity_id, "domain:learning", RelationType.PART_OF),),
                 )
@@ -153,8 +155,15 @@ class ReadingListPlugin:
     def entities(self) -> frozenset[str]:
         return frozenset(self._entities)
 
+    def owns_entity(self, entity: str) -> bool:
+        return entity in self._entities or entity.startswith(("reading:", "book:", "article:"))
+
     async def forget(self, entity: str) -> int:
+        if not self.owns_entity(entity):
+            return 0
         slug = _reading_slug(entity.removeprefix("reading:"))
-        self._entities.discard(f"reading:{slug}")
+        reading_entity = f"reading:{slug}"
+        was_tracked = reading_entity in self._entities or entity in self._entities
+        self._entities.discard(reading_entity)
         self._entities.discard(entity)
-        return 1
+        return 1 if was_tracked else 0
