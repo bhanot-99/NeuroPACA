@@ -1,0 +1,104 @@
+[
+  {
+    "path": "/home/bhanot/NeuroPaca",
+    "name": "NeuroPaca",
+    "branch": "s2-projects",
+    "dirty_count": 1,
+    "last_commit_timestamp": 1789241423,
+    "last_commit_iso": "2026-09-12T19:30:23+00:00",
+    "recent_files": [
+      "tests/test_notifier.py",
+      "tests/test_presence.py",
+      "tests/test_presence_tracker.py",
+      "tests/test_mirror.py",
+      "tests/test_mirror_composer.py"
+    ],
+    "last_failing_tests": [
+      "tests/test_diagnosis.py::test_build_patterns_is_the_b3_registry",
+      "tests/test_core_foundation.py::test_config_validation_rejects_bad_values[kwargs3-pressure_threshold]",
+      "tests/test_interface.py::test_socket_refuses_bang_and_double_dollar_until_b7",
+      "tests/integration/test_egress_blocked.py::test_dns_resolution_of_a_public_host_is_nulled",
+      "tests/test_b13_resource_aware.py::test_schema_version_is_v3",
+      "tests/test_webapp_pipeline.py::test_access_count_is_the_focus_counter",
+      "tests/test_wayland_handlers.py::test_window_keeps_a_strong_ref_to_every_cosmic_handle",
+      "tests/test_b13_resource_aware.py::test_schema_version_is_v6"
+    ],
+    "next_note": null,
+    "read_only_verified": true
+  },
+  {
+    "path": "/home/bhanot/MyBotTrader",
+    "name": "MyBotTrader",
+    "branch": "phase-2-risk-and-validation-gate",
+    "dirty_count": 0,
+    "last_commit_timestamp": 1787082172,
+    "last_commit_iso": "2026-08-18T19:42:52+00:00",
+    "recent_files": [
+      "validation/deflated_sharpe.py",
+      "validation/checks/walk_forward.py",
+      "validation/checks/sanity.py",
+      "validation/checks/sample.py",
+      "validation/checks/incubation.py"
+    ],
+    "last_failing_tests": [
+      "tests/test_logging_redaction.py::test_redaction_by_key_name",
+      "tests/test_logging_redaction.py::test_redaction_by_opaque_value_shape"
+    ],
+    "next_note": null,
+    "read_only_verified": true
+  },
+  {
+    "path": "/home/bhanot/SYSKON",
+    "name": "SYSKON",
+    "branch": "redesign",
+    "dirty_count": 149,
+    "last_commit_timestamp": 1785519897,
+    "last_commit_iso": "2026-07-31T17:44:57+00:00",
+    "recent_files": [
+      "components/contact/ContactForm.test.tsx",
+      "types/contact.test.ts",
+      "app/contact/page.tsx",
+      "components/contact/DirectContactBlock.tsx",
+      "components/contact/ContactForm.tsx"
+    ],
+    "last_failing_tests": [],
+    "next_note": null,
+    "read_only_verified": true
+  },
+  {
+    "path": "/home/bhanot/keyd",
+    "name": "keyd",
+    "branch": "master",
+    "dirty_count": 0,
+    "last_commit_timestamp": 1780296391,
+    "last_commit_iso": "2026-06-01T06:46:31+00:00",
+    "recent_files": [
+      "t/swap-oneshot.t",
+      "t/swap-toggle.t",
+      "t/swap.t",
+      "t/swap2.t",
+      "t/swap3.t"
+    ],
+    "last_failing_tests": [],
+    "next_note": null,
+    "read_only_verified": true
+  },
+  {
+    "path": "/home/bhanot/.hermes/hermes-agent",
+    "name": "hermes-agent",
+    "branch": "main",
+    "dirty_count": 0,
+    "last_commit_timestamp": 1784906297,
+    "last_commit_iso": "2026-07-24T15:18:17+00:00",
+    "recent_files": [
+      "apps/desktop/src/app/chat/chat-swap-overlay.tsx",
+      "apps/desktop/src/app/chat/close-tab.test.ts",
+      "apps/desktop/src/app/chat/close-tab.ts",
+      "apps/desktop/src/app/chat/composer/attachments.test.tsx",
+      "apps/desktop/src/app/artifacts/index.test.ts"
+    ],
+    "last_failing_tests": [],
+    "next_note": null,
+    "read_only_verified": true
+  }
+]
