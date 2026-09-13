@@ -57,8 +57,11 @@ coverage.xml
 /.obsidian/
 /.trash/
 
-# Personal project walkthrough — not a code-repo artifact
-/neuropaca-field-guide.html
+# Root-level design/planning docs — internal working notes, not meant to be
+# tracked in the public repo. README.md is the one exception (kept tracked so
+# GitHub still renders a README on the repo page).
+/*.md
+!/README.md
 
 # B9 soak state — machine-local measurement, regenerated per run. The result
 # that matters is the summary quoted in phases.md, not 10 080 sample rows.

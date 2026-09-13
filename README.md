@@ -2,47 +2,79 @@
 
 ### Neuromorphic Personal Autonomous Computing Agent
 
-> A local-first, always-on agent that watches how you work, builds a **behavioural graph** of your habits, and answers grounded questions about your machine from a small **local** model — with **zero cloud dependency**.
-> *(A later, deferred phase grows a sparse model around your actual work — see [`pruning.md`](pruning.md).)*
+> A local-first, always-on agent that watches how you work, builds a **behavioural graph** of
+> your habits, thinks about that graph while you are away, and — carefully, tier by tier — starts
+> to act like a **personal secretary**. Zero cloud dependency. Nothing leaves the machine.
 
 | | |
 | --- | --- |
-| **Status** | **B9 · Hardening** — B0–B8 (incl. B2.5) merged to `main`; all ten layers L1–L10 exist; 6 of 7 B9 exit criteria met; the daemon runs under a hardened systemd unit. The **7-day soak** (`neuropaca-soak.service`) is the last thing outstanding — its harness was rebuilt after B15 found the earlier run was measuring a deaf Wayland sensor. Live state: [`memory.md`](memory.md). |
+| **Status** | **Level 2 ("Remembering") reached, climbing toward Level 4 ("Useful").** B0–B18 (foundation → hardening → graph-defect fixes) are on `main`. A0–A3 (welcome-back moments, the tray, the mirror, the judgment gate) and S0–S4 (episodic memory, mail/projects/media/calendar/reading plugins, the generalised plugin contract) are all merged. Live state: [`memory.md`](memory.md); the full phased plan: [`VISION.md`](VISION.md) / [`VISION_PHASES.md`](VISION_PHASES.md). |
 | **Version** | v4 |
 | **Author** | Jatin Bhanot · Chitkara University · 2026 |
 | **Runs on** | One laptop, CPU-only, single user, single graph. No GPU, no accounts, no telemetry. |
 | **Goal** | A publishable research paper — the benchmarks **and** the rejected alternatives are deliverables. |
-| **License** | [AGPL-3.0-only](LICENSE). Copyright &copy; 2026 Jatin Bhanot. Contributions accepted under the terms in [Contributing](#4-contributing). |
+| **License** | [AGPL-3.0-only](LICENSE). Copyright &copy; 2026 Jatin Bhanot. Contributions accepted under the terms in [Contributing](#5-contributing). |
 
 ---
 
-## 1. Why this project exists (the research)
+## Table of contents
 
-Most people adapt to their machine. **NeuroPACA flips it: the machine adapts to you.** It is a
-research prototype whose purpose is to produce a paper, not a product. The build *is* the
-experiment; every phase has written exit criteria and every criterion names the test or script
-that proves it.
+1. [What NeuroPACA is, in plain words](#1-what-neuropaca-is-in-plain-words)
+2. [The body-map — what's built vs. planned](#2-the-body-map--whats-built-vs-planned)
+3. [How it actually works](#3-how-it-actually-works)
+4. [Installing and running it](#4-installing-and-running-it)
+5. [Contributing](#5-contributing)
+6. [The documents](#6-the-documents)
 
-### What we are trying to prove
+---
 
-The dossier ([`RESEARCH_DOSSIER.md`](RESEARCH_DOSSIER.md) §18) tracks five candidate claims. The
-first paper is framed around **A**, with **C** as a second result and **E** as the lessons section.
+## 1. What NeuroPACA is, in plain words
 
-| # | Claim, in plain English | Risk | Status |
-| --- | --- | --- | --- |
-| **A** | **One "how much do I use this" score** can decide, at once, *what the system keeps*, *what it replays during idle time*, and *how it ranks context for your questions*. | Medium | ✅ built (B0–B9); needs ablations |
-| **C** | Building **pressure from several independent signals** before acting causes far fewer wrong autonomous actions than a simple threshold. | Low | ✅ built & measured (500 spikes → 167× threshold), provable in simulation |
-| **D** | Passive computer-usage sensing is a useful **data layer** other agents could plug into. | Positioning | ✅ demonstrated by construction |
-| **B** | Watching your computer can tell us enough to **shrink a local model toward your actual work** without hurting quality much. | High | ⏸ deferred (phase D1) — see [`pruning.md`](pruning.md) |
-| **E** | An honest write-up of **what broke** building a self-shrinking CPU-only agent. | Low | ✅ material collected throughout ([`RESEARCH_DOSSIER.md`](RESEARCH_DOSSIER.md) §15) |
+Most software makes you adapt to it. NeuroPACA flips that: it is a small daemon that sits on
+your laptop, watches **cold system numbers** — which app has focus, how idle you are, CPU/RAM
+load, which windows and websites you touch — and slowly builds a private, personal map of how
+you actually work. It does this the way a nervous system does: senses feed a memory, the memory
+reinforces itself the way synapses do ("fire together, wire together"), and while you're away it
+consolidates and half-forms new thoughts about what it noticed, the way a brain does while you
+sleep.
 
-### The thesis — one score, several jobs
+Today it can:
 
-Every node in the graph carries one `relevance_score` (0–10), a normalised composite of four usage
-signals:
+- **Notice** what you're doing right now (focus, idle, load, apps, websites, calendar events,
+  reading list, projects, mail, media) and turn that into a graph of nodes and weighted edges.
+- **Remember** across days — a bi-temporal episodic store, separate from the graph, that can
+  answer "what was true then" rather than only "what's true now".
+- **Wonder** while you're idle — a default-mode-network loop that consolidates the graph, prunes
+  what's gone stale, and asks itself grounded questions about what it saw.
+- **Speak**, carefully — a welcome-back line when you return from being away, an end-of-day
+  "mirror" of what changed, and a briefing of what matters right now (open threads, mail that
+  needs a reply, where you left a project, what's next in whatever you were watching/reading) —
+  all gated by a Thompson-sampling judge that learns, per situation, whether a moment is welcome
+  or an interruption, inside a daily nudge budget.
+- **Act**, within a hard safety gate — a tiered action layer (notify / write a memory / write a
+  file / run a command) that is audited, sandboxed, confined to an explicit path allowlist, and
+  by default dry-run outside the safest tier.
+
+What it does **not** do yet: predict what you're about to do before you do it, pre-warm anything
+for you, or act autonomously without a human having first approved that class of action. Those
+are the next phases (A4–A6, S5–S6) — see the table below.
+
+**Privacy is the product, not a footnote.** Nothing leaves the machine unless you explicitly turn
+on a plugin that reads local files (mail spool, `.ics` calendar, a reading-list file) — even then,
+those plugins are pure local file readers, not network calls. CI runs the test suite inside a
+network namespace with only loopback and asserts that both HTTP and raw TCP raise, so the "zero
+egress" claim is proven, not asserted.
+
+It is **not** a cloud assistant, a general chatbot, a screen recorder/keylogger, a multi-user
+product, or a GPU project. Those are stated scope boundaries.
+
+### The thesis behind the build — one score, several jobs
+
+The research bet ([`RESEARCH_DOSSIER.md`](RESEARCH_DOSSIER.md) §18) is that a single composite
+usage score can drive retention, idle-time replay, and retrieval ranking all at once:
 
 ```
-score = normalize(
+relevance_score = normalize(
       frequency          * 3.0    # how often you use it
     + decay(last_seen)   * 3.0    # how recently
     + log(connections)   * 2.0    # how connected in the graph
@@ -50,70 +82,106 @@ score = normalize(
 )
 ```
 
-That single number governs **retention** (low, long-untouched nodes are pruned), **memory replay**
-(the idle-time loop replays high-score nodes often, low-score rarely), and **retrieval ranking**
-(candidate nodes for a `$` query are ranked before truncation). The deferred fourth job uses the
-*same* score to cut attention heads from the local model.
-
-### Honest limitations (why this is still a prototype)
-
-- **One user, one machine.** Behaviour from one developer on one Pop!\_OS laptop cannot establish
-  generality. Closing this needs a synthetic activity generator + multi-machine replication — the
-  top item in the evaluation plan ([`RESEARCH_DOSSIER.md`](RESEARCH_DOSSIER.md) §18.3).
-- **Privacy vs. reproducibility.** A system that never sends data out cannot ship a shared
-  benchmark dataset. Planned answer: a synthetic activity generator + a public question set with
-  known answers.
-- The `eval/` infrastructure (ablation runner, baselines, question set) is **not built yet**. This
-  is where new contributors are most useful — see [Where to contribute](#where-to-contribute).
+That number decides which nodes get pruned when they go stale, which nodes the idle loop replays
+most, and which nodes are ranked highest when something needs to be retrieved. Five candidate
+research claims (A–E) are tracked in the dossier; claim **A** (the score above) and claim **C**
+(pressure from multiple corroborating signals beats a single threshold, measured at 167× fewer
+false triggers in simulation) are built and measured. Claim **B** (shrinking a local model around
+your usage) is deliberately deferred — see [`pruning.md`](pruning.md).
 
 ---
 
-## 2. What NeuroPACA does
+## 2. The body-map — what's built vs. planned
 
-It passively watches **cold OS-level numbers** (CPU, RAM, disk, temperature, processes, system
-logs, Wayland idle/focus events) every 60 seconds, turns them into **named behavioural patterns**
-with a rule-based correlator (no inference in that path, by design), and stores them in a personal
-knowledge graph. Insights it surfaces, and — behind a hard safety gate — actions it can take, all
-come from that graph. There is currently **no terminal or CLI control surface** — that layer (a
-Unix-socket client, a read-only project guide, `$!`/`$$` command relay) was removed; a voice
-interface is the planned replacement (see [Where to contribute](#where-to-contribute)).
+If you compare the whole project to a human body, this is how the parts line up. This is an
+honest accounting, not a pitch: some rows are fully built and hardened, some are half-built and
+invisible today, and some genuinely don't exist yet.
+
+| Human body part | Job in the body | NeuroPaca equivalent | Built or planned? |
+| --- | --- | --- | --- |
+| **Eyes / ears** (senses) | notice what's happening right now | Focus/idle/load sensors, app & site tracking (L1/L2), calendar + reading-list plugins (S4) | ✅ Built |
+| **Hippocampus** | lay down today's experience as episodic memory | The bi-temporal event stream (S0) alongside the graph | ✅ Built — can answer "what was true last Tuesday", not just "what's true now" |
+| **Synapses** (cortex) | "neurons that fire together, wire together" | Hebbian graph edges — `reinforce_cooccurrence`, saturating weight + half-life decay | ✅ Built (V-1 rework fixed clique over-wiring) |
+| **Sleep / dreaming** | consolidate the day, forget the noise, half-form new ideas | Idle-cycle decay, relevance scoring, dead-hub pruning, the default-mode-network loop | ⚠️ Half built — decay and consolidation work, but "wondering while idle" mostly stays invisible unless it earns a welcome-back moment |
+| **Prefrontal cortex** | what's relevant right now, out of everything I know? | Attention layer — Personalized PageRank from "current context" | ❌ Not built yet — the briefing today ranks by recency + Jaccard overlap + submodular selection, a lighter stand-in for the planned PPR attention layer |
+| **Instinct / gut feeling** | predict what you'll do next before you do it | Prediction faculty (Hawkes / marked point processes) — A4 | ❌ Not built (next phase after this README was written) |
+| **Judgment / impulse control** | should I say something, and is now the right moment? | `Guardian` (A3) — Beta-Bernoulli Thompson-sampling gate per (moment kind × focus × hour × recent dismissals), with a daily nudge budget | ✅ Built and live — every proposed moment (welcome-back, mirror, briefing) now routes through it before it can become a notification |
+| **Mouth / vocal cords** | say it out loud, in words | Desktop notifications, composed by `MomentComposer`/`MirrorComposer`/`BriefingComposer` | ✅ Built — grounded, extractive text (never generated prose that could be wrong), but still rare: it only speaks when the Guardian judges the moment worth the interruption budget |
+| **Hands** | act in the world | Effector tier — tiered `SafetyGate`, sandboxed, path-confined, safe-tier only live | ⚠️ Built, deliberately restrained (only "safe" writes run outside dry-run) |
+| **Autonomic nervous system** | keep vital signs running without conscious thought | systemd daemon, soak harness, unclean-shutdown/`KillMode` fixes, the Wayland-sensor watchdog | ✅ Built (and repeatedly hardened — B9, B15/B16) |
+| **Immune system / DNA markers** | verify identity, catch what's foreign or broken | SPDX + `gen-ref:` provenance stamps, SSH-signed commits | ✅ Built |
+| **Object recognition** ("that's the same face") | recognize the same thing across different views | `AppIdentity.resolve()` — collapsing duplicate app nodes from Wayland ids vs. process names | ✅ Built (B17) |
+| **Correspondence, memory of relationships** | remember open threads with people | Mail plugin (S1) — thread state, overdue-reply detection, per-person context | ✅ Built, opt-in (`mail_enabled`, off by default) |
+| **Sense of "where did I leave off"** | pick up a task exactly where you dropped it | Projects plugin (S2) — read-only git sensing, left-off summaries | ✅ Built, opt-in (`project_enabled`) |
+| **Long-term interest tracking** | remember what you were reading/watching | Media & reading-list plugins (S3/S4) — MPRIS sensing, continuity summaries | ✅ Built, opt-in |
+| **A generalized nervous pathway for new senses** | let new domains plug in without rewiring the brain | `PluginHost` + `Plugin` protocol (S4) — one contract for mail/projects/media/calendar/reading | ✅ Built — two new plugins (calendar, reading) were added with zero core-code changes, proving the contract |
+| **Learning from praise and correction** | judgment that improves from your reactions | The reaction-trained ranker (S5) | ❌ Not built yet |
+| **Earned trust to act alone** | do things for you, once you've trusted it | Tier-by-tier autonomous action (A5) | ❌ Not built — action layer exists but stays in the safe tier, dry-run elsewhere |
+| **Speech** | talk back, out loud | Local voice in/out (A6, stretch goal) | ❌ Not built |
+
+---
+
+## 3. How it actually works
 
 ```mermaid
 flowchart LR
-    OS["Your machine<br/>(CPU, RAM, disk, temp,<br/>processes, logs, idle, focus)"] -->|every 60s| SENSE[L2 · Sensing]
-    SENSE -->|MetricSnapshot| DIAG[L3 · Diagnosis<br/>rule-based patterns]
-    DIAG -->|Signal| GRAPH[(Personal graph<br/>every node has one<br/>relevance_score)]
-    DIAG -->|Signal| LEARN[L4 · Learning<br/>extractive insight]
+    OS["Your machine<br/>(CPU, RAM, disk, temp,<br/>processes, logs, idle, focus,<br/>mail spool, .ics, git repos, media)"] -->|every 60s / on event| SENSE[Sensing<br/>L2 core sensors +<br/>S1-S4 plugins via PluginHost]
+    SENSE -->|MetricSnapshot| DIAG[Diagnosis<br/>rule-based patterns,<br/>no inference in this path]
+    DIAG -->|Signal| GRAPH[(Behavioural graph<br/>every node has one<br/>relevance_score)]
+    SENSE -->|EpisodeRecord| EPISODES[(Episodic store<br/>bi-temporal, S0)]
+    DIAG -->|Signal| LEARN[Learning<br/>extractive insight]
     LEARN --> GRAPH
-    GRAPH --> IDLE[L6 · Idle Cognition<br/>replay + housekeeping<br/>when you walk away]
+    GRAPH --> IDLE[Idle Cognition<br/>default-mode network:<br/>replay + consolidate + prune]
     IDLE --> GRAPH
-    DIAG -->|Signal| DRIVE[L5 · Drive<br/>pressure accumulates,<br/>decays by half every 60s]
+    EPISODES --> BRIEF[Briefing / Mirror /<br/>Welcome-back composers<br/>A0-A2, S0]
+    GRAPH --> BRIEF
+    BRIEF -->|MOMENT_PROPOSED| GUARD[Guardian<br/>A3 - Thompson-sampling<br/>judgment gate, daily budget]
+    GUARD -->|MOMENT_DELIVERED| NOTIFY[Desktop notification]
+    DIAG -->|Signal| DRIVE[Drive<br/>pressure accumulates,<br/>decays by half every 60s]
     LEARN -->|Insight| DRIVE
-    DRIVE -->|threshold crossed| ACT[L7 · Action<br/>one SafetyGate,<br/>one audit log]
-    DRIVE -->|threshold crossed| AGENT[L8 · Agents<br/>ephemeral diagnostic<br/>sub-cluster, reaped at 14d]
+    DRIVE -->|threshold crossed| ACT[Action<br/>tiered SafetyGate,<br/>audit log]
+    DRIVE -->|threshold crossed| AGENT[Agents<br/>ephemeral diagnostic<br/>sub-cluster, reaped at 14d]
     AGENT -->|ACTION_PROPOSAL| ACT
     AGENT --> GRAPH
     ACT --> GRAPH
 ```
 
-**Privacy is the product.** Nothing leaves the machine — CI *affirmatively proves* it by running
-the suite inside a network namespace with only loopback and asserting that HTTP and raw TCP both
-raise. It does not record your screen or keystrokes, only cold system counters and app
-identifiers. Raw sensor data is buffered briefly, then purged; only the extracted graph knowledge
-persists.
-
-**It is not** a cloud assistant, a general chatbot, a screen recorder/keylogger, a multi-user
-product, or a GPU project. Those are stated scope boundaries, not omissions.
+- **Everything routes through one event bus.** No module ever calls another module directly —
+  `SignalCorrelator` produces `SIGNAL_CORRELATED`, composers produce `MOMENT_PROPOSED`, the
+  `Guardian` produces `MOMENT_DELIVERED`. This is a hard architectural invariant (see
+  [Contributing](#5-contributing)), enforced because it's what let five different domains
+  (mail, projects, media, calendar, reading) plug into the same pipeline without touching each
+  other's code.
+- **Extractive before generative, always.** Every sentence NeuroPACA says is built from a
+  template filled with real graph/episode data — never free-form generated prose — because a
+  wrong factual claim about your own life is a release blocker, not a quality nit.
+- **The judgment gate decides *if* and *when*, not *what*.** Three composers each propose moments
+  independently (A0's welcome-back, A2's end-of-day mirror, S0's briefing); the `Guardian` is the
+  only thing that turns a proposal into an actual notification, learning per-situation (are you
+  mid-focus? just back from idle? how many times have you dismissed something today?) whether
+  it's welcome.
+- **The action layer ships inert by default.** `action_dry_run = true` and only the `safe` tier
+  is enabled out of the box — a fresh install describes what it *would* do and does nothing.
+  Higher tiers require an explicit human confirmation over the internal event bus; silence past
+  the timeout is always a refusal. Commands run with no shell and no inherited environment,
+  writes are confined to `watch_paths` and backed up to quarantine first, and every attempt —
+  refusals included — is logged to `data/actions.jsonl`.
+- **There is no terminal/chat control surface right now.** An interactive shell and a read-only
+  project-guide CLI (`tell`/`overview`) were both built and then withdrawn by deliberate decision
+  — see [rules.md](rules.md) and `RESEARCH_DOSSIER.md §4.1` — in favour of a future voice
+  interface (A6) that doesn't exist yet. Until then, the only human-facing surfaces are: desktop
+  notifications, the tray icon (a read-only status display — focused / idle / thinking / noticed
+  something), and the HTML graph viewer.
 
 ---
 
-## 3. Getting started
+## 4. Installing and running it
 
 ### Prerequisites
 
 | Need | Why |
 | --- | --- |
-| **Linux** | Developed and soaked on Pop!\_OS (Wayland). macOS/Windows: the daemon runs but the Wayland `ActivityCollector` self-disables. |
+| **Linux** | Developed and soaked on Pop!\_OS (Wayland/COSMIC). macOS/Windows: the daemon runs but the Wayland `ActivityCollector` self-disables. |
 | **Python 3.12** | `requires-python = ">=3.12"`. |
 | **[uv](https://docs.astral.sh/uv/)** | The only supported dependency manager (`uv.lock` is committed; CI runs `uv sync --locked`). |
 | **~1.5 GB free RAM** | Only to *run the daemon with inference* — idle daemon is ~40 MB, BitNet (the always-on "loop" model) adds ~1.4 GB. Running the **test suite** needs none of this. |
@@ -136,7 +204,7 @@ pre-commit install
 uv run ruff check .             # bare, no --fix — that is what CI runs
 uv run ruff format --check .
 uv run mypy
-uv run pytest -q                # ~423 default tests, no model or network needed
+uv run pytest -q                # ~1,000+ default tests, no model or network needed
 ```
 
 Optional heavier suites:
@@ -146,8 +214,8 @@ uv run pytest -m stress         # peak-throttle load / latency
 uv run pytest tests/integration # touches real psutil / filesystem
 ```
 
-If all of that passes, you have a working development environment. **You do not need the models or
-the daemon to contribute to most of the codebase.**
+If all of that passes, you have a working development environment. **You do not need the models
+or the daemon to contribute to most of the codebase.**
 
 ### Running the daemon (optional — needs the models)
 
@@ -169,25 +237,44 @@ huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --include "*.gguf" --
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
 ```
 
-There is a second, optional inference backend (`interactive_model_path`) — it was for the removed
-terminal's paraphrase feature and has no current caller; the config field and `BitNetRuntime`'s
-dual-model routing were left in place as infrastructure a future voice interface is expected to
-reuse. No need to download anything for it today.
-
 The official BitNet repo ships `ggml-model-i2_s.gguf` (the BitNet-native quant); symlink it to
 `bitnet-2b4t-tq2_0.gguf` or point `model_path` at it. The B0 spike notes
 ([`spikes/b0_bitnet/README.md`](spikes/b0_bitnet/README.md)) cover which quant to use if your
 `llama.cpp` build exposes the BitNet kernels.
 
 **Also edit `watch_paths`** in `neuropaca.toml` — it is hardcoded to the author's checkout
-(`/home/bhanot/NeuroPaca`). It is both the filesystem-sensing scope and the L7 write allowlist, so
-point it at *your* repo path.
+(`/home/bhanot/NeuroPaca`). It is both the filesystem-sensing scope and the safe-tier write
+allowlist, so point it at *your* repo path.
 
 Then:
 
 ```bash
 neuropacad                       # the daemon (reads $NEUROPACA_CONFIG, else ./neuropaca.toml)
 ```
+
+### Turning on the optional plugins
+
+Every domain plugin (mail, projects, media, calendar, reading list) is **off by default** and
+reads only local files — no network calls. Turn them on in your `neuropaca.toml`:
+
+```toml
+mail_enabled = true
+mail_spool_dir = "/path/to/your/maildir"
+
+project_enabled = true          # read-only git sensing on watch_paths
+
+media_enabled = true            # MPRIS — whatever's playing locally
+
+calendar_enabled = true
+calendar_ics_path = "/path/to/your/calendar.ics"
+
+reading_enabled = true
+reading_list_path = "/path/to/your/reading-list.txt"
+```
+
+Each one only ever *adds* nodes/episodes; none of them make outbound network calls. Mail is the
+one domain that could in principle need a remote fetch — today it only reads a local maildir
+spool (see [`plugins/mail/fetcher.py`](plugins/mail/fetcher.py)).
 
 ### Start the daemon automatically (recommended)
 
@@ -205,37 +292,36 @@ unit's ordering is load-bearing (it must start *after* the Wayland compositor
 imports the session environment) — see the header of
 [`scripts/systemd/neuropacad.service`](scripts/systemd/neuropacad.service).
 
-### There is no terminal client right now
+### Using it day to day
 
-There used to be one — a thin CLI over a Unix socket, a read-only project guide (`tell`/
-`overview`), and a `$!`/`$$` prefix that handed a typed shell command to the action layer behind a
-confirmation gate. All of it was removed: no ongoing terminal/text control surface is planned, in
-favour of a future voice interface that does not exist yet. Until it does, the daemon runs, senses,
-learns, and (behind its safety gate) can propose actions, but there is no channel for a human to
-query it, confirm a dangerous action, or ask it anything, on this machine or any other.
+There is no chat window and no CLI to talk to it. Once the daemon is running:
 
-**The action layer still ships inert.** `action_dry_run = True` and only the `safe` tier is
-enabled, so a fresh install describes what it *would* do and does nothing. A "high"/"dangerous"
-tier action still cannot run without a human confirming it (D-14) — the confirmation handshake
-(`ACTION_CONFIRMATION_REQUEST`/`_RESPONSE` over the internal event bus) still exists and still
-gates every attempt; it simply has no interface answering it right now, so silence past
-`action_confirmation_timeout_seconds` is always a refusal. Commands run with no shell and no
-inherited environment, writes are confined to `watch_paths` and backed up to quarantine first, and
-every attempt — refusals included — is two lines in `data/actions.jsonl`.
+- **The tray icon** (`scripts/neuropaca_tray.py`, also installable as a user service) shows a
+  read-only status — focused / idle / thinking / noticed something — read from the daemon's own
+  periodic health dump. One click opens the graph view; another forces a refresh.
+- **Desktop notifications** arrive on their own, gated by the Guardian: a welcome-back line when
+  you return from being away, an end-of-day mirror of what changed, and briefings pulled from
+  whatever plugins you've turned on (an overdue mail thread, where you left a project, what's
+  next in your reading list). Every line is built from real graph/episode data — never generated
+  prose.
+- **The behavioural graph** can be inspected any time:
 
-### Inspecting the behavioural graph
+  ```bash
+  python scripts/neuropaca_graph.py            # writes data/graph_view.html and opens it
+  python scripts/neuropaca_graph.py --no-open  # just write it
+  ```
 
-```bash
-python scripts/neuropaca_graph.py            # writes data/graph_view.html and opens it
-python scripts/neuropaca_graph.py --no-open  # just write it
-```
+  One self-contained HTML page (zero egress): node colour is `node_type`, node size is
+  `relevance_score`, edge thickness is `weight`. Click a node for a detail panel explaining what
+  the system learned from it and why; drag the scrubber to replay the window.
 
-One self-contained HTML page (zero egress): node colour is `node_type`, node size is
-`relevance_score`, edge thickness is `weight`. Drag the scrubber to replay the window.
+**The action layer ships inert.** A fresh install has `action_dry_run = true` and only the `safe`
+tier enabled — it will log what it *would* do without doing it, until you deliberately turn that
+off.
 
 ---
 
-## 4. Contributing
+## 5. Contributing
 
 **Read [`memory.md`](memory.md) first — always.** It is the living state tracker: the current
 phase, the next action, and what is mid-flight. Then read [`rules.md`](rules.md); it is binding on
@@ -247,10 +333,12 @@ every human and AI agent touching this repo.
    Modules receive them as references and never subclass them.
 2. **`GraphMemory` uses `asyncio.Lock`, never `threading.Lock`** in loop-resident code.
 3. **Never call `BitNetRuntime.infer()` from a coroutine.** Use `infer_async()`.
-4. **`SignalCorrelator` produces `SIGNAL_CORRELATED`; consumers never call each other** —
+4. **`SignalCorrelator` produces `SIGNAL_CORRELATED`, consumers never call each other** —
    everything routes through the `EventBus`.
 
 **Plus: no module imports another module.** If you want a direct call, you want a new event.
+This is also how S1–S4's plugins were kept from touching each other's code — see `PluginHost` /
+`sensing/plugin_host.py`.
 
 ### Workflow
 
@@ -261,8 +349,8 @@ every human and AI agent touching this repo.
 - New runtime dependencies are added **per phase, on approval** ([`rules.md`](rules.md) §9). Don't
   add one in a feature PR without raising it first.
 - Anything under `src/neuropaca/` is the running daemon's code (the venv is an editable install).
-  Tooling and viewers that must be safe to run *during a soak* go in `scripts/`, importing nothing
-  from the package.
+  `plugins/` holds the domain plugins built against the S4 `Plugin` protocol. Tooling and viewers
+  that must be safe to run *during a soak* go in `scripts/`, importing nothing from the package.
 - Open a PR against `main`. CI (`.github/workflows/ci.yml`) runs the quality gate plus the
   network-namespace egress assertion.
 
@@ -274,28 +362,32 @@ methods (recency-only, frequency-only, degree-only, semantic), an ablation runne
 score term in turn, and `--research-mode` event tracing kept out of the shipped daemon. Claim A
 cannot be published without it.
 
-The second gap: **a voice interface.** The terminal/CLI control surface was removed by design (see
-above) with a voice replacement planned but not started — there is currently no way for a human to
-query the daemon, confirm a dangerous action, or hear a briefing/mirror moment. The event-bus
-bridges that pattern reuses already exist (`BRIEFING_REQUEST`/`_REPORT`,
-`MIRROR_REQUEST`/`_REPORT`, `SYSTEM_HEALTH_REQUEST`/`_REPORT`, the `ACTION_CONFIRMATION_REQUEST`/
-`_RESPONSE` handshake, a second optional inference backend for phrasing) — nothing subscribes on
-the human-facing side of any of them right now.
+The next phases in the plan ([`VISION_PHASES.md`](VISION_PHASES.md)) that are not yet started:
+
+- **A4 · Anticipation** — Hawkes-process prediction of your next app/task, used to have things
+  ready before you ask.
+- **S5 · Judgment learns** — a ranker trained on your reactions to briefing items, generalising
+  the Guardian's per-moment learning to per-item ranking.
+- **A5 · Earned action** — offers becoming one-click actions, and — only after a per-action-type
+  track record — autonomous ones within the safe tier.
+- **A6 · Voice (stretch)** — local speech in and out, the planned replacement for the withdrawn
+  terminal control surface.
 
 ### Repository map
 
 | Path | What it holds |
 | --- | --- |
-| `src/neuropaca/` | One package per architectural layer — `core/`, `sensing/`, `diagnosis/`, `learning/`, `drive/`, `idle/`, `action/`, `agents/`, `interface/`, `orchestration/` |
+| `src/neuropaca/` | One package per architectural layer — `core/`, `sensing/`, `diagnosis/`, `learning/`, `drive/` (includes `guardian.py`), `idle/`, `action/`, `agents/`, `interface/` (briefing, mirror, moments, notifier), `orchestration/` |
+| `plugins/` | S1–S4 domain plugins built against the `Plugin` protocol — `mail/`, `calendar/`, `reading/` (projects and media live under `src/neuropaca/sensing/` as the two already-migrated `BaseModule` wrappers) |
 | `tests/` | Unit tests, plus `stress/` and `integration/` (both marker-gated) |
-| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), the 7-day soak harness (`soak_*.py` / `soak_*.sh` + tray widget), the graph viewer, `systemd/` unit templates, logrotate config |
+| `scripts/` | Per-phase validation harnesses (`validate_b*.py`), the 7-day soak harness (`soak_*.py`/`soak_*.sh` + tray widget), the presence tray (`neuropaca_tray.py`), the graph viewer, `systemd/` unit templates, logrotate config |
 | `spikes/` | Throwaway de-risking spikes (`b0_bitnet/`, `b2_5_activity/`, `b7_positive_control/`) — **never** imported by the daemon |
 | `models/` | gitignored — the one GGUF file (BitNet, the loop model) |
-| `data/` | gitignored — `graph.json`, `graph_view.html`, `actions.jsonl`, `idle_cache.db`, logs, soak state |
+| `data/` | gitignored — `graph.json`, `graph_view.html`, `actions.jsonl`, the episodic store, idle cache, logs, soak state |
 
 ---
 
-## 5. The documents
+## 6. The documents
 
 The concept documents this build is derived from:
 
@@ -316,7 +408,9 @@ flowchart TD
     PRD["PRD.md<br/>scope · the thesis ·<br/>features · non-goals · privacy"]
     ARCH["Architecture.md<br/>10 layers · class shapes ·<br/>4 invariants · event catalogue"]
     RULES["rules.md<br/>binding engineering rules +<br/>AI-agent boundaries"]
-    PHASES["phases.md<br/>runtime lifecycle +<br/>build order B0–B9"]
+    PHASES["phases.md<br/>runtime lifecycle +<br/>build order B0–B18"]
+    VISION["VISION.md<br/>north star · the six<br/>properties of a living machine"]
+    VPHASES["VISION_PHASES.md<br/>the A/S-series build plan<br/>module by module"]
     DESIGN["design.md<br/>terminal-first visual identity"]
     MEMORY["memory.md<br/>living project state tracker"]
     PROBLEMS["problems.md<br/>risks register + testing log"]
@@ -327,12 +421,15 @@ flowchart TD
     PRD -->|what to build| ARCH
     ARCH -->|how it's shaped| RULES
     ARCH --> PHASES
+    PHASES --> VISION
+    VISION --> VPHASES
     PHASES -->|build order| DESIGN
     PHASES --> MEMORY
     MEMORY --> PROBLEMS
     PROBLEMS -.->|negative result is a deliverable| PRUNING
     PRD --> DOSSIER
     PROBLEMS --> DOSSIER
+    VPHASES --> DOSSIER
 ```
 
 | Document | Purpose |
@@ -340,7 +437,9 @@ flowchart TD
 | [`PRD.md`](PRD.md) | Product scope, the "one score, several jobs" thesis, features, users, non-goals, privacy |
 | [`Architecture.md`](Architecture.md) | The 10 layers, class shapes, the four critical invariants, event catalogue |
 | [`rules.md`](rules.md) | Binding engineering rules and AI-agent boundaries |
-| [`phases.md`](phases.md) | Build order — the Init → Sensing → Diagnosis → Learning → Action → Comms lifecycle, with exit criteria |
+| [`phases.md`](phases.md) | Build order — the B0–B18 lifecycle, with exit criteria |
+| [`VISION.md`](VISION.md) | The north star — the "living machine" framing, the six properties, the ladder of aliveness, the math behind attention/prediction/judgment |
+| [`VISION_PHASES.md`](VISION_PHASES.md) | The A-series (Aliveness) and S-series (Secretary) build plan, module by module, with exit criteria |
 | [`design.md`](design.md) | The terminal-first visual identity |
 | [`memory.md`](memory.md) | Living project state tracker — **read first, update last** |
 | [`problems.md`](problems.md) | Problems & risks register, plus the testing log |
