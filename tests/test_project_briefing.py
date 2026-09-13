@@ -4,7 +4,7 @@
 """Project briefing candidate and formatting tests (S2 · Projects).
 
 Tests:
-1. Clause composition & number-word formatting (_format_project_left_off)
+1. Clause composition & number-word formatting (format_project_left_off)
 2. Grounding guards & candidate generation (_project_left_off_candidates)
 3. build_candidates & compose_briefing integration
 4. End-to-end integration with ProjectIngest sensor
@@ -25,8 +25,8 @@ from neuropaca.core.enums import EpisodeKind, NodeType, RelationType
 from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
+from neuropaca.core.project_format import format_project_left_off
 from neuropaca.interface.briefing import (
-    _format_project_left_off,
     _project_left_off_candidates,
     build_candidates,
     compose_briefing,
@@ -55,7 +55,7 @@ async def _run_git(cwd: Path, *args: str) -> str:
 
 
 def test_format_project_left_off_all_fields() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="graph-view",
         dirty_count=2,
@@ -70,7 +70,7 @@ def test_format_project_left_off_all_fields() -> None:
 
 
 def test_format_project_left_off_clean_no_tests_no_note() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="main",
         dirty_count=0,
@@ -81,7 +81,7 @@ def test_format_project_left_off_clean_no_tests_no_note() -> None:
 
 
 def test_format_project_left_off_singular_file() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="feature",
         dirty_count=1,
@@ -92,7 +92,7 @@ def test_format_project_left_off_singular_file() -> None:
 
 
 def test_format_project_left_off_large_file_count() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="refactor",
         dirty_count=15,
@@ -103,7 +103,7 @@ def test_format_project_left_off_large_file_count() -> None:
 
 
 def test_format_project_left_off_failing_test_only() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="main",
         dirty_count=3,
@@ -117,7 +117,7 @@ def test_format_project_left_off_failing_test_only() -> None:
 
 
 def test_format_project_left_off_note_only() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="main",
         dirty_count=2,
@@ -130,7 +130,7 @@ def test_format_project_left_off_note_only() -> None:
 
 
 def test_format_project_left_off_clean_with_note() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="main",
         dirty_count=0,
@@ -141,7 +141,7 @@ def test_format_project_left_off_clean_with_note() -> None:
 
 
 def test_format_project_left_off_multiple_failing_tests_picks_last() -> None:
-    text = _format_project_left_off(
+    text = format_project_left_off(
         name="NeuroPACA",
         branch="dev",
         dirty_count=1,
@@ -262,27 +262,27 @@ async def test_project_candidates_in_build_candidates(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
         await gm.upsert_node(
-            "project:bot",
+            "project:widget",
             NodeType.PROJECT,
-            attributes={"label": "MyBotTrader"},
+            attributes={"label": "WidgetTrader"},
         )
         store.assert_fact(
             EpisodeKind.PROJECT_STATE_FACT,
-            "project:bot",
+            "project:widget",
             "master",
             valid_from=_NOW,
             attrs={
                 "branch": "master",
-                "repo_name": "MyBotTrader",
+                "repo_name": "WidgetTrader",
                 "dirty_count": 0,
             },
         )
         await store.flush()
 
         candidates = await build_candidates(gm, store, now=_NOW, last_briefing_seq=0)
-        project_items = [c for c in candidates if c.anchor == "project:bot"]
+        project_items = [c for c in candidates if c.anchor == "project:widget"]
         assert len(project_items) == 1
-        assert project_items[0].text == "You left MyBotTrader on master."
+        assert project_items[0].text == "You left WidgetTrader on master."
     finally:
         await store.stop()
         GraphMemory._reset_for_tests()
@@ -429,3 +429,6 @@ async def test_project_briefing_end_to_end_with_sensor(
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: df400869

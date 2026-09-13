@@ -12,9 +12,27 @@ plumbing and filesystem checks:
 Emits:
 - `EpisodeKind.PROJECT_STATE_FACT` — superseding fact per repo, recorded only when state changes.
 - `NodeType.PROJECT` graph nodes (`project:<slug>`), linked `PART_OF` `domain:engineering`.
-- `Moment(kind="thread")` proposed when returning to a repository after `project_stale_days`.
+- `Moment(kind="thread")` proposed when a repo whose last commit is older than
+  `project_stale_days` picks up uncommitted changes again (see `_maybe_fire_thread_moment`).
 
 Zero repo mutation: all operations are strictly read-only.
+
+**Why the thread moment is triggered from git state, not `APP_SWITCH`.**
+VISION.md §1.4 ("the thread") wants this to fire when you *return* to a stale
+project. The obvious trigger would be the focused window changing to that
+project — but nothing in this codebase can make that correlation: `WindowInfo`
+(`sensing/activity/window.py`) carries only `app_id`/`title`, no PID and no cwd
+(the Wayland toplevel protocols this daemon binds don't expose either), and the
+raw title never leaves the sensing collector onto the bus at all (B14's
+membrane — `APP_SWITCH`'s payload is `app_id`/`webapp`/`webapp_domain` only, see
+`sensing/activity/collector.py::_on_window_switch`). Matching an `app_id` like
+`"code"` against a repo path is therefore never more than a name coincidence.
+Instead, this module fires straight from what it already measures accurately:
+a repo's own last-commit timestamp is real, immutable ground truth for
+staleness (unlike this module's own poll-cadence bookkeeping, which would
+just measure "since the daemon last restarted"), and uncommitted changes
+appearing after a stale gap is a fact, not a guess, that you are back working
+in it.
 """
 
 from __future__ import annotations
@@ -36,21 +54,11 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, Moment
+from neuropaca.core.project_format import format_project_left_off
 
 _log = logging.getLogger(__name__)
 
-_NUM_WORDS: dict[int, str] = {
-    1: "one",
-    2: "two",
-    3: "three",
-    4: "four",
-    5: "five",
-    6: "six",
-    7: "seven",
-    8: "eight",
-    9: "nine",
-    10: "ten",
-}
+__all__ = ["ProjectIngest", "format_project_left_off", "project_slug"]
 
 
 def project_slug(path: Path | str) -> str:
@@ -59,39 +67,6 @@ def project_slug(path: Path | str) -> str:
     name = Path(raw).name or raw
     slug = re.sub(r"[^a-zA-Z0-9\-]+", "-", name).strip("-").lower()
     return slug or "project"
-
-
-def format_project_left_off(
-    name: str,
-    branch: str,
-    dirty_count: int,
-    last_failing_tests: list[str],
-    next_note: str | None,
-) -> str:
-    """Format the extractive "where you left off" summary.
-
-    Only clauses that are true get included:
-    - If dirty_count > 0: includes "with N uncommitted files"
-    - If last_failing_tests: includes "the last failing test was <name>"
-    - If next_note: includes "your note says: <note>"
-    """
-    clauses: list[str] = []
-    base = f"You left {name} on {branch}"
-    if dirty_count > 0:
-        count_str = _NUM_WORDS.get(dirty_count, str(dirty_count))
-        file_str = "file" if dirty_count == 1 else "files"
-        base += f" with {count_str} uncommitted {file_str}"
-    clauses.append(base)
-
-    if last_failing_tests:
-        last_test = last_failing_tests[-1]
-        test_name = last_test.split("::")[-1]
-        clauses.append(f"the last failing test was {test_name}")
-
-    if next_note:
-        clauses.append(f"your note says: {next_note}")
-
-    return "; ".join(clauses) + "."
 
 
 class ProjectIngest(BaseModule):
@@ -115,13 +90,13 @@ class ProjectIngest(BaseModule):
 
         self._last_seen_state: dict[str, tuple[Any, ...]] = {}
         self._repo_states: dict[str, dict[str, Any]] = {}
-        self._last_focus_time: dict[str, datetime] = {}
+        self._thread_fired: set[str] = set()
         self._facts_written = 0
         self._moments_proposed = 0
 
     # ---------------------------------------------------------------- lifecycle
     async def initialize(self) -> None:
-        self.event_bus.subscribe(EventType.APP_SWITCH, self.on_app_switch)
+        pass
 
     async def start(self) -> None:
         if self.is_running:
@@ -134,7 +109,6 @@ class ProjectIngest(BaseModule):
         if not self.is_running:
             return
         self.is_running = False
-        self.event_bus.unsubscribe(EventType.APP_SWITCH, self.on_app_switch)
         if self._poll_task is not None:
             self._poll_task.cancel()
             try:
@@ -236,22 +210,88 @@ class ProjectIngest(BaseModule):
                         )
                         self._facts_written += 1
 
-                await self._gm.upsert_node(
-                    project_entity,
-                    NodeType.PROJECT,
-                    attributes={"label": info["name"], "path": info["path"]},
-                )
+                # V-10: a poll is a *sighting*, not an access — `mark_seen` (or,
+                # for a brand-new node, a plain create) must not bump
+                # `activity`/`access_count`/`relevance_score` the way
+                # `upsert_node` does on every call to an existing node
+                # (GraphMemory._touch_unsafe). Polling every repo under
+                # `watch_paths` every `project_poll_interval_seconds` must not
+                # by itself make a repo look more "important" than one the
+                # user actually opens.
+                if not self._gm.has_node(project_entity):
+                    await self._gm.upsert_node(
+                        project_entity,
+                        NodeType.PROJECT,
+                        attributes={"label": info["name"], "path": info["path"]},
+                    )
+                else:
+                    await self._gm.mark_seen(project_entity, now)
+                    await self._gm.update_node(
+                        project_entity, {"label": info["name"], "path": info["path"]}
+                    )
                 if self._gm.has_node("domain:engineering"):
                     await self._gm.add_edge(
                         project_entity, "domain:engineering", relation=RelationType.PART_OF
                     )
 
+                prev_info = self._repo_states.get(project_entity)
                 self._repo_states[project_entity] = info
+                await self._maybe_fire_thread_moment(project_entity, prev_info, info, now)
 
             if self._facts_written > facts_before and self._store is not None:
                 await self._store.flush()
 
             return len(repos)
+
+    async def _maybe_fire_thread_moment(
+        self,
+        project_entity: str,
+        prev_info: dict[str, Any] | None,
+        info: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        """The thread moment (VISION.md §1.4): fire once when a repo whose last
+        commit is older than `project_stale_days` picks up its first
+        uncommitted change since we last looked — real git ground truth, no
+        window/focus correlation (see the module docstring for why)."""
+        last_commit_ts = info["last_commit_timestamp"]
+        was_stale = last_commit_ts is not None and (
+            now - datetime.fromtimestamp(last_commit_ts, tz=UTC)
+        ) >= timedelta(days=self.config.project_stale_days)
+
+        prev_dirty = prev_info["dirty_count"] if prev_info is not None else 0
+        became_active = info["dirty_count"] > 0 and prev_dirty == 0
+
+        if was_stale and became_active and project_entity not in self._thread_fired:
+            text = format_project_left_off(
+                name=info["name"],
+                branch=info["branch"],
+                dirty_count=info["dirty_count"],
+                last_failing_tests=info["last_failing_tests"],
+                next_note=info["next_note"],
+            )
+            moment = Moment(
+                kind="thread",
+                text=text,
+                evidence=(project_entity,),
+                value=0.8,
+                context={"project": project_entity, "hour": now.hour},
+                expires_at=now + timedelta(minutes=30),
+            )
+            self._moments_proposed += 1
+            self.event_bus.publish(
+                Event(
+                    event_type=EventType.MOMENT_PROPOSED,
+                    source="project_ingest",
+                    payload={"moment": moment},
+                )
+            )
+            self._thread_fired.add(project_entity)
+
+        if info["dirty_count"] == 0:
+            # A commit landed (or changes were discarded) — the next stale ->
+            # dirty transition is a new "return" and may fire again.
+            self._thread_fired.discard(project_entity)
 
     # ------------------------------------------------------ git repo inspection
     async def _run_git(
@@ -353,104 +393,6 @@ class ProjectIngest(BaseModule):
             "next_note": next_note,
         }
 
-    # ------------------------------------------------------------- focus & thread
-    def _match_repo(self, payload: dict[str, Any]) -> str | None:
-        """Resolve a project entity from an event payload."""
-        candidates = [
-            payload.get("project"),
-            payload.get("project_id"),
-            payload.get("repo_path"),
-            payload.get("path"),
-            payload.get("cwd"),
-            payload.get("subject"),
-            payload.get("app_id"),
-        ]
-        for c in candidates:
-            if not isinstance(c, str) or not c:
-                continue
-            c_slug = project_slug(c)
-            entity = f"project:{c_slug}"
-            if entity in self._repo_states:
-                return entity
-
-            # Match by path prefix
-            for pe, state in self._repo_states.items():
-                rpath = state.get("path", "")
-                if rpath and (c == rpath or c.startswith(rpath + "/")):
-                    return pe
-                if state.get("name", "").lower() == c.lower():
-                    return pe
-        return None
-
-    async def _find_last_project_activity(
-        self, project_entity: str, state: dict[str, Any] | None
-    ) -> datetime | None:
-        """Find the timestamp of the last known activity on this repository."""
-        if self._store is not None:
-            records = await self._store.for_entity(project_entity)
-            if records:
-                timestamps = [
-                    r.t_end or r.t_start or r.t_valid or r.t_seen
-                    for r in records
-                    if (r.t_end or r.t_start or r.t_valid or r.t_seen) is not None
-                ]
-                if timestamps:
-                    return max(timestamps)
-
-        # Fall back to git last commit timestamp
-        if state is not None:
-            ts = state.get("last_commit_timestamp")
-            if ts is not None:
-                return datetime.fromtimestamp(ts, tz=UTC)
-        return None
-
-    async def on_app_switch(self, event: Event) -> None:
-        """Handle app switches to detect return to a project after project_stale_days."""
-        try:
-            if not self.is_running:
-                return
-            project_entity = self._match_repo(event.payload)
-            if project_entity is None:
-                return
-
-            now = self._clock.now()
-            state = self._repo_states.get(project_entity)
-            last_focus = self._last_focus_time.get(project_entity)
-            if last_focus is None:
-                last_focus = await self._find_last_project_activity(project_entity, state)
-
-            stale_threshold = timedelta(days=self.config.project_stale_days)
-            was_stale = last_focus is not None and (now - last_focus) >= stale_threshold
-
-            self._last_focus_time[project_entity] = now
-
-            if was_stale and state is not None:
-                text = format_project_left_off(
-                    name=state["name"],
-                    branch=state["branch"],
-                    dirty_count=state["dirty_count"],
-                    last_failing_tests=state["last_failing_tests"],
-                    next_note=state["next_note"],
-                )
-                moment = Moment(
-                    kind="thread",
-                    text=text,
-                    evidence=(project_entity,),
-                    value=0.8,
-                    context={"project": project_entity, "hour": now.hour},
-                    expires_at=now + timedelta(minutes=30),
-                )
-                self._moments_proposed += 1
-                self.event_bus.publish(
-                    Event(
-                        event_type=EventType.MOMENT_PROPOSED,
-                        source="project_ingest",
-                        payload={"moment": moment},
-                    )
-                )
-        except Exception:
-            _log.exception("ProjectIngest error on app_switch")
-
     # ---------------------------------------------------------------- forget
     async def forget(self, project: str | Path) -> int:
         """Scrub project facts, episodes, graph node, and in-memory caches."""
@@ -466,5 +408,8 @@ class ProjectIngest(BaseModule):
 
             self._last_seen_state.pop(project_entity, None)
             self._repo_states.pop(project_entity, None)
-            self._last_focus_time.pop(project_entity, None)
+            self._thread_fired.discard(project_entity)
             return removed
+
+
+# gen-ref: 86c879b5

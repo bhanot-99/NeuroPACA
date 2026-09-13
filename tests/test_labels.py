@@ -342,7 +342,7 @@ async def test_dmn_seeds_never_include_l8_probes(tmp_path: Path) -> None:
 def test_leaf_name_renders_project_prefix() -> None:
     assert leaf_name("project:neuropaca", "NeuroPaca") == "Neuropaca"
     assert leaf_name("project:my_cool_project", "") == "My Cool Project"
-    assert leaf_name("project:syskon", "syskon") == "Syskon"
+    assert leaf_name("project:widgetco", "widgetco") == "Widgetco"
     assert leaf_name("person:alice", "") == "Alice"
     assert leaf_name("app:code", "") == "VS Code"
     assert leaf_name("domain:engineering", "") == "Engineering"

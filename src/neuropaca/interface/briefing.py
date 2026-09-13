@@ -39,6 +39,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, Moment, system_error_event
+from neuropaca.core.project_format import format_project_left_off
 from neuropaca.diagnosis.app_identity import AppIdentity
 
 _log = logging.getLogger(__name__)
@@ -372,46 +373,6 @@ async def _mail_overdue_person_candidates(
     return items
 
 
-_NUM_WORDS: dict[int, str] = {
-    1: "one",
-    2: "two",
-    3: "three",
-    4: "four",
-    5: "five",
-    6: "six",
-    7: "seven",
-    8: "eight",
-    9: "nine",
-    10: "ten",
-}
-
-
-def _format_project_left_off(
-    name: str,
-    branch: str,
-    dirty_count: int,
-    last_failing_tests: list[str],
-    next_note: str | None,
-) -> str:
-    clauses: list[str] = []
-    base = f"You left {name} on {branch}"
-    if dirty_count > 0:
-        count_str = _NUM_WORDS.get(dirty_count, str(dirty_count))
-        file_str = "file" if dirty_count == 1 else "files"
-        base += f" with {count_str} uncommitted {file_str}"
-    clauses.append(base)
-
-    if last_failing_tests:
-        last_test = last_failing_tests[-1]
-        test_name = last_test.split("::")[-1]
-        clauses.append(f"the last failing test was {test_name}")
-
-    if next_note:
-        clauses.append(f"your note says: {next_note}")
-
-    return "; ".join(clauses) + "."
-
-
 async def _project_left_off_candidates(
     gm: GraphMemory,
     store: EpisodeStore,
@@ -438,7 +399,7 @@ async def _project_left_off_candidates(
         last_failing_tests = fact.attrs.get("last_failing_tests") or []
         next_note = fact.attrs.get("next_note")
 
-        text = _format_project_left_off(
+        text = format_project_left_off(
             name=name,
             branch=branch,
             dirty_count=dirty_count,

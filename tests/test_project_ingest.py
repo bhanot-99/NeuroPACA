@@ -237,6 +237,21 @@ async def test_project_ingest_all_fixture_states_and_readonly(
         await ingest.poll_tick()
         assert ingest._facts_written == facts_count_before
 
+        # V-10: repeated polling of an unchanged repo is a sighting, not an
+        # access — it must not inflate `activity`/`access_count`/
+        # `relevance_score` (GraphMemory._touch_unsafe), or a repo would look
+        # more "important" purely from sitting under watch_paths.
+        node_before = gm.get_node("project:clean-repo")
+        assert node_before is not None
+        access_count_before = node_before.access_count
+        activity_before = node_before.activity
+        await ingest.poll_tick()
+        await ingest.poll_tick()
+        node_after = gm.get_node("project:clean-repo")
+        assert node_after is not None
+        assert node_after.access_count == access_count_before
+        assert node_after.activity == pytest.approx(activity_before)
+
     finally:
         await ingest.stop()
         await store.stop()
@@ -283,9 +298,42 @@ async def test_project_ingest_forget(tmp_path: Path, fake_clock: FakeClock) -> N
         await bus.stop()
 
 
-async def test_project_thread_moment_on_return_after_stale_days(
-    tmp_path: Path, fake_clock: FakeClock
-) -> None:
+async def _run_git_dated(cwd: Path, iso_date: str, *args: str) -> str:
+    """Like `_run_git`, but pins author/committer date — so a commit's
+    `%ct` (what `ProjectIngest` reads for staleness) is deterministic and
+    independent of real wall-clock time, decoupled from the `FakeClock` the
+    module itself uses for "now"."""
+    import os
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": iso_date,
+        "GIT_COMMITTER_DATE": iso_date,
+    }
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        *args,
+        cwd=str(cwd),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"git command failed: {args}, stderr: {stderr.decode()}")
+    return stdout.decode()
+
+
+async def test_project_thread_moment_on_return_after_stale_days(tmp_path: Path) -> None:
+    """The thread moment (VISION.md §1.4) fires from real git ground truth —
+    not a simulated focus event (see the module docstring for why `APP_SWITCH`
+    can't be the trigger). A repo whose last commit is older than
+    `project_stale_days` picking up its first uncommitted change is the
+    signal; committing again (or staying clean) must not spuriously refire."""
     repos_dir = tmp_path / "repos"
     repos_dir.mkdir()
     repo = repos_dir / "neuropaca"
@@ -294,10 +342,9 @@ async def test_project_thread_moment_on_return_after_stale_days(
     (repo / ".gitignore").write_text(".pytest_cache/\n.neuropaca/\n")
     (repo / "code.py").write_text("code\n")
     await _run_git(repo, "add", ".gitignore", "code.py")
-    await _run_git(repo, "commit", "-m", "left off")
+    old_commit_date = "2026-08-01T12:00:00"
+    await _run_git_dated(repo, old_commit_date, "commit", "-m", "left off")
 
-    (repo / "f1.py").write_text("mod1\n")
-    (repo / "f2.py").write_text("mod2\n")
     cache_dir = repo / ".pytest_cache" / "v" / "cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "lastfailed").write_text(json.dumps({"test_bridge_value": True}))
@@ -305,7 +352,9 @@ async def test_project_thread_moment_on_return_after_stale_days(
     np_dir.mkdir(parents=True)
     (np_dir / "next").write_text("wire the tray")
 
-    ingest, _gm, store, bus = await _setup_ingest(tmp_path, fake_clock, watch_paths=[str(repo)])
+    # "now" is well past project_stale_days (3) after old_commit_date.
+    clock = FakeClock(wall=datetime(2026, 9, 10, 12, 0, tzinfo=UTC))
+    ingest, _gm, store, bus = await _setup_ingest(tmp_path, clock, watch_paths=[str(repo)])
 
     delivered_moments: list[Moment] = []
 
@@ -317,61 +366,34 @@ async def test_project_thread_moment_on_return_after_stale_days(
     bus.subscribe(EventType.MOMENT_PROPOSED, _on_moment)
 
     try:
-        await ingest.start()
-
-        entity = "project:neuropaca"
-        # 1. Simulate initial touch at t0
-        t0 = fake_clock.now()
-        ingest._last_focus_time[entity] = t0
-
-        # Switch within 1 hour: should NOT fire thread moment (not stale)
-        await fake_clock.advance(3600)
-        bus.publish(
-            Event(
-                event_type=EventType.APP_SWITCH,
-                source="test",
-                payload={"project": entity},
-            )
-        )
-        await bus.join()
+        await ingest.start()  # first poll_tick: stale but clean -> no moment
         assert len(delivered_moments) == 0
 
-        # 2. Advance time past project_stale_days (3 days)
-        await fake_clock.advance(4 * 86400)  # 4 days later
-
-        # Focus switch to repo: should fire thread moment!
-        bus.publish(
-            Event(
-                event_type=EventType.APP_SWITCH,
-                source="test",
-                payload={"project": entity},
-            )
-        )
-        await bus.join()
-
+        # Become dirty while stale: fires exactly once.
+        (repo / "code.py").write_text("code\nmore\n")
+        await ingest.poll_tick()
         assert len(delivered_moments) == 1
         moment = delivered_moments[0]
         assert moment.kind == "thread"
-        assert moment.evidence == (entity,)
-        expected_text = (
-            "You left neuropaca on graph-view with two uncommitted files; "
+        assert moment.evidence == ("project:neuropaca",)
+        assert moment.text == (
+            "You left neuropaca on graph-view with one uncommitted file; "
             "the last failing test was test_bridge_value; your note says: wire the tray."
         )
-        assert moment.text == expected_text
 
-        # 3. Another switch immediately after: should NOT fire again (time updated)
-        await fake_clock.advance(60)
-        bus.publish(
-            Event(
-                event_type=EventType.APP_SWITCH,
-                source="test",
-                payload={"project": entity},
-            )
-        )
-        await bus.join()
+        # Still dirty, still stale: does not refire.
+        await ingest.poll_tick()
         assert len(delivered_moments) == 1
 
-        # Check health
+        # Commit (dated close to "now", so no longer stale) and go dirty again:
+        # must not refire, since the repo is no longer stale.
+        await _run_git(repo, "add", "code.py")
+        await _run_git_dated(repo, "2026-09-10T12:00:00", "commit", "-m", "wired the tray")
+        await ingest.poll_tick()  # clean again -> clears the fired flag
+        (repo / "code.py").write_text("code\nmore\nagain\n")
+        await ingest.poll_tick()
+        assert len(delivered_moments) == 1  # no longer stale -> no second thread moment
+
         h = ingest.health()
         assert h.ok is True
         assert "thread_moments=1" in h.detail
@@ -440,5 +462,8 @@ def test_format_project_left_off_omission_rules() -> None:
 def test_project_slug() -> None:
     assert project_slug("/home/user/NeuroPaca") == "neuropaca"
     assert project_slug("My Cool Project") == "my-cool-project"
-    assert project_slug("project:syskon") == "syskon"
+    assert project_slug("project:widgetco") == "widgetco"
     assert project_slug("path/to/repo_1") == "repo-1"
+
+
+# gen-ref: 3c3b56ce

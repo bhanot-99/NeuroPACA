@@ -9,12 +9,21 @@ Tests read-only git collection logic against real repos and verifies:
 - .pytest_cache/v/cache/lastfailed presence and extraction
 - .neuropaca/next presence (decision: explicit marker only, no heuristic)
 - Read-only guarantee: git status and HEAD are unchanged before and after.
+
+Repos to check are supplied on the command line — this script never hardcodes a
+path or repo name, because its output (or a summary of it) may end up in a
+public dossier. Only aggregate counts are meant to be published; real repo
+paths, names, branches and file names are for the operator's own eyes only and
+must not be committed (see spikes/s2_project_collector/README.md).
+
+Usage: run_spike.py REPO_PATH [REPO_PATH ...]
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -126,14 +135,25 @@ async def collect_repo_state(repo_path: Path, max_next_chars: int = 200) -> dict
     }
 
 
+def _anonymize(index: int, info: dict[str, Any]) -> dict[str, Any]:
+    """Strip everything that identifies a specific real repo (path, name,
+    branch, file/test names) — only shape and counts are safe to publish."""
+    return {
+        "repo": f"repo-{index}",
+        "dirty_count": info["dirty_count"],
+        "has_recent_commit": info["last_commit_timestamp"] is not None,
+        "recent_files_count": len(info["recent_files"]),
+        "last_failing_tests_count": len(info["last_failing_tests"]),
+        "has_next_note": info["next_note"] is not None,
+        "read_only_verified": info["read_only_verified"],
+    }
+
+
 async def main() -> None:
-    candidate_paths = [
-        Path("/home/bhanot/NeuroPaca"),
-        Path("/home/bhanot/MyBotTrader"),
-        Path("/home/bhanot/SYSKON"),
-        Path("/home/bhanot/keyd"),
-        Path("/home/bhanot/.hermes/hermes-agent"),
-    ]
+    if len(sys.argv) < 2:
+        print(__doc__)
+        raise SystemExit(2)
+    candidate_paths = [Path(p).expanduser() for p in sys.argv[1:]]
 
     results = []
     for p in candidate_paths:
@@ -156,11 +176,19 @@ async def main() -> None:
         if info:
             info["read_only_verified"] = True
             results.append(info)
+            print(
+                f"[{p}] branch={info['branch']} dirty={info['dirty_count']} "
+                f"next_note={'yes' if info['next_note'] else 'no'}"
+            )
 
-    out_dir = Path(__file__).resolve().parent
-    out_file = out_dir / "summary.json"
-    out_file.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    print(f"Spike complete. Wrote {len(results)} repo summaries to {out_file}")
+    anonymized = [_anonymize(i, info) for i, info in enumerate(results, start=1)]
+    out_dir = Path(__file__).resolve().parent.parent.parent / "data"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / "s2_spike_summary.json"
+    out_file.write_text(json.dumps(anonymized, indent=2), encoding="utf-8")
+    print(f"\nSpike complete over {len(results)} repos.")
+    print(f"Anonymized aggregate written to {out_file} (data/ is gitignored — not published).")
+    print("Full per-repo detail printed above only; never persisted with real identities.")
 
 
 if __name__ == "__main__":
