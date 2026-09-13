@@ -5546,9 +5546,9 @@ produces:
 | | |
 | --- | --- |
 | **Branch** | `s3-media-continuity` |
-| **Outcome** | Full suite (`pytest -m ""`): 1027 collected, 998 passed, 5 skipped (+20 tests: 8 sensing/invariance in `tests/test_media_ingest.py`, 11 formatting/briefing in `tests/test_media_briefing.py`, 1 multi-series 7-day exit verification in `tests/test_media_exit_criterion.py`). `NodeType.SERIES` added; graph schema bumped v10 → v11 with `domain:media` hub added (12 hubs total). Live Brave MPRIS session successfully sensed with 100% factual accuracy ("You were on episode 1 of season 3 of Kurokos Basketball."). |
+| **Outcome** | Full suite (`pytest -m ""`): 1027 collected, 998 passed, 5 skipped (+20 tests: 8 sensing/invariance in `tests/test_media_ingest.py`, 11 formatting/briefing in `tests/test_media_briefing.py`, 1 multi-series 7-day exit verification in `tests/test_media_exit_criterion.py`). `NodeType.SERIES` added; graph schema bumped v10 → v11 with `domain:media` hub added (12 hubs total). Live Brave MPRIS session successfully sensed with 100% factual accuracy with exact position and allowlist filtering. |
 
-**In plain words.** "You were on episode 1 of season 3 of Kurokos Basketball." / "You were listening to A Night at the Opera by Queen." Deterministic, extractive, grounded — remembers where you stopped in what you watch and listen to, without allowing raw browser tab titles to pollute the graph.
+**In plain words.** "You were on episode 1 of season 3 of Example Anime." / "You were listening to A Night at the Opera by Queen." Deterministic, extractive, grounded — remembers where you stopped in what you watch and listen to, without allowing raw browser tab titles to pollute the graph.
 
 **Spike — Findings that reshaped the design.**
 The bounded spike (`spikes/s3_media_collector/`) probed real MPRIS session bus state via `busctl --user --json=short`:
@@ -5572,10 +5572,10 @@ The bounded spike (`spikes/s3_media_collector/`) probed real MPRIS session bus s
    `forget(series)` scrubs all facts, spans, and graph nodes associated with the series, purging playback history completely.
 
 **Verification & Dogfood.**
-- **7-day 3-series exit verification (`tests/test_media_exit_criterion.py`):**
-  Followed 3 real series (Kuroko's Basketball, Severance, Breaking Bad) across a 7-day timeline. Episode advances superseded older positions cleanly; interleaved non-media tab noise was dropped; facts older than 7 days faded out naturally.
+- **7-day 3-series progression simulation (`tests/test_media_exit_criterion.py`):**
+  Simulated 3 series (Example Anime, Severance, Breaking Bad) across a 7-day timeline fixture. Episode advances superseded older positions cleanly; interleaved non-media tab noise was dropped; facts older than 7 days faded out naturally. Full exit criterion awaits accumulating real multi-day lived usage.
 - **Live Dogfood on Running Session:**
-  Queried live Brave instance `org.mpris.MediaPlayer2.brave.instance9888` on the user's desktop playing Kuroko's Basketball: `MediaIngest` extracted `series:kurokos-basketball` and rendered "You were on episode 1 of season 3 of Kurokos Basketball." with exact position.
+  Queried live Brave instance on user desktop playing media: `MediaIngest` extracted structured series metadata and rendered deterministic continuity statement with exact position.
 
 ---
 
@@ -5690,8 +5690,8 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | S2 10-repo dogfood read-only invariance | **10 / 10 repos byte-identical** before and after (0 bytes mutated) | S2 |
 | S2 repo inspection latency, 10 real repos | **13.02–33.62 ms / repo** (~180 ms total across 10 repos) | S2 |
 | S3 media positive extraction / negative drop rate | **100 % / 100 %** (12/12 extracted, 10/10 dropped) | S3 |
-| S3 7-day 3-series continuity exit criterion | **PASSED** (deterministic episode progression, stale suppression) | S3 |
-| S3 live MPRIS dogfood on running Brave session | **PASSED** (1/1 detected: Kurokos Basketball 3 Ep 1 @ 136.8s) | S3 |
+| S3 7-day 3-series continuity simulation fixture | **PASSED** (deterministic episode progression, stale suppression; lived usage pending) | S3 |
+| S3 live MPRIS dogfood on running Brave session | **PASSED** (1/1 detected live session @ exact position) | S3 |
 
 ---
 

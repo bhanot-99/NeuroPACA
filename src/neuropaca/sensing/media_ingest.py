@@ -85,14 +85,13 @@ class MediaIngest(BaseModule):
         bus: EventBus,
         config: Config,
         gm: GraphMemory,
-        store: EpisodeStore | None = None,
+        episode_store: EpisodeStore | None = None,
         *,
         clock: Clock | None = None,
-        episode_store: EpisodeStore | None = None,
     ) -> None:
         super().__init__("media_ingest", bus, config)
         self._gm = gm
-        self._store = store if store is not None else episode_store
+        self._store = episode_store
         self._clock: Clock = clock if clock is not None else SystemClock()
         self._poll_task: asyncio.Task[None] | None = None
         self._poll_interval = config.media_poll_interval_seconds
@@ -390,12 +389,11 @@ class MediaIngest(BaseModule):
             if media_type == "video" and show:
                 entity_id = f"series:{series_slug(show)}"
                 label = show
-                state_key: tuple[Any, ...] = ("video", season, episode, round(pos_s, -1))
             else:
                 music_name = album or artist or title or "music"
                 entity_id = f"series:{series_slug(music_name)}"
                 label = music_name
-                state_key = ("music", artist, album, title, round(pos_s, -1))
+            state_key: tuple[Any, ...] = (media_type, show, season, episode, artist, album, title)
 
             # Span management
             if playback_status == "Playing":
@@ -458,21 +456,21 @@ class MediaIngest(BaseModule):
 
             # GraphMemory integration
             if self._gm is not None:
-                await self._gm.upsert_node(
-                    entity_id,
-                    NodeType.SERIES,
-                    attributes={
-                        "label": label,
-                        "media_type": media_type,
-                        "relevance_score": 1.0,
-                    },
-                )
-                if self._gm.has_node("domain:media"):
-                    await self._gm.add_edge(
+                if not self._gm.has_node(entity_id):
+                    await self._gm.upsert_node(
                         entity_id,
-                        "domain:media",
-                        relation=RelationType.PART_OF,
+                        NodeType.SERIES,
+                        attributes={
+                            "label": label,
+                            "media_type": media_type,
+                        },
                     )
+                    if self._gm.has_node("domain:media"):
+                        await self._gm.add_edge(
+                            entity_id,
+                            "domain:media",
+                            relation=RelationType.PART_OF,
+                        )
                 await self._gm.mark_seen(entity_id, now)
 
         return facts_this_tick

@@ -61,11 +61,11 @@ async def _store(tmp_path: Path) -> EpisodeStore:
 def test_format_media_continuity_video_season_and_episode() -> None:
     text = format_media_continuity(
         media_type="video",
-        show="Kurokos Basketball",
+        show="Example Anime",
         season=3,
         episode=1,
     )
-    assert text == "You were on episode 1 of season 3 of Kurokos Basketball."
+    assert text == "You were on episode 1 of season 3 of Example Anime."
 
 
 def test_format_media_continuity_video_episode_only() -> None:
@@ -105,7 +105,7 @@ def test_format_media_continuity_empty_fallback() -> None:
 
 def test_series_slug() -> None:
     assert series_slug("Breaking Bad") == "breaking-bad"
-    assert series_slug("  Kuroko's   Basketball 3  ") == "kurokos-basketball-3"
+    assert series_slug("  Example's   Show 3  ") == "examples-show-3"
 
 
 # ---------------------------------------------------------------- candidate generation

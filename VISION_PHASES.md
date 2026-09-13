@@ -757,8 +757,8 @@ stopped in what you watch, read and listen to.
 listened spans) and facts (last position per series); only the derived fields
 leave the collector, never raw titles beyond the allowlist.
 
-**Exit.** [x] Correct "where you stopped" on a fixture of real titles and three
-real series over a week.
+**Exit.** [ ] Correct "where you stopped" on a fixture of real titles and three
+real series over a week. *(Simulated and verified across a 7-day multi-series progression fixture and live point-in-time check; full checkbox awaits accumulating multi-day real-world lived usage).*
 
 #### Built, honestly scoped.
 
@@ -767,7 +767,7 @@ real series over a week.
 - **Zero new dependencies:** Uses standard system `busctl --user --json=short` via non-blocking async subprocess. Strictly read-only operations (`list` and `Properties.GetAll`); zero mutations or playback control verbs invoked.
 - **Episodic & Graph integration:** Graph schema v11 with `NodeType.SERIES` and `domain:media` hub (12 hubs total); `EpisodeKind.MEDIA_SPAN` for active playback sessions and `EpisodeKind.MEDIA_POSITION_FACT` for superseding, churn-suppressed position facts.
 - **Briefing continuity:** Integrated via `_media_continuity_candidates` into `BriefingComposer` / `compose_briefing` with submodular ranking and grounding guard (`gm.has_node`).
-- **Full evaluation:** Verified on real-world corpus (100% positive extraction, 100% negative noise drop) and 7-day multi-series progression fixture (`tests/test_media_exit_criterion.py`), plus verified live against active Brave browser MPRIS session (`Kurokos Basketball 3 Episode 1`).
+- **Evaluation status:** Verified on corpus test suite (100% positive extraction, 100% negative noise drop) and 7-day multi-series progression fixture (`tests/test_media_exit_criterion.py`), plus confirmed live point-in-time extraction against an active browser MPRIS session. Unchecked until multi-day natural lived usage is logged.
 
 ---
 

@@ -9,11 +9,11 @@ Never hallucinates prose; only renders clauses from factual attributes.
 
 from __future__ import annotations
 
+import re
+
 
 def series_slug(name: str) -> str:
     """Normalize a series/show/album name to a graph-safe node slug."""
-    import re
-
     clean = re.sub(r"['\"]", "", name)
     slug = re.sub(r"[^a-zA-Z0-9\-]+", "-", clean).strip("-").lower()
     return slug or "media"

@@ -17,12 +17,12 @@
 - Live measurement confirmed:
   ```json
   {
-    "service": "org.mpris.MediaPlayer2.brave.instance9888",
+    "service": "org.mpris.MediaPlayer2.brave.instance1234",
     "PlaybackStatus": "Playing",
-    "Position": 783516611,
+    "Position": 120000000,
     "Metadata": {
-      "mpris:length": 1450111999,
-      "xesam:title": "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime"
+      "mpris:length": 1440000000,
+      "xesam:title": "Example Anime 3 Episode 1 Watch All Episodes at Hianime"
     }
   }
   ```

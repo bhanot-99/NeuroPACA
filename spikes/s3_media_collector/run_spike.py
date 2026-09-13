@@ -17,6 +17,7 @@ Investigates:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import re
@@ -51,7 +52,7 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
-    # 3. Show <SeasonNum> Episode <EpisodeNum> (e.g., Kurokos Basketball 3 Episode 1)
+    # 3. Show <SeasonNum> Episode <EpisodeNum> (e.g., Example Anime 3 Episode 1)
     (
         "show_num_episode_num",
         re.compile(
@@ -225,35 +226,41 @@ async def inspect_live_mpris() -> list[dict[str, Any]]:
     return captured
 
 
-def evaluate_patterns_on_corpus() -> dict[str, Any]:
-    # Corpus of realistic titles: legitimate media vs non-media / noisy web titles
-    media_positives = [
-        "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime",
-        "Attack on Titan - S04E28 - The Dawn of Humanity",
-        "Breaking Bad S02E07 - Negro y Azul",
-        "The Office (US) Season 3 Episode 5",
-        "Stranger Things 2 Episode 7",
-        "Severance Episode 9",
-        "The Daily - Episode 1420",
-        "Huberman Lab #112 - Sleep Toolkit",
-        "Chainsaw Man Episode 12 - English Dub Crunchyroll",
-        "Arcane Season 1 Episode 9 The Monster You Created",
-        "Better Call Saul S06E13",
-        "Dark Season 3 Episode 8 - The Paradise",
-    ]
+DEFAULT_MEDIA_POSITIVES = [
+    "Example Anime 3 Episode 1 Watch All Episodes at Hianime",
+    "Attack on Titan - S04E28 - The Dawn of Humanity",
+    "Breaking Bad S02E07 - Negro y Azul",
+    "The Office (US) Season 3 Episode 5",
+    "Stranger Things 2 Episode 7",
+    "Severance Episode 9",
+    "The Daily - Episode 1420",
+    "Huberman Lab #112 - Sleep Toolkit",
+    "Chainsaw Man Episode 12 - English Dub Crunchyroll",
+    "Arcane Season 1 Episode 9 The Monster You Created",
+    "Better Call Saul S06E13",
+    "Dark Season 3 Episode 8 - The Paradise",
+]
 
-    non_media_negatives = [
-        "YouTube - Home",
-        "Google Search - how to make pizza",
-        "Reddit: the front page of the internet",
-        "Twitch - Following",
-        "Inbox (12) - user@example.com",
-        "GitHub - bhanot-99/NeuroPACA: A local cognitive architecture",
-        "Hianime - Watch Anime Online Free",
-        "Netflix - Browse",
-        "Spotify Web Player",
-        "Python 3.12 Documentation",
-    ]
+DEFAULT_NON_MEDIA_NEGATIVES = [
+    "YouTube - Home",
+    "Google Search - how to make pizza",
+    "Reddit: the front page of the internet",
+    "Twitch - Following",
+    "Inbox (12) - user@example.com",
+    "GitHub - bhanot-99/NeuroPACA: A local cognitive architecture",
+    "Hianime - Watch Anime Online Free",
+    "Netflix - Browse",
+    "Spotify Web Player",
+    "Python 3.12 Documentation",
+]
+
+
+def evaluate_patterns_on_corpus(
+    positives: list[str] | None = None,
+    negatives: list[str] | None = None,
+) -> dict[str, Any]:
+    media_positives = positives if positives is not None else DEFAULT_MEDIA_POSITIVES
+    non_media_negatives = negatives if negatives is not None else DEFAULT_NON_MEDIA_NEGATIVES
 
     pos_results = []
     for title in media_positives:
@@ -261,9 +268,9 @@ def evaluate_patterns_on_corpus() -> dict[str, Any]:
             "xesam:title": title,
             "xesam:artist": [""],
             "xesam:album": "",
-            "mpris:length": 1450000000,
+            "mpris:length": 1440000000,
         }
-        res = extract_from_metadata(fake_meta, position_us=483000000)
+        res = extract_from_metadata(fake_meta, position_us=120000000)
         pos_results.append(
             {
                 "raw_title": title,
@@ -292,58 +299,93 @@ def evaluate_patterns_on_corpus() -> dict[str, Any]:
     pos_matched = sum(1 for r in pos_results if r["matched"])
     neg_dropped = sum(1 for r in neg_results if r["dropped"])
 
+    recall = pos_matched / len(media_positives) if media_positives else 1.0
+    drop_rate = neg_dropped / len(non_media_negatives) if non_media_negatives else 1.0
+
     return {
         "media_positives": {
             "total": len(media_positives),
             "matched": pos_matched,
-            "recall": pos_matched / len(media_positives),
+            "recall": recall,
             "results": pos_results,
         },
         "non_media_negatives": {
             "total": len(non_media_negatives),
             "dropped": neg_dropped,
-            "drop_rate": neg_dropped / len(non_media_negatives),
+            "drop_rate": drop_rate,
             "results": neg_results,
         },
     }
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(description="S3 Media Collector Spike")
+    parser.add_argument(
+        "--corpus",
+        type=Path,
+        default=None,
+        help="Optional JSON file with 'positives' and 'negatives' string lists",
+    )
+    parser.add_argument(
+        "--skip-live",
+        action="store_true",
+        help="Skip live MPRIS busctl scan",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT / "summary.json",
+        help="Summary JSON output path",
+    )
+    args = parser.parse_args()
+
     print("=== S3 Media Collector Spike ===")
 
     # 1. Live inspection
-    live_sessions = await inspect_live_mpris()
-    print(f"Active MPRIS players discovered: {len(live_sessions)}")
-    for s in live_sessions:
-        svc = s["service"]
-        proc = s["process"]
-        props = s["properties"]
-        status = props.get("PlaybackStatus", {}).get("data")
-        pos = props.get("Position", {}).get("data", 0)
-        meta = props.get("Metadata", {}).get("data", {})
-        title = meta.get("xesam:title", {}).get("data", "")
-        print(f"\n[Live Player] {svc} (PID {s['pid']} / {proc})")
-        print(f"  PlaybackStatus: {status} | Position: {pos} μs ({pos / 1e6:.1f} s)")
-        print(f'  xesam:title: "{title}"')
+    live_sessions: list[dict[str, Any]] = []
+    if not args.skip_live:
+        live_sessions = await inspect_live_mpris()
+        print(f"Active MPRIS players discovered: {len(live_sessions)}")
+        for s in live_sessions:
+            svc = s["service"]
+            proc = s["process"]
+            props = s["properties"]
+            status = props.get("PlaybackStatus", {}).get("data")
+            pos = props.get("Position", {}).get("data", 0)
+            meta = props.get("Metadata", {}).get("data", {})
+            title = meta.get("xesam:title", {}).get("data", "")
+            print(f"\n[Live Player] {svc} (PID {s['pid']} / {proc})")
+            print(f"  PlaybackStatus: {status} | Position: {pos} μs ({pos / 1e6:.1f} s)")
+            print(f'  xesam:title: "{title}"')
 
-        extracted = extract_from_metadata(meta, position_us=pos)
-        if extracted:
-            print(
-                f"  -> EXTRACTED ({extracted.media_type}): "
-                f"show='{extracted.show_or_artist}', "
-                f"season={extracted.season}, "
-                f"episode={extracted.episode}"
-            )
-        else:
-            print("  -> DROPPED (no allowlist pattern match)")
+            extracted = extract_from_metadata(meta, position_us=pos)
+            if extracted:
+                print(
+                    f"  -> EXTRACTED ({extracted.media_type}): "
+                    f"show='{extracted.show_or_artist}', "
+                    f"season={extracted.season}, "
+                    f"episode={extracted.episode}"
+                )
+            else:
+                print("  -> DROPPED (no allowlist pattern match)")
 
-    # Save captured live sessions
-    live_file = ROOT / "captured_mpris.json"
-    live_file.write_text(json.dumps(live_sessions, indent=2), encoding="utf-8")
-    print(f"\nSaved live session capture to {live_file}")
+        if live_sessions:
+            live_file = ROOT / "captured_mpris.json"
+            live_file.write_text(json.dumps(live_sessions, indent=2), encoding="utf-8")
+            print(f"\nSaved live session capture to {live_file}")
+    else:
+        print("Skipping live MPRIS busctl scan (--skip-live)")
 
     # 2. Corpus pattern evaluation
-    eval_res = evaluate_patterns_on_corpus()
+    custom_pos = None
+    custom_neg = None
+    if args.corpus is not None and args.corpus.is_file():
+        corpus_data = json.loads(args.corpus.read_text("utf-8"))
+        custom_pos = corpus_data.get("positives")
+        custom_neg = corpus_data.get("negatives")
+        print(f"Loaded custom corpus from {args.corpus}")
+
+    eval_res = evaluate_patterns_on_corpus(positives=custom_pos, negatives=custom_neg)
     pos = eval_res["media_positives"]
     neg = eval_res["non_media_negatives"]
     print("\nCorpus Pattern Evaluation:")
@@ -368,9 +410,9 @@ async def main() -> None:
         ],
     }
 
-    summary_file = ROOT / "summary.json"
-    summary_file.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(f"Saved spike summary to {summary_file}")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"Saved spike summary to {args.output}")
 
 
 if __name__ == "__main__":

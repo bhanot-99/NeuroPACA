@@ -1,7 +1,7 @@
 [
   {
-    "service": "org.mpris.MediaPlayer2.brave.instance9888",
-    "pid": 9888,
+    "service": "org.mpris.MediaPlayer2.brave.instance1234",
+    "pid": 1234,
     "process": "brave",
     "properties": {
       "CanControl": {
@@ -37,11 +37,11 @@
         "data": {
           "mpris:length": {
             "type": "x",
-            "data": 1450111999
+            "data": 1440000000
           },
           "mpris:trackid": {
             "type": "o",
-            "data": "/com/brave/MediaPlayer2/TrackList/Track8F26044CC680386845366818D630828A"
+            "data": "/com/brave/MediaPlayer2/TrackList/Track1234567890ABCDEF1234567890ABCDEF"
           },
           "xesam:album": {
             "type": "s",
@@ -55,7 +55,7 @@
           },
           "xesam:title": {
             "type": "s",
-            "data": "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime"
+            "data": "Example Anime 3 Episode 1 Watch All Episodes at Hianime"
           }
         }
       },
@@ -69,7 +69,7 @@
       },
       "Position": {
         "type": "x",
-        "data": 783516611
+        "data": 120000000
       },
       "Rate": {
         "type": "d",

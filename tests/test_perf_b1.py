@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from neuropaca.core.graph_memory import HUB_NODE_IDS, GraphMemory
-from tests.fixtures.generate_10k_graph import FIXTURE_PATH, write_fixture
+from tests.fixtures.generate_10k_graph import FIXTURE_PATH, ensure_fixture
 
 _LOAD_BUDGET_S = 2.0
 _TRAVERSAL_BUDGET_S = 0.05
@@ -30,8 +30,7 @@ _SAMPLE = 5
 
 @pytest.fixture(scope="session")
 def graph_10k() -> tuple[Path, dict]:
-    if not FIXTURE_PATH.exists():
-        write_fixture(FIXTURE_PATH)
+    ensure_fixture(FIXTURE_PATH)
     payload = json.loads(FIXTURE_PATH.read_text("utf-8"))
     return FIXTURE_PATH, payload
 
@@ -50,7 +49,7 @@ async def test_load_10k_graph_under_two_seconds(graph_10k: tuple[Path, dict]) ->
     await gm.load()
     elapsed = time.perf_counter() - start
 
-    assert gm.node_count == len(payload["nodes"]) == 10_011
+    assert gm.node_count == len(payload["nodes"]) == 10_012
     assert gm.edge_count == len(payload["edges"]) == 25_000
     assert elapsed < _LOAD_BUDGET_S, f"load() took {elapsed:.3f}s (budget {_LOAD_BUDGET_S}s)"
 

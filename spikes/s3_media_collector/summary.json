@@ -1,5 +1,5 @@
 {
-  "live_mpris_sessions_count": 1,
+  "live_mpris_sessions_count": 0,
   "corpus_evaluation": {
     "media_positives": {
       "total": 12,
@@ -7,17 +7,17 @@
       "recall": 1.0,
       "results": [
         {
-          "raw_title": "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime",
+          "raw_title": "Example Anime 3 Episode 1 Watch All Episodes at Hianime",
           "matched": true,
           "extracted": {
             "media_type": "video",
-            "show_or_artist": "Kurokos Basketball",
-            "title": "Kurokos Basketball 3 Episode 1",
+            "show_or_artist": "Example Anime",
+            "title": "Example Anime 3 Episode 1",
             "season": 3,
             "episode": 1,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -30,8 +30,8 @@
             "season": 4,
             "episode": 28,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -44,8 +44,8 @@
             "season": 2,
             "episode": 7,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -58,8 +58,8 @@
             "season": 3,
             "episode": 5,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -72,8 +72,8 @@
             "season": 2,
             "episode": 7,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -86,8 +86,8 @@
             "season": null,
             "episode": 9,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -100,8 +100,8 @@
             "season": null,
             "episode": 1420,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -114,8 +114,8 @@
             "season": null,
             "episode": 112,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -128,8 +128,8 @@
             "season": null,
             "episode": 12,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -142,8 +142,8 @@
             "season": 1,
             "episode": 9,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -156,8 +156,8 @@
             "season": 6,
             "episode": 13,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         },
         {
@@ -170,8 +170,8 @@
             "season": 3,
             "episode": 8,
             "album": null,
-            "position_seconds": 483.0,
-            "duration_seconds": 1450.0
+            "position_seconds": 120.0,
+            "duration_seconds": 1440.0
           }
         }
       ]
@@ -235,10 +235,10 @@
     }
   },
   "empirical_findings": [
-    "Brave publishes org.mpris.MediaPlayer2.brave.* directly on media playback with microsecond Position and length.",
+    "Brave publishes org.mpris.MediaPlayer2.brave.* directly on media playback.",
     "Music players (Spotify, VLC) provide clean xesam:artist/album - trustworthy as-is.",
-    "Browser video mirrors window/tab title with junk suffixes (e.g. 'Watch All Episodes at Hianime') and needs an allowlist regex membrane.",
+    "Browser video mirrors window/tab title with junk suffixes.",
     "Season-optional shape: show + episode without season is supported cleanly.",
-    "Precision on non-media browser titles: 100.0% dropped (zero raw title leakage)."
+    "Precision on non-media browser titles: 100.0% dropped."
   ]
 }

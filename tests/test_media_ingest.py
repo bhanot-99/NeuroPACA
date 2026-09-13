@@ -70,16 +70,14 @@ async def test_media_ingest_clean_video_pattern_match(
             "data": [
                 {
                     "PlaybackStatus": {"type": "s", "data": "Playing"},
-                    "Position": {"type": "x", "data": 483358039},  # 483.35 s
+                    "Position": {"type": "x", "data": 120000000},  # 120.0 s
                     "Metadata": {
                         "type": "a{sv}",
                         "data": {
-                            "mpris:length": {"type": "x", "data": 1450000000},
+                            "mpris:length": {"type": "x", "data": 1440000000},
                             "xesam:title": {
                                 "type": "s",
-                                "data": (
-                                    "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime"
-                                ),
+                                "data": ("Example Anime 3 Episode 1 Watch All Episodes at Hianime"),
                             },
                             "xesam:artist": {"type": "as", "data": [""]},
                             "xesam:album": {"type": "s", "data": ""},
@@ -102,12 +100,12 @@ async def test_media_ingest_clean_video_pattern_match(
         assert facts == 1
         await store.flush()
 
-        entity_id = "series:kurokos-basketball"
+        entity_id = "series:example-anime"
         assert gm.has_node(entity_id)
         node = gm.get_node(entity_id)
         assert node is not None
         assert node.node_type == NodeType.SERIES
-        assert node.label == "Kurokos Basketball"
+        assert node.label == "Example Anime"
 
         # Check edge to domain:media
         assert any(
@@ -121,13 +119,23 @@ async def test_media_ingest_clean_video_pattern_match(
         assert len(media_facts) == 1
         fact = media_facts[0]
         assert fact.subject == entity_id
-        assert fact.attrs["show"] == "Kurokos Basketball"
+        assert fact.attrs["show"] == "Example Anime"
         assert fact.attrs["season"] == 3
         assert fact.attrs["episode"] == 1
-        assert pytest.approx(fact.attrs["position_seconds"], rel=1e-2) == 483.35
-        assert (
-            fact.attrs["summary_text"] == "You were on episode 1 of season 3 of Kurokos Basketball."
-        )
+        assert pytest.approx(fact.attrs["position_seconds"], rel=1e-2) == 120.0
+        assert fact.attrs["summary_text"] == "You were on episode 1 of season 3 of Example Anime."
+
+        # Verify fact churn suppression and V-10 non-inflation on subsequent tick
+        initial_access_count = node.access_count
+        await fake_clock.advance(30.0)
+        # Player advances position by 30 seconds
+        player_props["data"][0]["Position"]["data"] = 150000000  # 150.0 s
+        facts_second_tick = await ingest.poll_tick()
+        assert facts_second_tick == 0  # No fact churn!
+        node_after = gm.get_node(entity_id)
+        assert node_after is not None
+        # V-10: mark_seen only moves last_seen_at; it does NOT touch access_count
+        assert node_after.access_count == initial_access_count
 
         # Check open span
         assert "org.mpris.MediaPlayer2.brave.instance1234" in ingest._open_spans

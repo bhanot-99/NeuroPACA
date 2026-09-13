@@ -69,7 +69,7 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
 
     try:
         # =====================================================================
-        # DAY 1 (Monday 18:00): Series 1 - Kurokos Basketball S03E01
+        # DAY 1 (Monday 18:00): Series 1 - Example Anime S03E01
         # =====================================================================
         current_mpris = [{"name": "org.mpris.MediaPlayer2.brave.instance1", "pid": 101}]
         current_props = {
@@ -82,9 +82,7 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
                         "data": {
                             "xesam:title": {
                                 "type": "s",
-                                "data": (
-                                    "Kurokos Basketball 3 Episode 1 Watch All Episodes at Hianime"
-                                ),
+                                "data": ("Example Anime 3 Episode 1 Watch All Episodes at Hianime"),
                             },
                             "xesam:artist": {"type": "as", "data": [""]},
                             "xesam:album": {"type": "s", "data": ""},
@@ -101,8 +99,8 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
         # Check Day 1 briefing candidates
         cands = await _media_continuity_candidates(gm, store, now=clock.now())
         assert len(cands) == 1
-        assert cands[0].anchor == "series:kurokos-basketball"
-        assert cands[0].text == "You were on episode 1 of season 3 of Kurokos Basketball."
+        assert cands[0].anchor == "series:example-anime"
+        assert cands[0].text == "You were on episode 1 of season 3 of Example Anime."
 
         # User pauses playback after 20 minutes
         await clock.advance(1200.0)
@@ -116,7 +114,7 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
         # =====================================================================
         await clock.advance(26 * 3600.0)
 
-        # Kurokos Basketball S03E02
+        # Example Anime S03E02
         current_props = {
             "data": [
                 {
@@ -127,9 +125,7 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
                         "data": {
                             "xesam:title": {
                                 "type": "s",
-                                "data": (
-                                    "Kurokos Basketball 3 Episode 2 Watch All Episodes at Hianime"
-                                ),
+                                "data": ("Example Anime 3 Episode 2 Watch All Episodes at Hianime"),
                             },
                             "xesam:artist": {"type": "as", "data": [""]},
                             "xesam:album": {"type": "s", "data": ""},
@@ -141,10 +137,10 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
         await ingest.poll_tick()
         await store.flush()
 
-        # Kurokos Basketball fact supersedes episode 1 with episode 2
+        # Example Anime fact supersedes episode 1 with episode 2
         cands = await _media_continuity_candidates(gm, store, now=clock.now())
         assert len(cands) == 1
-        assert cands[0].text == "You were on episode 2 of season 3 of Kurokos Basketball."
+        assert cands[0].text == "You were on episode 2 of season 3 of Example Anime."
 
         # Now start Series 2: Severance Season 1 Episode 1
         await clock.advance(1800.0)
@@ -174,8 +170,8 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
         cands = await _media_continuity_candidates(gm, store, now=clock.now())
         cand_map = {c.anchor: c.text for c in cands}
         assert len(cand_map) == 2
-        assert cand_map["series:kurokos-basketball"] == (
-            "You were on episode 2 of season 3 of Kurokos Basketball."
+        assert cand_map["series:example-anime"] == (
+            "You were on episode 2 of season 3 of Example Anime."
         )
         assert cand_map["series:severance"] == "You were on episode 1 of season 1 of Severance."
 
@@ -289,7 +285,7 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
         assert "You were on episode 2 of season 1 of Severance." in moment.text
 
         # =====================================================================
-        # DAY 10 (Next Thursday, +5 days): Kuroko's Basketball is now > 7 days old
+        # DAY 10 (Next Thursday, +5 days): Example Anime is now > 7 days old
         # It must naturally fade out (media_stale_days = 7).
         # Severance and Breaking Bad were active on Days 4 & 5 (within 5-6 days).
         # =====================================================================
@@ -297,8 +293,8 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
 
         cands = await _media_continuity_candidates(gm, store, now=clock.now(), stale_days=7)
         active_anchors = {c.anchor for c in cands}
-        # Kuroko's Basketball (Day 2, 8 days ago) is stale and faded
-        assert "series:kurokos-basketball" not in active_anchors
+        # Example Anime (Day 2, 8 days ago) is stale and faded
+        assert "series:example-anime" not in active_anchors
         # Breaking Bad (Day 4, 6 days ago) and Severance (Day 5, 5 days ago) remain active
         assert "series:breaking-bad" in active_anchors
         assert "series:severance" in active_anchors

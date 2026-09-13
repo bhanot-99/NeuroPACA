@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from neuropaca.core.enums import NodeType, RelationType
-from neuropaca.core.graph_memory import HUB_NODE_IDS
+from neuropaca.core.graph_memory import HUB_NODE_IDS, graph_schema_version
 
 _SEED = 20260829
 _LEAF_COUNT = 10_000
@@ -87,7 +87,7 @@ def build_payload(seed: int = _SEED) -> dict[str, Any]:
             }
         )
 
-    return {"schema_version": 1, "nodes": nodes, "edges": edges}
+    return {"schema_version": graph_schema_version(), "nodes": nodes, "edges": edges}
 
 
 def _node_record(node_id: str, label: str, rng: random.Random) -> dict[str, Any]:
@@ -111,6 +111,25 @@ def write_fixture(path: Path = FIXTURE_PATH, *, seed: int = _SEED) -> dict[str, 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return payload
+
+
+def ensure_fixture(path: Path = FIXTURE_PATH, *, seed: int = _SEED) -> Path:
+    """Ensure the 10k fixture exists and matches schema and node count; regenerate if stale."""
+    expected_nodes = len(HUB_NODE_IDS) + _LEAF_COUNT
+    expected_schema = graph_schema_version()
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text("utf-8"))
+            if (
+                payload.get("schema_version") == expected_schema
+                and len(payload.get("nodes", [])) == expected_nodes
+                and len(payload.get("edges", [])) == _EDGE_COUNT
+            ):
+                return path
+        except Exception:
+            pass
+    write_fixture(path, seed=seed)
+    return path
 
 
 def main() -> None:

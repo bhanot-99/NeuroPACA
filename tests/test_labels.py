@@ -343,7 +343,7 @@ def test_leaf_name_renders_project_and_series_prefix() -> None:
     assert leaf_name("project:neuropaca", "NeuroPaca") == "Neuropaca"
     assert leaf_name("project:my_cool_project", "") == "My Cool Project"
     assert leaf_name("project:widgetco", "widgetco") == "Widgetco"
-    assert leaf_name("series:kurokos_basketball", "Kurokos Basketball") == "Kurokos Basketball"
+    assert leaf_name("series:example_anime", "Example Anime") == "Example Anime"
     assert leaf_name("series:breaking_bad", "") == "Breaking Bad"
     assert leaf_name("person:alice", "") == "Alice"
     assert leaf_name("app:code", "") == "VS Code"
