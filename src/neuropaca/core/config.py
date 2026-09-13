@@ -663,7 +663,7 @@ class Config:
             raise ConfigError("invalid Config: " + "; ".join(errs))
 
     def validate(self) -> Config:
-        """Explicit validation hook (Config is also validated on construction in `__post_init__`)."""
+        """Explicit validation hook (validated on construction in `__post_init__`)."""
         return self
 
     @classmethod

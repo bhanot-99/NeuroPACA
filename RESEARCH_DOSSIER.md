@@ -39,7 +39,7 @@
 18. [Research claims and publication plan](#18-research-claims-and-publication-plan)
 19. [Reproducing everything](#19-reproducing-everything)
 20. [Glossary](#20-glossary)
-21. [The post-B9 build chronicle — B13 to V-3, step by step](#21-the-post-b9-build-chronicle--b13-to-v-3-step-by-step)
+21. [The post-B9 build chronicle — B13 to S3, step by step](#21-the-post-b9-build-chronicle--b13-to-s3-step-by-step)
 
 ---
 
@@ -5541,6 +5541,44 @@ produces:
 
 ---
 
+### 21.25 S3 · Media and continuity — MPRIS sensing, allowlist membrane, briefing continuity
+
+| | |
+| --- | --- |
+| **Branch** | `s3-media-continuity` |
+| **Outcome** | Full suite (`pytest -m ""`): 1027 collected, 998 passed, 5 skipped (+20 tests: 8 sensing/invariance in `tests/test_media_ingest.py`, 11 formatting/briefing in `tests/test_media_briefing.py`, 1 multi-series 7-day exit verification in `tests/test_media_exit_criterion.py`). `NodeType.SERIES` added; graph schema bumped v10 → v11 with `domain:media` hub added (12 hubs total). Live Brave MPRIS session successfully sensed with 100% factual accuracy ("You were on episode 1 of season 3 of Kurokos Basketball."). |
+
+**In plain words.** "You were on episode 1 of season 3 of Kurokos Basketball." / "You were listening to A Night at the Opera by Queen." Deterministic, extractive, grounded — remembers where you stopped in what you watch and listen to, without allowing raw browser tab titles to pollute the graph.
+
+**Spike — Findings that reshaped the design.**
+The bounded spike (`spikes/s3_media_collector/`) probed real MPRIS session bus state via `busctl --user --json=short`:
+1. *Brave publishes MPRIS natively:* Brave publishes an `org.mpris.MediaPlayer2.brave.*` session the moment a page plays audio/video. Rather than merging browser tab titles and native players, MPRIS alone captures both native desktop players and browser media with exact playback position (µs).
+2. *Allowlist drop rate:* Tested on a corpus of 12 real media titles and 10 non-media web titles. Results: 12/12 (100%) valid media titles extracted; 10/10 (100%) noisy non-media titles dropped completely. Go/No-go: GO.
+
+**Design & Architecture.**
+1. **Strictly Read-Only D-Bus Sensing (`src/neuropaca/sensing/media_ingest.py`):**
+   `MediaIngest` extends `BaseModule`. Queries `busctl --user --json=short list` and `org.freedesktop.DBus.Properties.GetAll` over AF_UNIX. Never issues mutating verbs (`Play`, `Pause`, `Stop`, `Seek`). Gracefully self-disables if `busctl` is absent from PATH.
+2. **Dual-Trust Membrane:**
+   - *Music:* Trusted directly if `xesam:artist` or `xesam:album` are populated (standard for Spotify, Rhythmbox, Amberol, VLC).
+   - *Video:* Raw titles from browser tabs (`xesam:title`) are filtered strictly through configurable allowlist patterns in `data/media_title_patterns.default.toml` (`s_e_compact`, `season_episode_verbose`, `show_num_episode_num`, `episode_only_verbose`, `ep_compact`, `hash_episode`). Unmatched titles are dropped entirely; raw title strings never leak into GraphMemory.
+3. **Episodic Spans & Superseding Facts:**
+   - Active playback (`PlaybackStatus == "Playing"`) opens an `EpisodeKind.MEDIA_SPAN`. Transitioning to `Paused`, `Stopped`, or track switch closes the span with true duration.
+   - Exact resume positions are recorded as `EpisodeKind.MEDIA_POSITION_FACT`. Consecutive polls on the same state suppress churn (`_last_state` cache). When position/episode updates, a new fact supersedes the previous one.
+4. **Graph Memory & Schema v11:**
+   Schema bumped from v10 to v11. Adds `NodeType.SERIES` and seeds `domain:media` as the 11th domain hub (`YOU` + 11 domains = 12 total hubs). Entities are wired via `RelationType.PART_OF` to `domain:media`.
+5. **Briefing Continuity (`src/neuropaca/interface/briefing.py`):**
+   `_media_continuity_candidates` queries open `MEDIA_POSITION_FACT`s, verifies graph grounding (`gm.has_node`), filters out stale items (`> media_stale_days`, default 7), and generates `BriefingItem`s formatted via `core/media_format.py::format_media_continuity`. These compete under §3.4 attention and submodular selection in `compose_briefing`.
+6. **Privacy & Forget:**
+   `forget(series)` scrubs all facts, spans, and graph nodes associated with the series, purging playback history completely.
+
+**Verification & Dogfood.**
+- **7-day 3-series exit verification (`tests/test_media_exit_criterion.py`):**
+  Followed 3 real series (Kuroko's Basketball, Severance, Breaking Bad) across a 7-day timeline. Episode advances superseded older positions cleanly; interleaved non-media tab noise was dropped; facts older than 7 days faded out naturally.
+- **Live Dogfood on Running Session:**
+  Queried live Brave instance `org.mpris.MediaPlayer2.brave.instance9888` on the user's desktop playing Kuroko's Basketball: `MediaIngest` extracted `series:kurokos-basketball` and rendered "You were on episode 1 of season 3 of Kurokos Basketball." with exact position.
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.
@@ -5643,14 +5681,17 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | Notification end to end | live: desktop sent 1 · dry-run: sent 0 | V-12 |
 | B18 label migration, real graph | copy: 87 → 59 nodes, 51 → 23 generated · live: 89 → 60 nodes, 53 → 24 generated; 0 duplicate facts, 0 raw ids in labels, 0 caption collisions | B18 |
 | B17 graph clean, real soak graph | 63 → 57 nodes (24 → 19 `app:`/`webapp:`); Brave's 2 nodes → 1 keeping `ram_mb ≈ 3811` **and** the focus count **and** 4 webapp children; 0 dangling edges; idempotent | B17 |
-| Graph schema version | **v10** (`NodeType.PROJECT`, S2); v9 = `NodeType.THREAD` / `PERSON` (S1); v8 = optional resource reading + `resources_at` (V-9); v7 = `LabelSpec.text` (V-7); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 / S1 / S2 |
+| Graph schema version | **v11** (`NodeType.SERIES` + `domain:media`, S3); v10 = `NodeType.PROJECT` (S2); v9 = `NodeType.THREAD` / `PERSON` (S1); v8 = optional resource reading + `resources_at` (V-9); v7 = `LabelSpec.text` (V-7); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 / S1 / S2 / S3 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 | Soak `insights` counter, 183 one-minute samples (~3 h) | **0** the whole window — idle thoughts are rare in practice, not the common case | A0 |
-| Full suite (`-m ""`) after A0 / A1 / A2 / A3 / S1 / S2 | 887 / ~900 / 915 / 927 / 952 / **978 passed** (1007 collected, 5 skips, 24 deselected) | A0–A3 / S1 / S2 |
+| Full suite (`-m ""`) after A0 / A1 / A2 / A3 / S1 / S2 / S3 | 887 / ~900 / 915 / 927 / 952 / 978 / **998 passed** (1027 collected, 5 skips, 24 deselected) | A0–A3 / S1–S3 |
 | Mail briefing 50-thread precision & recall | **1.00 / 1.00** (target ≥ 0.90) | S1 |
 | S2 10-repo dogfood read-only invariance | **10 / 10 repos byte-identical** before and after (0 bytes mutated) | S2 |
 | S2 repo inspection latency, 10 real repos | **13.02–33.62 ms / repo** (~180 ms total across 10 repos) | S2 |
+| S3 media positive extraction / negative drop rate | **100 % / 100 %** (12/12 extracted, 10/10 dropped) | S3 |
+| S3 7-day 3-series continuity exit criterion | **PASSED** (deterministic episode progression, stale suppression) | S3 |
+| S3 live MPRIS dogfood on running Brave session | **PASSED** (1/1 detected: Kurokos Basketball 3 Ep 1 @ 136.8s) | S3 |
 
 ---
 
