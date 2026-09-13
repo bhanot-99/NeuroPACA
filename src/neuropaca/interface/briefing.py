@@ -38,6 +38,7 @@ from neuropaca.core.episodes import EpisodeRecord, EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
+from neuropaca.core.media_format import format_media_continuity
 from neuropaca.core.models import Event, Moment, system_error_event
 from neuropaca.core.project_format import format_project_left_off
 from neuropaca.diagnosis.app_identity import AppIdentity
@@ -417,6 +418,56 @@ async def _project_left_off_candidates(
     return items
 
 
+async def _media_continuity_candidates(
+    gm: GraphMemory,
+    store: EpisodeStore,
+    *,
+    now: datetime,
+    stale_days: int = 7,
+) -> list[BriefingItem]:
+    """5. Where you left off in video/audio media (S3 · Media continuity)."""
+    open_facts = await store.at(now)
+    media_facts = [
+        f
+        for f in open_facts
+        if f.kind == str(EpisodeKind.MEDIA_POSITION_FACT) and f.t_invalid is None
+    ]
+    items: list[BriefingItem] = []
+    stale_cutoff = now - timedelta(days=stale_days)
+
+    for fact in media_facts:
+        entity_id = fact.subject
+        if not gm.has_node(entity_id):
+            continue
+
+        if fact.t_valid is not None and fact.t_valid < stale_cutoff:
+            continue
+
+        text = fact.attrs.get("summary_text")
+        if not text:
+            text = format_media_continuity(
+                media_type=fact.attrs.get("media_type", "video"),
+                show=fact.attrs.get("show"),
+                season=fact.attrs.get("season"),
+                episode=fact.attrs.get("episode"),
+                artist=fact.attrs.get("artist"),
+                album=fact.attrs.get("album"),
+                title=fact.attrs.get("title"),
+            )
+        if not text:
+            continue
+
+        items.append(
+            BriefingItem(
+                anchor=entity_id,
+                text=text,
+                evidence=(entity_id,),
+                value=0.0,
+            )
+        )
+    return items
+
+
 async def build_candidates(
     gm: GraphMemory,
     store: EpisodeStore,
@@ -427,7 +478,8 @@ async def build_candidates(
     config: Config | None = None,
 ) -> list[BriefingItem]:
     """Everything the briefing might say, unranked and unfiltered: open threads
-    (from recent focus spans), insights since the last briefing, and mail candidates."""
+    (from recent focus spans), insights since the last briefing, mail, project,
+    and media continuity candidates."""
     recent = await store.between(now - lookback, now)
     since_last = await store.since(last_briefing_seq)
     candidates: list[BriefingItem] = [
@@ -437,6 +489,7 @@ async def build_candidates(
 
     overdue_days = getattr(config, "mail_overdue_days", 3) if config else 3
     resolved_days = getattr(config, "mail_resolved_after_days", 21) if config else 21
+    media_stale_days = getattr(config, "media_stale_days", 7) if config else 7
 
     candidates.extend(await _mail_reply_candidates(gm, store, now=now, lookback=lookback))
     candidates.extend(
@@ -446,6 +499,9 @@ async def build_candidates(
     )
     candidates.extend(await _mail_overdue_person_candidates(gm, store, now=now))
     candidates.extend(await _project_left_off_candidates(gm, store, now=now))
+    candidates.extend(
+        await _media_continuity_candidates(gm, store, now=now, stale_days=media_stale_days)
+    )
     return candidates
 
 
