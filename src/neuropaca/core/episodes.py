@@ -201,11 +201,20 @@ class EpisodeStore:
     async def flush(self) -> bool:
         """Wait for every queued write to land. Bounded like `EventBus.join()`
         (core/event_bus.py) — an undrained queue is reported, not waited out
-        forever, so a caller on the shutdown path never hangs on this."""
-        if self._queue.empty():
-            return True
+        forever, so a caller on the shutdown path never hangs on this.
+
+        Must not fast-path on `self._queue.empty()`: the writer task calls
+        `Queue.get()` (removing the item, so `empty()` is already true) before
+        it runs the blocking `_write_batch_blocking` in a thread and calls
+        `task_done()` — a caller between those two points would see an empty
+        queue and wrongly conclude the write had landed. `Queue.join()` tracks
+        the unfinished-task count instead, which is the only correct signal,
+        and already returns immediately when there is truly nothing pending —
+        there is no correctness-preserving fast path to take here."""
         task = self._writer_task
         if task is None or task.done():
+            if self._queue.empty():
+                return True
             _log.error(
                 "EpisodeStore drain skipped: no live writer task, %d job(s) undelivered",
                 self._queue.qsize(),

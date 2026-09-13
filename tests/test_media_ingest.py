@@ -330,6 +330,82 @@ async def test_media_ingest_pause_resume_span_boundaries(
         GraphMemory._reset_for_tests()
 
 
+async def test_media_ingest_position_refreshes_at_close_not_frozen_at_first_tick(
+    tmp_path: Path, fake_clock: FakeClock
+) -> None:
+    """Regression: identity-only churn suppression must not freeze
+    `position_seconds` at whatever it was the moment an episode was first
+    detected. The stored fact must reflect the real position at the moment
+    playback actually stops (pause here), not the first observation. (The
+    companion case — a forced close that observes nothing new since the last
+    write must not duplicate the fact — is exercised by
+    test_media_ingest_track_change_closes_old_and_opens_new_span, where
+    `stop()` closes a span whose cached reading is already what was written.)"""
+    ingest, _gm, store, bus = await _setup_ingest(tmp_path, fake_clock)
+    try:
+        mpris_list = [{"name": "org.mpris.MediaPlayer2.vlc", "pid": 4444}]
+        status = "Playing"
+        position_us = 15_000_000  # 15s
+
+        def _get_props() -> dict[str, Any]:
+            return {
+                "data": [
+                    {
+                        "PlaybackStatus": {"type": "s", "data": status},
+                        "Position": {"type": "x", "data": position_us},
+                        "Metadata": {
+                            "type": "a{sv}",
+                            "data": {
+                                "xesam:title": {"type": "s", "data": "Severance Episode 9"},
+                                "xesam:artist": {"type": "as", "data": [""]},
+                                "xesam:album": {"type": "s", "data": ""},
+                            },
+                        },
+                    }
+                ]
+            }
+
+        async def mock_run_busctl(*args: str) -> tuple[int, str]:
+            if "list" in args:
+                return 0, json.dumps(mpris_list)
+            if "GetAll" in args:
+                return 0, json.dumps(_get_props())
+            return -1, ""
+
+        ingest._run_busctl = mock_run_busctl  # type: ignore[method-assign,assignment]
+
+        # First detection: position 15s. Identity-level fact written.
+        await ingest.poll_tick()
+
+        # Keep watching — position genuinely advances across several ticks,
+        # but the identity is unchanged, so churn suppression correctly skips
+        # writing a new fact on each of these.
+        for elapsed in (30, 60, 90, 1200):
+            await fake_clock.advance(30.0)
+            position_us = elapsed * 1_000_000
+            await ingest.poll_tick()
+
+        await store.flush()
+        history = await store.for_entity("series:severance")
+        facts = [h for h in history if h.kind == str(EpisodeKind.MEDIA_POSITION_FACT)]
+        assert len(facts) == 1  # still churn-suppressed — no episode/track change yet
+        assert facts[0].attrs["position_seconds"] == pytest.approx(15.0)  # frozen at first tick
+
+        # Now actually stop watching, 1200s (20 min) in.
+        status = "Paused"
+        await ingest.poll_tick()
+        await store.flush()
+
+        history = await store.for_entity("series:severance")
+        facts = [h for h in history if h.kind == str(EpisodeKind.MEDIA_POSITION_FACT)]
+        assert len(facts) == 2  # the close refreshed it — this is the fix
+        assert facts[-1].attrs["position_seconds"] == pytest.approx(1200.0)
+    finally:
+        await bus.stop()
+        await store.stop()
+        GraphMemory._reset_for_tests()
+
+
 async def test_media_ingest_track_change_closes_old_and_opens_new_span(
     tmp_path: Path, fake_clock: FakeClock
 ) -> None:
@@ -518,3 +594,6 @@ async def test_media_ingest_forget_cleanses_facts_spans_and_nodes(
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: 2c7e9ac3

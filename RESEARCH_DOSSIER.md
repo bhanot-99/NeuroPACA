@@ -5546,7 +5546,7 @@ produces:
 | | |
 | --- | --- |
 | **Branch** | `s3-media-continuity` |
-| **Outcome** | Full suite (`pytest -m ""`): 1027 collected, 998 passed, 5 skipped (+20 tests: 8 sensing/invariance in `tests/test_media_ingest.py`, 11 formatting/briefing in `tests/test_media_briefing.py`, 1 multi-series 7-day exit verification in `tests/test_media_exit_criterion.py`). `NodeType.SERIES` added; graph schema bumped v10 → v11 with `domain:media` hub added (12 hubs total). Live Brave MPRIS session successfully sensed with 100% factual accuracy with exact position and allowlist filtering. |
+| **Outcome** | Full suite (`pytest -m ""`): 1033 collected, 1028 passed, 5 skipped (9 sensing/invariance in `tests/test_media_ingest.py`, 11 formatting/briefing in `tests/test_media_briefing.py`, 1 multi-series 7-day exit verification in `tests/test_media_exit_criterion.py`, plus 1 new `EpisodeStore.flush()` regression in `tests/test_episodes.py` — see "What the review caught"). `NodeType.SERIES` added; graph schema bumped v10 → v11 with `domain:media` hub added (12 hubs total). Live Brave MPRIS session successfully sensed with 100% factual accuracy; `position_seconds` is captured and refreshed at every real stopping point (pause/stop/track-change/shutdown), stored in the fact record — not yet rendered into the briefing text, which states episode/track identity only. Hardened through two review passes — see "What the review caught" below. |
 
 **In plain words.** "You were on episode 1 of season 3 of Example Anime." / "You were listening to A Night at the Opera by Queen." Deterministic, extractive, grounded — remembers where you stopped in what you watch and listen to, without allowing raw browser tab titles to pollute the graph.
 
@@ -5563,7 +5563,7 @@ The bounded spike (`spikes/s3_media_collector/`) probed real MPRIS session bus s
    - *Video:* Raw titles from browser tabs (`xesam:title`) are filtered strictly through configurable allowlist patterns in `data/media_title_patterns.default.toml` (`s_e_compact`, `season_episode_verbose`, `show_num_episode_num`, `episode_only_verbose`, `ep_compact`, `hash_episode`). Unmatched titles are dropped entirely; raw title strings never leak into GraphMemory.
 3. **Episodic Spans & Superseding Facts:**
    - Active playback (`PlaybackStatus == "Playing"`) opens an `EpisodeKind.MEDIA_SPAN`. Transitioning to `Paused`, `Stopped`, or track switch closes the span with true duration.
-   - Exact resume positions are recorded as `EpisodeKind.MEDIA_POSITION_FACT`. Consecutive polls on the same state suppress churn (`_last_state` cache). When position/episode updates, a new fact supersedes the previous one.
+   - `EpisodeKind.MEDIA_POSITION_FACT` is superseded on two triggers: identity change (show/season/episode/artist/album/title — churn-suppressed via `_last_state`, so continuous playback of the same episode writes nothing new tick after tick), and span close (pause/stop/track-change/shutdown), which force-refreshes the position to the real stopping point rather than letting `_last_state`'s identity-only suppression freeze it at first detection — but only when that reading actually differs from what was last written (`_last_written`), so a close that observes nothing new never duplicates a fact.
 4. **Graph Memory & Schema v11:**
    Schema bumped from v10 to v11. Adds `NodeType.SERIES` and seeds `domain:media` as the 11th domain hub (`YOU` + 11 domains = 12 total hubs). Entities are wired via `RelationType.PART_OF` to `domain:media`.
 5. **Briefing Continuity (`src/neuropaca/interface/briefing.py`):**
@@ -5575,7 +5575,17 @@ The bounded spike (`spikes/s3_media_collector/`) probed real MPRIS session bus s
 - **7-day 3-series progression simulation (`tests/test_media_exit_criterion.py`):**
   Simulated 3 series (Example Anime, Severance, Breaking Bad) across a 7-day timeline fixture. Episode advances superseded older positions cleanly; interleaved non-media tab noise was dropped; facts older than 7 days faded out naturally. Full exit criterion awaits accumulating real multi-day lived usage.
 - **Live Dogfood on Running Session:**
-  Queried live Brave instance on user desktop playing media: `MediaIngest` extracted structured series metadata and rendered deterministic continuity statement with exact position.
+  Queried live Brave instance on user desktop playing media: `MediaIngest` extracted structured series metadata and rendered a deterministic continuity statement; the exact position at that moment was captured into the stored fact (rendering it into the briefing text is a natural follow-up, not yet built).
+
+**What the review caught.**
+Two review passes before merge, neither surfaced by the initial passing suite because the tests exercised shapes or timings the bug didn't touch:
+- **Privacy (pass 1):** the spike and test fixtures had committed the author's actual live MPRIS session — a real anime title, real PID — into a *public* repository. Scrubbed to a synthetic example ("Example Anime", PID 1234) everywhere; `run_spike.py` now takes its corpus via `--corpus`/CLI arguments instead of hardcoding it.
+- **10k-fixture staleness (pass 1):** `domain:media` is the 12th hub; two stress/perf tests hardcoded the fixture's total node count as a bare `10_011` literal, missed when four *other* hub-count assertions were correctly updated. Root-caused to the fixture cache having no staleness check at all (`if not FIXTURE_PATH.exists()`). Fixed with `ensure_fixture()` — validates schema version and node/edge counts, regenerates on any mismatch — so the next phase's domain addition can't silently repeat this.
+- **V-10 relapse (pass 1):** `poll_tick` called `upsert_node` unconditionally every poll (every 30s while playing — ~10x S2's rate), inflating `activity`/`access_count` from mere polling. Fixed to `mark_seen` on existing nodes, matching the corrected `ProjectIngest` pattern.
+- **Broken churn suppression, then a residual gap (pass 1, refined in pass 2):** including `position_seconds` in the churn key defeated suppression entirely (position advances every tick, so almost every tick looked "new"). Pass 1 removed position from the key — correct, but as a side effect froze the stored position at the *first* tick an episode was detected, since nothing else ever triggered a refresh. Pass 2 added a forced refresh at span close (pause/stop/track-change/shutdown) using the last real observation, gated by a second cache (`_last_written`, identity + rounded position) so a close that observed nothing new since the last write doesn't duplicate the fact. Regression test drives an advancing position across several suppressed ticks, then a real stop, and asserts the stored value is the stop-time position, not the first one.
+- **A real `EpisodeStore.flush()` race, found while writing that regression test:** `flush()` fast-pathed on `Queue.empty()`, but the writer task calls `Queue.get()` (emptying the queue) *before* running the blocking insert in a thread and calling `task_done()` — a caller in that window sees an empty queue and wrongly concludes the write landed. This is S0 infrastructure every phase's tests rely on (`await store.flush()` then read back), not S3-specific; only S3's particular access pattern (many `FakeClock.advance()` yields) reliably exposed the window. Fixed to always `Queue.join()` when a writer task is alive — correct and free for the already-empty case, since `join()` already returns immediately with zero unfinished tasks. New deterministic regression test in `tests/test_episodes.py` forces the exact race (a monkeypatched slow write + one `asyncio.sleep(0)`) and fails reliably on the old code.
+- **Exit criterion (pass 1):** reset from a self-graded `[x]` to `[ ]` with an honest note — the mechanical/simulated verification is real, but "checked by the user" on real multi-day usage has not happened.
+- **Constructor, dead code, import placement (pass 1):** collapsed the redundant `store`/`episode_store` constructor parameters to one; removed a `Config.validate()` method that did nothing and was never meaningfully called; moved a stray function-local `import re` to module scope.
 
 ---
 
@@ -5691,7 +5701,7 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | S2 repo inspection latency, 10 real repos | **13.02–33.62 ms / repo** (~180 ms total across 10 repos) | S2 |
 | S3 media positive extraction / negative drop rate | **100 % / 100 %** (12/12 extracted, 10/10 dropped) | S3 |
 | S3 7-day 3-series continuity simulation fixture | **PASSED** (deterministic episode progression, stale suppression; lived usage pending) | S3 |
-| S3 live MPRIS dogfood on running Brave session | **PASSED** (1/1 detected live session @ exact position) | S3 |
+| S3 live MPRIS dogfood on running Brave session | **PASSED** (1/1 detected live session, position captured in the stored fact) | S3 |
 
 ---
 

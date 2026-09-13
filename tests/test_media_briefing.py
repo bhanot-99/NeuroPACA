@@ -332,3 +332,6 @@ async def test_media_briefing_end_to_end_with_sensor(tmp_path: Path, fake_clock:
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: 5f10acd4

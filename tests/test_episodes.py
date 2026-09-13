@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 from neuropaca.core.enums import EpisodeKind
@@ -32,6 +34,32 @@ async def test_span_round_trips_and_at_finds_it(tmp_path) -> None:
     assert hits[0].episode_seq == 1
 
     assert await store.at(_T0 - timedelta(minutes=1)) == []
+    await store.stop()
+
+
+async def test_flush_waits_for_the_write_to_actually_land_not_just_dequeue(tmp_path) -> None:
+    """Found while hardening S3 (`MediaIngest`): `flush()` must not treat
+    `Queue.empty()` as "the write landed" — the writer task calls
+    `Queue.get()` (which makes `empty()` true) *before* it runs the blocking
+    insert in a thread and calls `task_done()`. A caller between those two
+    points would see an empty queue and wrongly conclude the row is on disk.
+    `Queue.join()` (tracking the unfinished-task count, not queue length) is
+    the only correct signal — this forces exactly that race window and
+    asserts the row is actually queryable the instant `flush()` returns."""
+    store = await _store(tmp_path)
+    real_write = store._write_batch_blocking
+
+    def slow_write(batch):
+        time.sleep(0.05)  # the write is genuinely still in flight when dequeued
+        real_write(batch)
+
+    store._write_batch_blocking = slow_write  # type: ignore[method-assign]
+
+    store.record_span(EpisodeKind.FOCUS_SPAN, "app:code", _T0, _T0 + timedelta(minutes=30))
+    await asyncio.sleep(0)  # let the writer task dequeue the job (Queue.empty() -> True)
+
+    assert await store.flush() is True
+    assert await store.at(_T0 + timedelta(minutes=10)) != []  # must already be on disk
     await store.stop()
 
 

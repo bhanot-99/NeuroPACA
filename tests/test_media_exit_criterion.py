@@ -304,3 +304,6 @@ async def test_s3_exit_criterion_three_series_over_a_week(tmp_path: Path) -> Non
         await bus.stop()
         await store.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: 1676b7c1

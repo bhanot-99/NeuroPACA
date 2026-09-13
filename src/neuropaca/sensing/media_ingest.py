@@ -103,10 +103,19 @@ class MediaIngest(BaseModule):
         self._spans_written = 0
         self._titles_dropped = 0
 
-        # Bookkeeping: active open spans: player_service -> (entity_id, start_time)
-        self._open_spans: dict[str, tuple[str, datetime]] = {}
-        # Fact churn suppression: entity_id -> state_key
+        # Bookkeeping: active open spans: player_service -> (entity_id, start_time,
+        # last extracted media dict — kept fresh every tick so a span that closes
+        # without a fresh read this tick (player vanished) can still refresh the
+        # position fact from the last real observation, not the first one).
+        self._open_spans: dict[str, tuple[str, datetime, dict[str, Any]]] = {}
+        # Fact churn suppression: entity_id -> identity state_key (show/season/
+        # episode/artist/album/title — never position, see _assert_position_fact).
         self._last_state: dict[str, tuple[Any, ...]] = {}
+        # entity_id -> identity + rounded position of the last fact actually
+        # written. A forced (span-close) refresh skips the write when this is
+        # unchanged — nothing new was observed since the last write, so
+        # forcing one anyway would just be a redundant duplicate.
+        self._last_written: dict[str, tuple[Any, ...]] = {}
 
         self._cleanup_regex: re.Pattern[str] = re.compile(_FALLBACK_SUFFIXES, re.IGNORECASE)
         self._compiled_patterns: list[tuple[str, re.Pattern[str]]] = [
@@ -168,12 +177,15 @@ class MediaIngest(BaseModule):
                 pass
             self._poll_task = None
 
-        # Close any remaining open spans on shutdown
+        # Close any remaining open spans on shutdown, refreshing each one's
+        # position fact to the last real observation rather than leaving it
+        # frozen at whenever the episode/track was first detected.
         now = self._clock.now()
-        for _player, (entity_id, start_time) in list(self._open_spans.items()):
+        for _player, (entity_id, start_time, last_extracted) in list(self._open_spans.items()):
             if self._store is not None:
                 self._store.record_span(EpisodeKind.MEDIA_SPAN, entity_id, start_time, now)
                 self._spans_written += 1
+            self._assert_position_fact(entity_id, last_extracted, now, force=True)
         self._open_spans.clear()
 
     def health(self) -> ModuleHealth:
@@ -339,6 +351,77 @@ class MediaIngest(BaseModule):
                     continue
         return active
 
+    def _assert_position_fact(
+        self,
+        entity_id: str,
+        extracted: dict[str, Any],
+        now: datetime,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Write `EpisodeKind.MEDIA_POSITION_FACT` when the media identity
+        changed since the last write, or — when `force` (span close: pause /
+        stop / track-change / shutdown) — when the position has moved since
+        the last write, so the recorded position is the real stopping point
+        rather than frozen at first detection. A forced call whose reading is
+        byte-identical to what's already recorded is a no-op: nothing new was
+        observed since the last write (e.g. it closed on the very next tick),
+        so writing again would just be a redundant duplicate."""
+        media_type = extracted["media_type"]
+        show = extracted["show"]
+        season = extracted["season"]
+        episode = extracted["episode"]
+        artist = extracted["artist"]
+        album = extracted["album"]
+        title = extracted["title"]
+        pos_s = extracted["position_seconds"]
+        dur_s = extracted["duration_seconds"]
+        label = extracted["label"]
+        state_key: tuple[Any, ...] = (media_type, show, season, episode, artist, album, title)
+        written_key: tuple[Any, ...] = (*state_key, round(pos_s))
+
+        if force:
+            if self._last_written.get(entity_id) == written_key:
+                return False
+        elif self._last_state.get(entity_id) == state_key:
+            return False
+
+        self._last_state[entity_id] = state_key
+        self._last_written[entity_id] = written_key
+        if self._store is None:
+            return False
+
+        summary_text = format_media_continuity(
+            media_type=media_type,
+            show=show,
+            season=season,
+            episode=episode,
+            artist=artist,
+            album=album,
+            title=title,
+        )
+        self._store.assert_fact(
+            EpisodeKind.MEDIA_POSITION_FACT,
+            entity_id,
+            str(episode if episode is not None else title or label),
+            valid_from=now,
+            source="mpris",
+            attrs={
+                "media_type": media_type,
+                "show": show,
+                "season": season,
+                "episode": episode,
+                "artist": artist,
+                "album": album,
+                "title": title,
+                "position_seconds": pos_s,
+                "duration_seconds": dur_s,
+                "summary_text": summary_text,
+            },
+        )
+        self._facts_written += 1
+        return True
+
     async def poll_tick(self) -> int:
         """One scan across active MPRIS media players."""
         now = self._clock.now()
@@ -350,13 +433,15 @@ class MediaIngest(BaseModule):
         players = await self._query_active_players()
         active_player_names = {svc for svc, _ in players}
 
-        # 1. Close open spans for players that are no longer active
+        # 1. Close open spans for players that are no longer active — refresh
+        # the position fact from the last real observation before dropping it.
         for svc in list(self._open_spans.keys()):
             if svc not in active_player_names:
-                entity_id, start_time = self._open_spans.pop(svc)
+                entity_id, start_time, last_extracted = self._open_spans.pop(svc)
                 if self._store is not None:
                     self._store.record_span(EpisodeKind.MEDIA_SPAN, entity_id, start_time, now)
                     self._spans_written += 1
+                self._assert_position_fact(entity_id, last_extracted, now, force=True)
 
         facts_this_tick = 0
 
@@ -367,23 +452,22 @@ class MediaIngest(BaseModule):
 
             extracted = self.extract_media(metadata, position_us=position_us)
             if extracted is None:
-                # No valid media or dropped title; if player had open span, close it
+                # No valid media or dropped title; if player had open span, close
+                # it and refresh its position fact from the last good reading.
                 if svc in self._open_spans:
-                    entity_id, start_time = self._open_spans.pop(svc)
+                    entity_id, start_time, last_extracted = self._open_spans.pop(svc)
                     if self._store is not None:
                         self._store.record_span(EpisodeKind.MEDIA_SPAN, entity_id, start_time, now)
                         self._spans_written += 1
+                    if self._assert_position_fact(entity_id, last_extracted, now, force=True):
+                        facts_this_tick += 1
                 continue
 
             media_type = extracted["media_type"]
             show = extracted["show"]
-            season = extracted["season"]
-            episode = extracted["episode"]
-            artist = extracted["artist"]
             album = extracted["album"]
+            artist = extracted["artist"]
             title = extracted["title"]
-            pos_s = extracted["position_seconds"]
-            dur_s = extracted["duration_seconds"]
 
             # Generate entity ID and label
             if media_type == "video" and show:
@@ -393,66 +477,50 @@ class MediaIngest(BaseModule):
                 music_name = album or artist or title or "music"
                 entity_id = f"series:{series_slug(music_name)}"
                 label = music_name
-            state_key: tuple[Any, ...] = (media_type, show, season, episode, artist, album, title)
+            extracted["label"] = label
 
             # Span management
             if playback_status == "Playing":
                 if svc in self._open_spans:
-                    old_entity_id, start_time = self._open_spans[svc]
+                    old_entity_id, start_time, old_extracted = self._open_spans[svc]
                     if old_entity_id != entity_id:
-                        # Track/show changed: close previous span, start new one
+                        # Track/show changed: close previous span (refreshing its
+                        # final position), start a new one.
                         if self._store is not None:
                             self._store.record_span(
                                 EpisodeKind.MEDIA_SPAN, old_entity_id, start_time, now
                             )
                             self._spans_written += 1
-                        self._open_spans[svc] = (entity_id, now)
+                        closed = self._assert_position_fact(
+                            old_entity_id, old_extracted, now, force=True
+                        )
+                        if closed:
+                            facts_this_tick += 1
+                        self._open_spans[svc] = (entity_id, now, extracted)
+                    else:
+                        # Same episode/track still playing — keep the cached
+                        # reading fresh for whenever this span eventually closes.
+                        self._open_spans[svc] = (entity_id, start_time, extracted)
                 else:
-                    self._open_spans[svc] = (entity_id, now)
+                    self._open_spans[svc] = (entity_id, now, extracted)
+
+                # Superseding fact, churn-suppressed on identity — the position
+                # itself is refreshed for real when the span eventually closes.
+                if self._assert_position_fact(entity_id, extracted, now):
+                    facts_this_tick += 1
             else:
-                # Paused or Stopped
+                # Paused or Stopped — this tick's reading is the real stopping
+                # position, so refresh it here (forced) rather than waiting for
+                # a possibly much later close-from-inactivity tick.
                 if svc in self._open_spans:
-                    old_entity_id, start_time = self._open_spans.pop(svc)
+                    old_entity_id, start_time, _old_extracted = self._open_spans.pop(svc)
                     if self._store is not None:
                         self._store.record_span(
                             EpisodeKind.MEDIA_SPAN, old_entity_id, start_time, now
                         )
                         self._spans_written += 1
-
-            # Fact management (superseding facts with churn suppression)
-            if self._last_state.get(entity_id) != state_key:
-                self._last_state[entity_id] = state_key
-                if self._store is not None:
-                    summary_text = format_media_continuity(
-                        media_type=media_type,
-                        show=show,
-                        season=season,
-                        episode=episode,
-                        artist=artist,
-                        album=album,
-                        title=title,
-                    )
-                    self._store.assert_fact(
-                        EpisodeKind.MEDIA_POSITION_FACT,
-                        entity_id,
-                        str(episode if episode is not None else title or label),
-                        valid_from=now,
-                        source="mpris",
-                        attrs={
-                            "media_type": media_type,
-                            "show": show,
-                            "season": season,
-                            "episode": episode,
-                            "artist": artist,
-                            "album": album,
-                            "title": title,
-                            "position_seconds": pos_s,
-                            "duration_seconds": dur_s,
-                            "summary_text": summary_text,
-                        },
-                    )
-                    self._facts_written += 1
-                    facts_this_tick += 1
+                    if self._assert_position_fact(entity_id, extracted, now, force=True):
+                        facts_this_tick += 1
 
             # GraphMemory integration
             if self._gm is not None:
@@ -480,11 +548,12 @@ class MediaIngest(BaseModule):
         entity_id = series if series.startswith("series:") else f"series:{series_slug(series)}"
 
         # Close and remove any active open spans
-        for svc, (span_entity, _start_time) in list(self._open_spans.items()):
+        for svc, (span_entity, _start_time, _extracted) in list(self._open_spans.items()):
             if span_entity == entity_id:
                 del self._open_spans[svc]
 
         self._last_state.pop(entity_id, None)
+        self._last_written.pop(entity_id, None)
 
         forgotten = 0
         if self._store is not None:
@@ -494,3 +563,6 @@ class MediaIngest(BaseModule):
             await self._gm.delete_node(entity_id)
 
         return forgotten
+
+
+# gen-ref: 35aa005c

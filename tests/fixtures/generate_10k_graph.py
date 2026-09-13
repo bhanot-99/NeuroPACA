@@ -6,7 +6,10 @@
 Produces the exact on-disk form `GraphMemory.load()` consumes (Architecture.md
 §3.2). Topology:
 
-- 11 protected hubs: ``YOU`` + ``domain:{slug}`` for the 10 master domains
+- the protected hubs: ``YOU`` + one ``domain:{slug}`` per master domain
+  (``len(HUB_NODE_IDS)``, currently 12 — grows by one whenever a phase adds a
+  domain; ``ensure_fixture`` regenerates this file when that count, or the
+  schema version, no longer matches)
 - exactly 10 000 ``leaf:NNNNN`` nodes
 - ~25 000 directed edges; ~20 % are incident to a hub, to mimic the dense
   behavioural routing the real graph develops around ``YOU`` and the domains
