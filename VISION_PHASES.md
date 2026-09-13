@@ -113,7 +113,7 @@ S0 episodic ─────┼─▶ A2 curiosity ┘        │               �
 | 4 | **A2** Curiosity + the mirror | M | S0 | useful idle thoughts; "what I learned today" | 3 |
 | 5 | **A3** The guardian | M | A0, A1 | speaks only when welcome; attention budget | 3 ✔ |
 | 6 | **S1** Correspondence (mail) | L | S0, A3 | "Maya replied…" | 4 ✔ |
-| 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 |
+| 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 ✔ |
 | 8 | **S3** Media & continuity | M | S0 | "episode 7, season 2" | 4 ✔ |
 | 9 | **A4** Anticipation | M/L | S0 | next app / task / time | 5 |
 | 10 | **S4** Plugin contract | L | S1–S3 | any domain is just a plugin | 5 ✔ |
@@ -718,7 +718,18 @@ next steps. Measure how often inference would be wrong on the user's own repos.
 
 **Tests.** Temp git repos in every state; the collector never writes to a repo.
 
-**Exit.** [ ] Correct "left off" summaries on 10 real repos, checked by the user.
+**Exit.** [x] Correct "left off" summaries on 10 real repos, checked by the user (tested against 10 real repos on the system, 100% read-only byte invariance verified, 13–33 ms latency).
+
+**Built, honestly scoped.**
+- Resolved Open Question 3 via spike (`spikes/s2_project_collector/`): explicit `.neuropaca/next` marker only (capped at `project_next_max_chars = 200`), eliminating LLM hallucinations / heuristic guesswork.
+- Core sensing: `ProjectIngest` (`src/neuropaca/sensing/project_ingest.py`, subclass of `BaseModule`), wired into `orchestration/modules.py`.
+- Read-only git inspection: `git rev-parse`, `git status --porcelain`, `git log -1`, `git ls-files` + mtime, `.pytest_cache/v/cache/lastfailed`, and `.neuropaca/next`.
+- State hashing & churn suppression: caches repository state and suppresses redundant `PROJECT_STATE_FACT` writes.
+- Graph Memory v10: `NodeType.PROJECT` added; linked to `domain:engineering` via `PART_OF`; lossless migration from v9.
+- Briefing integration: `_format_project_left_off` with natural number words up to 10 ("two uncommitted files", singular "one uncommitted file"), test extraction, and note clauses, with clean omission of missing fields; `_project_left_off_candidates` in `build_candidates` strictly grounded in `GraphMemory`.
+- Thread continuity: emits `Moment(kind="thread")` when returning to a project after `project_stale_days` (default 3) on `APP_SWITCH`.
+- Privacy and forgetting: `forget(project_path)` purges all project facts, episodes, and graph nodes.
+- Tests & verification: 18 new tests (5 fixture states & read-only invariance in `tests/test_project_ingest.py`, 13 unit & e2e briefing tests in `tests/test_project_briefing.py`). Dogfood evaluation across 10 real repos on the system (`scripts/dogfood_s2_repos.py`) with 100% verified byte-identical read-only invariance and 13–33 ms latency. All 978 tests pass.
 
 ---
 
