@@ -106,7 +106,7 @@ class Moment:
     `MOMENT_FEEDBACK`.
     """
 
-    kind: str  # "welcome_back" | "briefing" | "mirror" | "offer" | "nudge"
+    kind: str  # "welcome_back" | "briefing" | "mirror" | "offer" | "nudge" | "thread"
     text: str  # rendered, deterministic, grounded
     evidence: tuple[str, ...]  # graph node ids / episode ids every claim rests on
     value: float  # V(m) in VISION.md §3.6 — how much it is worth saying

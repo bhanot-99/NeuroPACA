@@ -36,6 +36,7 @@ from neuropaca.core.labels import (
     disambiguate,
     fact_id,
     fingerprint,
+    leaf_name,
     render,
 )
 from neuropaca.core.models import Event
@@ -214,7 +215,7 @@ async def test_v4_graph_migrates_to_facts(tmp_path: Path) -> None:
 
     await gm.save()
     saved = json.loads(path.read_text())
-    assert saved["schema_version"] == 9  # saved by the current (S1) build
+    assert saved["schema_version"] == 10  # saved by the current (S2) build
     reloaded = GraphMemory(path)
     await reloaded.load()
     assert sorted(reloaded.node_ids) == sorted(gm.node_ids), "v5 round-trips unchanged"
@@ -336,6 +337,16 @@ async def test_dmn_seeds_never_include_l8_probes(tmp_path: Path) -> None:
     await gm.update_node(probe.id, {"relevance_score": 9.0})
     top = gm.top_nodes_by_score(5, exclude_prefixes=("ephemeral:",))
     assert [n.id for n in top] == ["app:brave"]
+
+
+def test_leaf_name_renders_project_prefix() -> None:
+    assert leaf_name("project:neuropaca", "NeuroPaca") == "Neuropaca"
+    assert leaf_name("project:my_cool_project", "") == "My Cool Project"
+    assert leaf_name("project:syskon", "syskon") == "Syskon"
+    assert leaf_name("person:alice", "") == "Alice"
+    assert leaf_name("app:code", "") == "VS Code"
+    assert leaf_name("domain:engineering", "") == "Engineering"
+    assert leaf_name("YOU", "") == "You"
 
 
 # gen-ref: b18-labels-tests

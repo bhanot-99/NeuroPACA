@@ -91,7 +91,9 @@ from neuropaca.core.models import Edge, Node
 # always "never measured", and `last_seen_at` was exactly the reading's time.
 # v9 (S1): NodeType.THREAD added for email correspondence threads (precedent:
 # B14 NodeType.WEBAPP).
-_SCHEMA_VERSION = 9
+# v10 (S2): NodeType.PROJECT added for software projects / repositories (precedent:
+# S1 NodeType.THREAD).
+_SCHEMA_VERSION = 10
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
 
 # V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.

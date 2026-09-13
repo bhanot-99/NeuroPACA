@@ -52,8 +52,8 @@ async def _setup(
     return ingest, gm, store, bus
 
 
-async def test_schema_version_is_v9() -> None:
-    assert graph_schema_version() == 9
+async def test_schema_version_is_at_least_v9() -> None:
+    assert graph_schema_version() >= 9
 
 
 async def test_mail_ingest_spool_conversion_and_watermark(
