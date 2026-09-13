@@ -372,6 +372,90 @@ async def _mail_overdue_person_candidates(
     return items
 
 
+_NUM_WORDS: dict[int, str] = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+}
+
+
+def _format_project_left_off(
+    name: str,
+    branch: str,
+    dirty_count: int,
+    last_failing_tests: list[str],
+    next_note: str | None,
+) -> str:
+    clauses: list[str] = []
+    base = f"You left {name} on {branch}"
+    if dirty_count > 0:
+        count_str = _NUM_WORDS.get(dirty_count, str(dirty_count))
+        file_str = "file" if dirty_count == 1 else "files"
+        base += f" with {count_str} uncommitted {file_str}"
+    clauses.append(base)
+
+    if last_failing_tests:
+        last_test = last_failing_tests[-1]
+        test_name = last_test.split("::")[-1]
+        clauses.append(f"the last failing test was {test_name}")
+
+    if next_note:
+        clauses.append(f"your note says: {next_note}")
+
+    return "; ".join(clauses) + "."
+
+
+async def _project_left_off_candidates(
+    gm: GraphMemory,
+    store: EpisodeStore,
+    *,
+    now: datetime,
+) -> list[BriefingItem]:
+    """4. Where you left off in software projects (S2 · Projects)."""
+    open_facts = await store.at(now)
+    project_facts = [
+        f
+        for f in open_facts
+        if f.kind == str(EpisodeKind.PROJECT_STATE_FACT) and f.t_invalid is None
+    ]
+    items: list[BriefingItem] = []
+
+    for fact in project_facts:
+        project_entity = fact.subject
+        if not gm.has_node(project_entity):
+            continue
+
+        branch = fact.attrs.get("branch") or fact.object or "main"
+        name = fact.attrs.get("repo_name") or gm.display_name(project_entity)
+        dirty_count = int(fact.attrs.get("dirty_count", 0))
+        last_failing_tests = fact.attrs.get("last_failing_tests") or []
+        next_note = fact.attrs.get("next_note")
+
+        text = _format_project_left_off(
+            name=name,
+            branch=branch,
+            dirty_count=dirty_count,
+            last_failing_tests=last_failing_tests,
+            next_note=next_note,
+        )
+        items.append(
+            BriefingItem(
+                anchor=project_entity,
+                text=text,
+                evidence=(project_entity,),
+                value=0.0,
+            )
+        )
+    return items
+
+
 async def build_candidates(
     gm: GraphMemory,
     store: EpisodeStore,
@@ -400,6 +484,7 @@ async def build_candidates(
         )
     )
     candidates.extend(await _mail_overdue_person_candidates(gm, store, now=now))
+    candidates.extend(await _project_left_off_candidates(gm, store, now=now))
     return candidates
 
 
