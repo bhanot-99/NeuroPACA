@@ -30,6 +30,9 @@ than a live request, for `scripts/neuropaca_tray.py`.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from neuropaca.action.executor import ActionExecutor
 from neuropaca.agents.supervisor import AgentSupervisor
 from neuropaca.core.base_module import BaseModule
@@ -54,8 +57,20 @@ from neuropaca.sensing.collectors.process import ProcessCollector
 from neuropaca.sensing.collectors.system import SystemMetricCollector
 from neuropaca.sensing.mail_ingest import MailIngest
 from neuropaca.sensing.media_ingest import MediaIngest
+from neuropaca.sensing.plugin_host import Plugin, PluginHost
 from neuropaca.sensing.project_ingest import ProjectIngest
 from neuropaca.sensing.raw_recorder import RawMetricsRecorder
+
+
+def _ensure_repo_root_importable() -> None:
+    """`plugins/` (S4 domain plugins) lives outside the installed `neuropaca`
+    package — a normal `neuropaca daemon` process (not `python script.py`)
+    doesn't get the repo root on `sys.path` for free, so importing
+    `plugins.*` fails unless it's added explicitly. Idempotent; cheap enough
+    to call unconditionally rather than duplicate the try/except per plugin."""
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 
 def build_modules(
@@ -148,6 +163,39 @@ def build_modules(
         modules.append(ProjectIngest(event_bus, config, graph_memory, episode_store=episode_store))
     if config.media_tracking_enabled:
         modules.append(MediaIngest(event_bus, config, graph_memory, episode_store=episode_store))
+
+    domain_plugins: list[Plugin] = []
+    if config.calendar_enabled or config.reading_enabled:
+        _ensure_repo_root_importable()
+    if config.calendar_enabled:
+        from plugins.calendar.calendar_plugin import CalendarPlugin
+
+        domain_plugins.append(
+            CalendarPlugin(
+                calendar_path=config.calendar_ics_path,
+                poll_interval=config.calendar_poll_interval_seconds,
+            )
+        )
+    if config.reading_enabled:
+        from plugins.reading.reading_plugin import ReadingListPlugin
+
+        domain_plugins.append(
+            ReadingListPlugin(
+                reading_list_path=config.reading_list_path,
+                poll_interval=config.reading_poll_interval_seconds,
+            )
+        )
+    if domain_plugins:
+        modules.append(
+            PluginHost(
+                event_bus,
+                config,
+                graph_memory,
+                episode_store=episode_store,
+                plugins=domain_plugins,
+                name="domain_plugins",
+            )
+        )
     modules.append(diagnosis)
     modules.append(learning)
     modules.append(drive)

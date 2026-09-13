@@ -133,6 +133,10 @@ class EpisodeKind(StrEnum):
     # S3 · media and continuity (VISION_PHASES.md).
     MEDIA_SPAN = auto()
     MEDIA_POSITION_FACT = auto()
+    # S4 · domain plugins (VISION_PHASES.md).
+    PLUGIN_SPAN = auto()
+    PLUGIN_FACT = auto()
+    MEETING_SPAN = auto()
 
 
 class NodeType(StrEnum):

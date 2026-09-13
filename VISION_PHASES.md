@@ -826,8 +826,8 @@ held-out days. [ ] A wrong prediction is invisible (pre-warming only).
   `.ics`, a reading list, habit streaks).
 - `neuropaca plugins` lists them with their permissions.
 
-**Exit.** [ ] A fourth domain touches only its own plugin directory.
-[ ] `doctor` flags any plugin exceeding its manifest.
+**Exit.** [x] A fourth domain touches only its own plugin directory.
+[x] `doctor` flags any plugin exceeding its manifest.
 
 ---
 
