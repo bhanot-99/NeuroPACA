@@ -39,6 +39,7 @@ from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, Moment, system_error_event
+from neuropaca.core.project_format import format_project_left_off
 from neuropaca.diagnosis.app_identity import AppIdentity
 
 _log = logging.getLogger(__name__)
@@ -372,6 +373,50 @@ async def _mail_overdue_person_candidates(
     return items
 
 
+async def _project_left_off_candidates(
+    gm: GraphMemory,
+    store: EpisodeStore,
+    *,
+    now: datetime,
+) -> list[BriefingItem]:
+    """4. Where you left off in software projects (S2 · Projects)."""
+    open_facts = await store.at(now)
+    project_facts = [
+        f
+        for f in open_facts
+        if f.kind == str(EpisodeKind.PROJECT_STATE_FACT) and f.t_invalid is None
+    ]
+    items: list[BriefingItem] = []
+
+    for fact in project_facts:
+        project_entity = fact.subject
+        if not gm.has_node(project_entity):
+            continue
+
+        branch = fact.attrs.get("branch") or fact.object or "main"
+        name = fact.attrs.get("repo_name") or gm.display_name(project_entity)
+        dirty_count = int(fact.attrs.get("dirty_count", 0))
+        last_failing_tests = fact.attrs.get("last_failing_tests") or []
+        next_note = fact.attrs.get("next_note")
+
+        text = format_project_left_off(
+            name=name,
+            branch=branch,
+            dirty_count=dirty_count,
+            last_failing_tests=last_failing_tests,
+            next_note=next_note,
+        )
+        items.append(
+            BriefingItem(
+                anchor=project_entity,
+                text=text,
+                evidence=(project_entity,),
+                value=0.0,
+            )
+        )
+    return items
+
+
 async def build_candidates(
     gm: GraphMemory,
     store: EpisodeStore,
@@ -400,6 +445,7 @@ async def build_candidates(
         )
     )
     candidates.extend(await _mail_overdue_person_candidates(gm, store, now=now))
+    candidates.extend(await _project_left_off_candidates(gm, store, now=now))
     return candidates
 
 

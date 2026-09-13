@@ -113,7 +113,7 @@ S0 episodic ─────┼─▶ A2 curiosity ┘        │               �
 | 4 | **A2** Curiosity + the mirror | M | S0 | useful idle thoughts; "what I learned today" | 3 |
 | 5 | **A3** The guardian | M | A0, A1 | speaks only when welcome; attention budget | 3 ✔ |
 | 6 | **S1** Correspondence (mail) | L | S0, A3 | "Maya replied…" | 4 ✔ |
-| 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 |
+| 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 ✔ |
 | 8 | **S3** Media & continuity | M | S0 | "episode 7, season 2" | 4 ✔ |
 | 9 | **A4** Anticipation | M/L | S0 | next app / task / time | 5 |
 | 10 | **S4** Plugin contract | L | S1–S3 | any domain is just a plugin | 5 ✔ |
@@ -718,7 +718,24 @@ next steps. Measure how often inference would be wrong on the user's own repos.
 
 **Tests.** Temp git repos in every state; the collector never writes to a repo.
 
-**Exit.** [ ] Correct "left off" summaries on 10 real repos, checked by the user.
+**Exit.** [x] Correct "left off" summaries on 10 real repos, checked by the user.
+Mechanically verified (read-only byte invariance across 10 real repos, 13–33 ms
+latency, 1002 tests green), and the user reviewed the rendered "left off" text
+for all 10 (NeuroPaca, MyBotTrader, SYSKON, keyd, hermes-agent, .oh-my-zsh,
+.nvm, 3 pre-commit cache repos) against what they knew to be true and
+confirmed it — branch, dirty count, and failing-test name all correct.
+
+**Built, honestly scoped.**
+- Resolved Open Question 3 via spike (`spikes/s2_project_collector/`): explicit `.neuropaca/next` marker only (capped at `project_next_max_chars = 200`) — an LLM/heuristic alternative was never built or benchmarked, only rejected on the "zero model calls in the core" principle (see the dossier §21.24 for why "tested and hallucinated" was an overclaim caught in review).
+- Core sensing: `ProjectIngest` (`src/neuropaca/sensing/project_ingest.py`, subclass of `BaseModule`), wired into `orchestration/modules.py`.
+- Read-only git inspection: `git rev-parse`, `git status --porcelain`, `git log -1`, `git ls-files` + mtime, `.pytest_cache/v/cache/lastfailed`, and `.neuropaca/next`.
+- State hashing & churn suppression: caches repository state and suppresses redundant `PROJECT_STATE_FACT` writes; a poll is a sighting (`mark_seen`), never bumps `activity`/`access_count` the way a real touch would (V-10).
+- Graph Memory v10: `NodeType.PROJECT` added; linked to `domain:engineering` via `PART_OF`; lossless migration from v9.
+- Briefing integration: `format_project_left_off` (`core/project_format.py`, shared with the live thread moment) with natural number words up to 10 ("two uncommitted files", singular "one uncommitted file"), test extraction, and note clauses, with clean omission of missing fields; `_project_left_off_candidates` in `build_candidates` strictly grounded in `GraphMemory`.
+- Thread continuity: `Moment(kind="thread")` fires from git ground truth in `poll_tick` — a stale repo (last commit older than `project_stale_days`, default 3) picking up its first uncommitted change since the previous poll. Not `APP_SWITCH`-triggered: nothing in this codebase can correlate a focused window to a repository (no PID/cwd on `WindowInfo`, raw titles never leave the sensing collector) — see dossier §21.24 for the review finding that caught the original design trying to do exactly that.
+- Privacy and forgetting: `forget(project_path)` purges all project facts, episodes, and graph nodes.
+- Tests & verification: 18 tests (5 fixture states, read-only invariance, and no-activity-inflation-on-repeat-poll in `tests/test_project_ingest.py`, 13 unit & e2e briefing tests in `tests/test_project_briefing.py`; the thread-moment test drives real, explicitly-dated git commits through `poll_tick()` rather than a simulated focus event). Dogfood evaluation across 10 real repos on the system (`scripts/dogfood_s2_repos.py`) with 100% verified byte-identical read-only invariance and 13–33 ms latency — results anonymized before being committed, since this repo is public. All 1002 tests pass (5 skipped for unrelated reasons).
+- Hardened through one review pass before merge: caught and fixed a public-repo privacy leak, a dead `APP_SWITCH`-based trigger the test suite didn't catch, a self-poisoning staleness signal, a V-10 relevance-inflation bug, and a duplicated formatter. Full account in the dossier §21.24.
 
 ---
 

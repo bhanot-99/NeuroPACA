@@ -158,6 +158,10 @@ class NodeType(StrEnum):
     # `thread:<id>`; `RELATED_TO` its `person:<slug>` participants and `PART_OF` `domain:comms`.
     # Enum add => graph schema v9.
     THREAD = auto()
+    # S2 · software project / repository under watch_paths (schema v10).
+    # `project:<slug>`; `PART_OF` `domain:engineering`.
+    # Enum add => graph schema v10.
+    PROJECT = auto()
 
 
 class RelationType(StrEnum):

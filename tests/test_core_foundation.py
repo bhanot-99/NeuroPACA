@@ -39,9 +39,9 @@ def test_enum_members_match_the_blueprint() -> None:
     # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).
-    assert (
-        len(NodeType) == 13
-    )  # +IDLE_THOUGHT (B6, D-13) +WEBAPP (B14, schema v4) +THREAD (S1, schema v9)
+    # +IDLE_THOUGHT (B6, D-13) +WEBAPP (B14, schema v4) +THREAD (S1, schema v9)
+    # +PROJECT (S2, schema v10)
+    assert len(NodeType) == 14
     assert len(RelationType) == 8
     assert len(SignalType) == 8  # +WORKING_SET_CHANGE (B13-B4, D-19(e))
 
@@ -139,11 +139,25 @@ def test_llama_backend_requires_existing_model_path() -> None:
             {"inference_backend": "fake", "hebbian_delta": 0.02, "hebbian_floor": 0.02},
             "must be < hebbian_delta",
         ),
+        (
+            {"inference_backend": "fake", "project_poll_interval_seconds": 0},
+            "project_poll_interval_seconds",
+        ),
+        ({"inference_backend": "fake", "project_stale_days": -1}, "project_stale_days"),
+        ({"inference_backend": "fake", "project_next_max_chars": -1}, "project_next_max_chars"),
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs: dict[str, object], needle: str) -> None:
     with pytest.raises(ConfigError, match=needle):
         Config(**kwargs)  # type: ignore[arg-type]
+
+
+def test_project_config_defaults() -> None:
+    cfg = Config(inference_backend="fake")
+    assert cfg.project_tracking_enabled is False
+    assert cfg.project_poll_interval_seconds == 300.0
+    assert cfg.project_stale_days == 3
+    assert cfg.project_next_max_chars == 200
 
 
 def test_config_from_file_round_trip(tmp_path) -> None:

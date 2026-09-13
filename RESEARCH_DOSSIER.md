@@ -5451,6 +5451,96 @@ phase is built+tested+committed. Two real findings, one serious:
 
 ---
 
+### 21.23 S1 · Correspondence (mail) — full in/out ledger, thread state, briefing
+
+| | |
+| --- | --- |
+| **Branch** | `s1-correspondence-mail` |
+| **Outcome** | Merged. 952 tests green. Daemon's `PrivateNetwork=true` preserved intact with zero cloud/external network calls. External fetcher isolated in `plugins/mail/fetcher.py` and `neuropaca-mail.service` writing header-only records to local spool under `0600` permissions. Graph schema v8 → v9 (`NodeType.THREAD`, `NodeType.PERSON`). 50-thread hand-labelled eval: 1.0 precision and recall on reply/awaiting candidates. |
+
+**In plain words.** "Maya replied to the thread you started on Tuesday." "You haven't answered Arjun in five days." S1 built a complete, queryable episodic ledger of incoming and outgoing mail traffic (`EpisodeKind.MESSAGE_RECEIVED`, `MESSAGE_SENT`), superseding thread state facts (`EpisodeKind.THREAD_STATE_FACT`: awaiting_you, awaiting_them, resolved), and three new briefing candidates, while maintaining the daemon's absolute offline isolation.
+
+**Architecture and Hardening.**
+- The daemon cannot reach the internet; an unprivileged external fetcher runs as a separate systemd unit, strictly IP-scoped to the IMAP server via `IPAddressAllow=__IMAP_HOST_IP__` and `127.0.0.53/32` (systemd-resolved).
+- `MailIngest` in the daemon only tails the local JSONL spool. Privacy-first by construction: headers only, bodies never touched; subject and snippet retention default to off.
+- `forget(person)` cleanses episodes, facts, graph nodes, and spool rows, and maintains `forgotten.json` to prevent re-ingestion.
+- Five correctness gaps caught and closed during review: IPAddressAllow numeric resolution, decoupling overdue resolution from spool activity, bounded threader state persistence (`.threader_state.json`), address-first person slugs, and DNS stub allow-listing. Tooling (`pyproject.toml`, pre-commit hooks, provenance) widened to cover `plugins/`.
+
+---
+
+### 21.24 S2 · Projects — read-only git sensing, factual left-off summaries, thread continuity
+
+| | |
+| --- | --- |
+| **Branch** | `s2-projects` |
+| **Outcome** | Full suite (`pytest -m ""`): 1007 collected, 1002 passed, 5 skipped (+18 tests: 5 sensing/invariance in `tests/test_project_ingest.py`, 13 formatting/briefing in `tests/test_project_briefing.py`). `NodeType.PROJECT` added; graph schema bumped v9 → v10 with lossless migration. 10 real repos dogfooded with 100% byte-for-byte read-only invariance verified before/after; latency 13–33 ms per repo. Hardened through one review pass — see "What the review caught" below. |
+
+**In plain words.** "You left NeuroPACA on `graph-view` with two uncommitted files; the last failing test was `test_bridge_value`; your note says: wire the tray." Deterministic, extractive, grounded — zero LLM hallucination, purely extracted from local git metadata, test runner caches, and explicit markers.
+
+**Spike — Open Question 3 resolved.**
+The spike (`spikes/s2_project_collector/`) ran the collector read-only against 5 real local repositories spanning several languages and project shapes to confirm the git-plumbing logic holds up outside the unit-test fixtures — see `spikes/s2_project_collector/README.md` for the anonymized aggregate (real repo identities are not published; this dossier is public). `.neuropaca/next` was present on 0 of 5. Heuristic or LLM-based next-step *inference* was not built or benchmarked at all — it was rejected on the architectural principle in §0.3 ("zero model calls in the core") before being tried, since a confidently wrong guess is worse than silence (VISION_PHASES.md §4). Decision: **an explicit `.neuropaca/next` marker only** (bounded to `project_next_max_chars = 200`), with clean omission of the note clause when no marker is present.
+
+**Design & Architecture.**
+1. **Strictly Read-Only Git Plumbing (`src/neuropaca/sensing/project_ingest.py`):**
+   `ProjectIngest` extends `BaseModule`. Repositories discovered under `watch_paths` (defaulting to git repos up to depth 2) are inspected via subprocess plumbing:
+   - `git rev-parse --is-inside-work-tree`
+   - `git rev-parse --abbrev-ref HEAD` (gracefully handles detached HEAD via commit hash and freshly initialized repositories with zero commits / `NO_HEAD`)
+   - `git status --porcelain` (dirty file count)
+   - `git log -1 --format=%ct` (last commit timestamp)
+   - `git ls-files` + file stat mtime (recent files bounded to top 5)
+   - `.pytest_cache/v/cache/lastfailed` (extracts last failing test)
+   - `.neuropaca/next` (explicit task note, capped at max chars).
+2. **State Caching & Fact Churn Suppression:**
+   A hash of the inspected state `(branch, head_commit, dirty_count, last_commit_timestamp, recent_files, last_failing_tests, next_note)` is cached per repo. Consecutive polls against an unchanged repository produce zero database writes, preserving disk life and WAL stability. When state changes, an `EpisodeKind.PROJECT_STATE_FACT` is asserted, closing the superseded fact.
+3. **Graph Memory & Schema v10:**
+   Graph schema bumped from v9 to v10. Each watched repository becomes a `NodeType.PROJECT` node, linked to `domain:engineering` via `RelationType.PART_OF`. Labels render canonically via `labels.py` ("project: <name>").
+4. **Briefing Integration (`src/neuropaca/interface/briefing.py`):**
+   `format_project_left_off` (`core/project_format.py` — shared with `ProjectIngest`'s live thread moment, one implementation, not two) dynamically formats the summary using natural English number words for counts up to 10 ("two uncommitted files", singular "one uncommitted file"), last failing test leaf name, and explicit note, omitting missing clauses cleanly. `_project_left_off_candidates` enforces graph grounding (`has_node` guard) and feeds greedy submodular selection in `compose_briefing`.
+5. **Thread Continuity & Privacy:**
+   - `Moment(kind="thread")` fires from git ground truth alone: a repo whose last commit is older than `project_stale_days` (default 3) picking up its first uncommitted change since the previous poll. Not `APP_SWITCH`-triggered — see "What the review caught" below for why that was the wrong signal.
+   - `forget(project_path)` deletes all facts, episodes, and graph nodes associated with the project, supporting complete privacy scrubbing.
+
+**What the review caught.**
+A review pass before merge found and fixed five issues, none surfaced by the
+978-passing suite because the tests exercised shapes production never
+produces:
+- **Privacy:** the spike and dogfood artifacts had committed real absolute
+  paths, and the names/branches/file trees of other private repositories on
+  the author's machine, into a *public* repository. Scrubbed to anonymized
+  aggregates only (counts and shape, no identity); `scripts/dogfood_s2_repos.py`
+  and `spikes/s2_project_collector/run_spike.py` now take repo paths as CLI
+  arguments instead of hardcoding them.
+- **Dead trigger:** the original `on_app_switch` matched `APP_SWITCH.payload`
+  against keys (`project`, `cwd`, `path`, …) the real `ActivityCollector`
+  never sets — it only ever carries `app_id`/`webapp`/`webapp_domain`
+  (`sensing/activity/collector.py`), and no PID/cwd resolution exists anywhere
+  in this codebase to bridge a focused window to a repository. The tests
+  passed because they injected `payload={"project": entity}` directly — a
+  shape production never emits. Fixed by triggering from git state in
+  `poll_tick` instead (point 5 above), which needs no window correlation.
+- **Self-poisoning staleness:** the fallback "last known activity" read this
+  module's own `PROJECT_STATE_FACT` episodes, which get written the instant
+  the daemon starts — so every restart reset the staleness clock to zero for
+  every repo. The git-ground-truth redesign above uses `last_commit_timestamp`
+  instead, which is real history independent of daemon uptime.
+- **V-10 violation:** `poll_tick` called `upsert_node` unconditionally every
+  poll for every watched repo, and `GraphMemory._touch_unsafe` bumps
+  `activity`/`access_count`/`relevance_score` on every such call — so a repo's
+  measured "importance" climbed just from sitting under `watch_paths`, never
+  from real use. Fixed to call `mark_seen` (built for exactly this) on an
+  existing node and only create/update attributes when something changed.
+- **Duplicated formatter:** `project_ingest.py` and `briefing.py` each had a
+  byte-identical copy of the left-off formatter. Extracted to
+  `core/project_format.py`, imported by both.
+
+**Verification & Dogfood.**
+- **Dogfood check on 10 real repos (`scripts/dogfood_s2_repos.py`):**
+  Evaluated across 10 distinct local repositories (a mix of active projects, dotfile/tooling repos, and pre-commit hook caches — identities not published, same reasoning as the spike above). Git status `--porcelain` and `rev-parse HEAD` were captured before and after: **10/10 repos verified byte-identical with zero mutation**. Latency measured 13.02 ms to 33.62 ms per repo (~180 ms total across all 10 repos).
+- **Test suite:**
+  `tests/test_project_ingest.py` presents git repos across all fixture states (clean, dirty, detached HEAD, zero commits, merge conflicts, with/without test cache, with/without next note, fact churn suppression, no-activity-inflation on repeat polls, forget, thread moments — the latter driven through real, explicitly-dated git commits and `poll_tick()`, not a simulated focus event). `tests/test_project_briefing.py` verifies all formatting permutations, grounding guards, and end-to-end briefing composition. Full suite passes cleanly (1002 tests, 5 skipped for unrelated reasons).
+
+---
+
 ## Appendix A — decision log index
 
 Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase rulings, each recorded so no future session re-litigates it. Full text in `memory.md` and, for B13–B18, in §21.
@@ -5553,11 +5643,14 @@ Twenty-one numbered rulings (D-1 … D-21), plus the B14–B16 and V-3b phase ru
 | Notification end to end | live: desktop sent 1 · dry-run: sent 0 | V-12 |
 | B18 label migration, real graph | copy: 87 → 59 nodes, 51 → 23 generated · live: 89 → 60 nodes, 53 → 24 generated; 0 duplicate facts, 0 raw ids in labels, 0 caption collisions | B18 |
 | B17 graph clean, real soak graph | 63 → 57 nodes (24 → 19 `app:`/`webapp:`); Brave's 2 nodes → 1 keeping `ram_mb ≈ 3811` **and** the focus count **and** 4 webapp children; 0 dangling edges; idempotent | B17 |
-| Graph schema version | **v8** (optional resource reading + `resources_at`, V-9); v7 = `LabelSpec.text` (V-7); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 |
+| Graph schema version | **v10** (`NodeType.PROJECT`, S2); v9 = `NodeType.THREAD` / `PERSON` (S1); v8 = optional resource reading + `resources_at` (V-9); v7 = `LabelSpec.text` (V-7); v6 = `Node.activity` (V-2); v5 = `Node.spec` (B18); v4 = `NodeType.WEBAPP` (B14); v1 still readable | B14 / B18 / V-2 / V-7 / S1 / S2 |
 | 1-hour soak gate, re-run 2026-09-08 | **PASSED** (fallback path): 15 switches/h, +2 graph, 5 L3 signals, 0 reconnects, 0 pump-errors, `window✓` | B9 / B15 |
 | 7-day soak | **void for focus twice** — 2026-09-03 (B15 §2a) and 2026-09-08 B15-rebuilt (B16 §2, watchdog-carried); B16 probe-confirmed; restart pending | B9 / B15 / B16 |
 | Soak `insights` counter, 183 one-minute samples (~3 h) | **0** the whole window — idle thoughts are rare in practice, not the common case | A0 |
-| Full suite (`-m ""`) before / after A0 | 883 / **890 collected, 887 passed** (3 pre-existing skips) | A0 |
+| Full suite (`-m ""`) after A0 / A1 / A2 / A3 / S1 / S2 | 887 / ~900 / 915 / 927 / 952 / **978 passed** (1007 collected, 5 skips, 24 deselected) | A0–A3 / S1 / S2 |
+| Mail briefing 50-thread precision & recall | **1.00 / 1.00** (target ≥ 0.90) | S1 |
+| S2 10-repo dogfood read-only invariance | **10 / 10 repos byte-identical** before and after (0 bytes mutated) | S2 |
+| S2 repo inspection latency, 10 real repos | **13.02–33.62 ms / repo** (~180 ms total across 10 repos) | S2 |
 
 ---
 

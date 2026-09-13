@@ -11,8 +11,10 @@ commit (rules.md §8).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -253,9 +255,38 @@ async def test_a_v5_graph_loads_with_activity_estimated_from_access_count(tmp_pa
 
     await gm.save()
     saved = json.loads(path.read_text())
-    assert saved["schema_version"] == 9
+    assert saved["schema_version"] == 10
     (x,) = (n for n in saved["nodes"] if n["id"] == "app:x")
     assert x["activity"] == pytest.approx(10.0)
+
+
+async def test_v9_graph_loads_and_upgrades_to_v10_losslessly(tmp_path: Path) -> None:
+    GraphMemory._reset_for_tests()
+    path = tmp_path / "graph_v9.json"
+    now = datetime.now(UTC).isoformat()
+    record = {
+        "id": "thread:123",
+        "node_type": "thread",
+        "label": "thread:123",
+        "created_at": now,
+        "last_accessed": now,
+        "access_count": 1,
+        "relevance_score": 1.0,
+        "priority": 0,
+    }
+    path.write_text(json.dumps({"schema_version": 9, "nodes": [record], "edges": []}))
+    gm = GraphMemory.get_instance(persistence_path=str(path))
+    await gm.load()
+    assert gm.has_node("thread:123")
+    node = gm.get_node("thread:123")
+    assert node is not None
+    assert node.node_type == NodeType.THREAD
+
+    await gm.save()
+    saved = json.loads(path.read_text())
+    assert saved["schema_version"] == 10
+    (saved_node,) = (n for n in saved["nodes"] if n["id"] == "thread:123")
+    assert saved_node["node_type"] == "thread"
 
 
 async def test_consolidate_sums_activity_as_of_the_later_touch(tmp_path) -> None:
