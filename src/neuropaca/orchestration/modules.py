@@ -53,6 +53,7 @@ from neuropaca.sensing.collectors.filesystem import FileSystemCollector
 from neuropaca.sensing.collectors.process import ProcessCollector
 from neuropaca.sensing.collectors.system import SystemMetricCollector
 from neuropaca.sensing.mail_ingest import MailIngest
+from neuropaca.sensing.project_ingest import ProjectIngest
 from neuropaca.sensing.raw_recorder import RawMetricsRecorder
 
 
@@ -142,6 +143,8 @@ def build_modules(
         modules.append(ActivityCollector(event_bus, config))
     if config.mail_enabled:
         modules.append(MailIngest(event_bus, config, graph_memory, episode_store=episode_store))
+    if config.project_tracking_enabled:
+        modules.append(ProjectIngest(event_bus, config, graph_memory, episode_store=episode_store))
     modules.append(diagnosis)
     modules.append(learning)
     modules.append(drive)

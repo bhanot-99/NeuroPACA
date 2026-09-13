@@ -69,6 +69,8 @@ _FORBIDDEN_IMPORTS = {
     "imaplib",
     "poplib",
     "nntplib",
+    # S2: project tracking (`sensing/project_ingest.py`) uses local git plumbing
+    # only (rev-parse, status, log, ls-files) — no network/remote calls.
 }
 
 requires_blocked_network = pytest.mark.skipif(
