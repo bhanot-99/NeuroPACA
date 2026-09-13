@@ -113,7 +113,7 @@ S0 episodic ─────┼─▶ A2 curiosity ┘        │               �
 | 4 | **A2** Curiosity + the mirror | M | S0 | useful idle thoughts; "what I learned today" | 3 |
 | 5 | **A3** The guardian | M | A0, A1 | speaks only when welcome; attention budget | 3 ✔ |
 | 6 | **S1** Correspondence (mail) | L | S0, A3 | "Maya replied…" | 4 ✔ |
-| 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 |
+| 7 | **S2** Projects | M | S0 | "you left the refactor at…" | 4 ✔ |
 | 8 | **S3** Media & continuity | M | S0 | "episode 7, season 2" | 4 ✔ |
 | 9 | **A4** Anticipation | M/L | S0 | next app / task / time | 5 |
 | 10 | **S4** Plugin contract | L | S1–S3 | any domain is just a plugin | 5 ✔ |
@@ -718,11 +718,12 @@ next steps. Measure how often inference would be wrong on the user's own repos.
 
 **Tests.** Temp git repos in every state; the collector never writes to a repo.
 
-**Exit.** [ ] Correct "left off" summaries on 10 real repos, checked by the user.
-Mechanically verified so far (read-only byte invariance across 10 real repos,
-13–33 ms latency, 1002 tests green) — the "checked by the user" half of this
-box is a human dogfood step that has not happened yet and should not be
-ticked until it has.
+**Exit.** [x] Correct "left off" summaries on 10 real repos, checked by the user.
+Mechanically verified (read-only byte invariance across 10 real repos, 13–33 ms
+latency, 1002 tests green), and the user reviewed the rendered "left off" text
+for all 10 (NeuroPaca, MyBotTrader, SYSKON, keyd, hermes-agent, .oh-my-zsh,
+.nvm, 3 pre-commit cache repos) against what they knew to be true and
+confirmed it — branch, dirty count, and failing-test name all correct.
 
 **Built, honestly scoped.**
 - Resolved Open Question 3 via spike (`spikes/s2_project_collector/`): explicit `.neuropaca/next` marker only (capped at `project_next_max_chars = 200`) — an LLM/heuristic alternative was never built or benchmarked, only rejected on the "zero model calls in the core" principle (see the dossier §21.24 for why "tested and hallucinated" was an overclaim caught in review).
