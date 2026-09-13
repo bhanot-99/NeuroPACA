@@ -349,6 +349,11 @@ class Config:
     project_poll_interval_seconds: float = 300.0
     project_stale_days: int = 3
     project_next_max_chars: int = 200
+    # S3 · media and continuity (VISION_PHASES.md).
+    media_tracking_enabled: bool = False
+    media_poll_interval_seconds: float = 30.0
+    media_stale_days: int = 7
+    media_patterns_path: str = "data/media_title_patterns.default.toml"
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -537,6 +542,13 @@ class Config:
 
         if self.project_next_max_chars < 0:
             errs.append(f"project_next_max_chars must be >= 0, got {self.project_next_max_chars}")
+
+        for name in (
+            "media_poll_interval_seconds",
+            "media_stale_days",
+        ):
+            if getattr(self, name) <= 0:
+                errs.append(f"{name} must be > 0, got {getattr(self, name)}")
 
         for name in (
             "attention_alpha",

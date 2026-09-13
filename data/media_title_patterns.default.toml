@@ -1,0 +1,42 @@
+# media_title_patterns.default.toml — Allowlist regex patterns for video media title extraction (S3 · Media).
+#
+# Raw browser video titles (from document.title mirrored into xesam:title) are noisy
+# and must never enter GraphMemory verbatim. Titles are matched against these patterns.
+#
+# Each pattern must capture at minimum:
+#   - show (string): The series/show name
+#   - episode (integer): The episode number
+# And optionally:
+#   - season (integer): The season number (defaults to None when omitted)
+#
+# If no pattern matches, the title is dropped completely (zero raw title leakage).
+
+[cleanup]
+# Suffixes stripped from titles before pattern matching (streaming site branding, watch junk)
+strip_suffixes = [
+    '''\s*[-|•:]?\s*(?:Watch\s+All\s+Episodes.*|Watch\s+Online.*|Full\s+Episode.*|Hianime.*|Crunchyroll.*|Netflix.*|YouTube.*|Funimation.*|AnimePahe.*)$'''
+]
+
+[[patterns]]
+name = "s_e_compact"
+regex = '''^(?P<show>.+?)\s+[-_:]?\s*[sS](?P<season>\d+)\s*[:._-]?\s*[eE](?P<episode>\d+)'''
+
+[[patterns]]
+name = "season_episode_verbose"
+regex = '''^(?P<show>.+?)\s+[-_:]?\s*[sS]eason\s*(?P<season>\d+)\s*[-_:]?\s*[eE]pisode\s*(?P<episode>\d+)'''
+
+[[patterns]]
+name = "show_num_episode_num"
+regex = '''^(?P<show>[A-Za-z0-9\s'\-]+?)\s+(?P<season>\d+)\s+[-_:]?\s*[eE]pisode\s*(?P<episode>\d+)'''
+
+[[patterns]]
+name = "episode_only_verbose"
+regex = '''^(?P<show>.+?)\s+[-_:]?\s*[eE]pisode\s*(?P<episode>\d+)'''
+
+[[patterns]]
+name = "ep_compact"
+regex = '''^(?P<show>.+?)\s+[-_:]?\s*[eE][pP]\.?\s*(?P<episode>\d+)'''
+
+[[patterns]]
+name = "hash_episode"
+regex = '''^(?P<show>.+?)\s+[-_:]?\s*#(?P<episode>\d+)'''

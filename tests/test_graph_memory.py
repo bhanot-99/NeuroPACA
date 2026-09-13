@@ -31,13 +31,14 @@ async def _loaded_graph(tmp_path) -> GraphMemory:
     return gm
 
 
-async def test_load_seeds_exactly_the_eleven_hubs(tmp_path) -> None:
+async def test_load_seeds_exactly_the_twelve_hubs(tmp_path) -> None:
     gm = await _loaded_graph(tmp_path)
-    assert gm.node_count == 11
+    assert gm.node_count == 12
     for hub_id in HUB_NODE_IDS:
         assert gm.get_node(hub_id) is not None
     assert "YOU" in HUB_NODE_IDS
     assert "domain:engineering" in HUB_NODE_IDS
+    assert "domain:media" in HUB_NODE_IDS
 
 
 async def test_concurrent_writers_serialise_without_corruption(tmp_path) -> None:
@@ -46,7 +47,7 @@ async def test_concurrent_writers_serialise_without_corruption(tmp_path) -> None
     await asyncio.gather(
         *(gm.add_node(f"n{i}", NodeType.CONCEPT, {"label": f"node {i}"}) for i in range(100))
     )
-    assert gm.node_count == 111
+    assert gm.node_count == 112
     assert all(gm.get_node(f"n{i}") is not None for i in range(100))
 
     # 100 concurrent updates to the SAME node must not deadlock or raise; the
@@ -255,7 +256,7 @@ async def test_a_v5_graph_loads_with_activity_estimated_from_access_count(tmp_pa
 
     await gm.save()
     saved = json.loads(path.read_text())
-    assert saved["schema_version"] == 10
+    assert saved["schema_version"] == 11
     (x,) = (n for n in saved["nodes"] if n["id"] == "app:x")
     assert x["activity"] == pytest.approx(10.0)
 
@@ -284,9 +285,38 @@ async def test_v9_graph_loads_and_upgrades_to_v10_losslessly(tmp_path: Path) -> 
 
     await gm.save()
     saved = json.loads(path.read_text())
-    assert saved["schema_version"] == 10
+    assert saved["schema_version"] == 11
     (saved_node,) = (n for n in saved["nodes"] if n["id"] == "thread:123")
     assert saved_node["node_type"] == "thread"
+
+
+async def test_v10_graph_loads_and_upgrades_to_v11_losslessly(tmp_path: Path) -> None:
+    GraphMemory._reset_for_tests()
+    path = tmp_path / "graph_v10.json"
+    now = datetime.now(UTC).isoformat()
+    record = {
+        "id": "project:test",
+        "node_type": "project",
+        "label": "project:test",
+        "created_at": now,
+        "last_accessed": now,
+        "access_count": 1,
+        "relevance_score": 1.0,
+        "priority": 0,
+    }
+    path.write_text(json.dumps({"schema_version": 10, "nodes": [record], "edges": []}))
+    gm = GraphMemory.get_instance(persistence_path=str(path))
+    await gm.load()
+    assert gm.has_node("project:test")
+    node = gm.get_node("project:test")
+    assert node is not None
+    assert node.node_type == NodeType.PROJECT
+
+    await gm.save()
+    saved = json.loads(path.read_text())
+    assert saved["schema_version"] == 11
+    (saved_node,) = (n for n in saved["nodes"] if n["id"] == "project:test")
+    assert saved_node["node_type"] == "project"
 
 
 async def test_consolidate_sums_activity_as_of_the_later_touch(tmp_path) -> None:
@@ -746,7 +776,7 @@ async def test_load_does_not_block_the_event_loop(tmp_path) -> None:
     ticker.cancel()
     with pytest.raises(asyncio.CancelledError):
         await ticker
-    assert fresh.node_count == 2011
+    assert fresh.node_count == 2012
     assert ticks > 0, "the loop was starved for the whole of load()"
 
 
@@ -769,7 +799,7 @@ async def test_a_cancelled_save_leaves_the_graph_dirty(tmp_path) -> None:
     assert gm.dirty, "a cancelled save must leave the pending changes flagged"
     await gm.save()  # the retry the scheduler will now actually make
     assert not gm.dirty
-    assert gm.node_count == 3011
+    assert gm.node_count == 3012
 
 
 async def test_a_failed_save_leaves_the_graph_dirty(tmp_path) -> None:

@@ -130,6 +130,9 @@ class EpisodeKind(StrEnum):
     MESSAGE_RECEIVED = auto()
     MESSAGE_SENT = auto()
     THREAD_STATE_FACT = auto()
+    # S3 · media and continuity (VISION_PHASES.md).
+    MEDIA_SPAN = auto()
+    MEDIA_POSITION_FACT = auto()
 
 
 class NodeType(StrEnum):
@@ -162,6 +165,10 @@ class NodeType(StrEnum):
     # `project:<slug>`; `PART_OF` `domain:engineering`.
     # Enum add => graph schema v10.
     PROJECT = auto()
+    # S3 · media series or show (schema v11).
+    # `series:<slug>`; `PART_OF` `domain:media`.
+    # Enum add => graph schema v11.
+    SERIES = auto()
 
 
 class RelationType(StrEnum):
