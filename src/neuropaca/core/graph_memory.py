@@ -1174,7 +1174,7 @@ class GraphMemory:
         gc.freeze()
 
     async def reset_to_seed(self) -> None:
-        """Drop everything and come back as a bare 11-hub graph (B9/BL-2).
+        """Drop everything and come back as a bare seeded hub graph (B9/BL-2).
 
         Used only by the orchestrator's boot recovery, after the on-disk graph
         has been quarantined. It mutates *this* instance rather than building a

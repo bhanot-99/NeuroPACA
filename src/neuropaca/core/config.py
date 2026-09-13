@@ -662,6 +662,10 @@ class Config:
         if errs:
             raise ConfigError("invalid Config: " + "; ".join(errs))
 
+    def validate(self) -> Config:
+        """Explicit validation hook (Config is also validated on construction in `__post_init__`)."""
+        return self
+
     @classmethod
     def from_file(cls, path: str | Path) -> Config:
         """Load and validate a TOML config. Raises `ConfigError` on any problem."""

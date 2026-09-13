@@ -29,7 +29,7 @@ from neuropaca.core.errors import ConfigError, GraphMemoryError
 from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
 from neuropaca.orchestration.orchestrator import NeuroPACAOrchestrator
 
-_HUB_COUNT = 11  # YOU + 10 domain hubs
+_HUB_COUNT = 12  # YOU + 11 domain hubs
 
 
 @pytest.fixture
