@@ -49,7 +49,7 @@ async def test_load_10k_graph_under_two_seconds(graph_10k: tuple[Path, dict]) ->
     await gm.load()
     elapsed = time.perf_counter() - start
 
-    assert gm.node_count == len(payload["nodes"]) == 10_012
+    assert gm.node_count == len(payload["nodes"]) == 10_013
     assert gm.edge_count == len(payload["edges"]) == 25_000
     assert elapsed < _LOAD_BUDGET_S, f"load() took {elapsed:.3f}s (budget {_LOAD_BUDGET_S}s)"
 

@@ -35,7 +35,9 @@ def test_enum_members_match_the_blueprint() -> None:
     # +MOMENT_{PROPOSED,DELIVERED,FEEDBACK} (A0, F1 — VISION_PHASES.md)
     # +BRIEFING_{REQUEST,REPORT} (S0 — the on-demand `neuropaca briefing` bridge)
     # +DMN_CYCLE_{STARTED,ENDED} (A1 — the tray's "thinking" state)
-    assert len(EventType) == 29
+    # +MIRROR_{REQUEST,REPORT} (A2 — the on-demand `neuropaca mirror` bridge)
+    # +VOICE_UTTERANCE_CAPTURED (A6.1 — the voice plugin's event, VISION_PHASES.md)
+    assert len(EventType) == 30
     # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).

@@ -31,9 +31,9 @@ async def _loaded_graph(tmp_path) -> GraphMemory:
     return gm
 
 
-async def test_load_seeds_exactly_the_twelve_hubs(tmp_path) -> None:
+async def test_load_seeds_exactly_the_known_hubs(tmp_path) -> None:
     gm = await _loaded_graph(tmp_path)
-    assert gm.node_count == 12
+    assert gm.node_count == len(HUB_NODE_IDS)
     for hub_id in HUB_NODE_IDS:
         assert gm.get_node(hub_id) is not None
     assert "YOU" in HUB_NODE_IDS
@@ -47,7 +47,7 @@ async def test_concurrent_writers_serialise_without_corruption(tmp_path) -> None
     await asyncio.gather(
         *(gm.add_node(f"n{i}", NodeType.CONCEPT, {"label": f"node {i}"}) for i in range(100))
     )
-    assert gm.node_count == 112
+    assert gm.node_count == len(HUB_NODE_IDS) + 100
     assert all(gm.get_node(f"n{i}") is not None for i in range(100))
 
     # 100 concurrent updates to the SAME node must not deadlock or raise; the
@@ -776,7 +776,7 @@ async def test_load_does_not_block_the_event_loop(tmp_path) -> None:
     ticker.cancel()
     with pytest.raises(asyncio.CancelledError):
         await ticker
-    assert fresh.node_count == 2012
+    assert fresh.node_count == len(HUB_NODE_IDS) + 2000
     assert ticks > 0, "the loop was starved for the whole of load()"
 
 
@@ -799,7 +799,7 @@ async def test_a_cancelled_save_leaves_the_graph_dirty(tmp_path) -> None:
     assert gm.dirty, "a cancelled save must leave the pending changes flagged"
     await gm.save()  # the retry the scheduler will now actually make
     assert not gm.dirty
-    assert gm.node_count == 3012
+    assert gm.node_count == len(HUB_NODE_IDS) + 3000
 
 
 async def test_a_failed_save_leaves_the_graph_dirty(tmp_path) -> None:

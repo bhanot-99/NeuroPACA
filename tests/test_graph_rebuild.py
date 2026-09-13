@@ -23,7 +23,7 @@ from neuropaca.core.enums import EpisodeKind, EventType, NodeType, RelationType
 from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.episodic_writer import EpisodicWriter
 from neuropaca.core.event_bus import EventBus
-from neuropaca.core.graph_memory import GraphMemory
+from neuropaca.core.graph_memory import HUB_NODE_IDS, GraphMemory
 from neuropaca.core.graph_rebuild import rebuild_graph, rebuild_graph_to_file
 from neuropaca.core.models import Event
 from neuropaca.diagnosis import correlator as correlator_mod
@@ -178,7 +178,7 @@ async def test_empty_log_rebuilds_to_just_the_hubs(tmp_path) -> None:
         store, Config(inference_backend="fake"), target_path=str(tmp_path / "g.json")
     )
     assert stats.episodes_replayed == 0
-    assert rebuilt.node_count == 12  # YOU + 11 domain hubs, nothing else
+    assert rebuilt.node_count == len(HUB_NODE_IDS)  # YOU + every domain hub, nothing else
     await store.stop()
 
 

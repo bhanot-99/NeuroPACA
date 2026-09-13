@@ -50,6 +50,7 @@ from neuropaca.idle.dmn import DefaultModeNetwork
 from neuropaca.interface.moments import MomentComposer
 from neuropaca.interface.notifier import NotificationDispatcher
 from neuropaca.learning.plasticity import BitNetPlasticity
+from neuropaca.learning.voice_intent_parser import VoiceIntentParser
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
 from neuropaca.sensing.collectors.filesystem import FileSystemCollector
@@ -165,7 +166,7 @@ def build_modules(
         modules.append(MediaIngest(event_bus, config, graph_memory, episode_store=episode_store))
 
     domain_plugins: list[Plugin] = []
-    if config.calendar_enabled or config.reading_enabled:
+    if config.calendar_enabled or config.reading_enabled or config.voice_enabled:
         _ensure_repo_root_importable()
     if config.calendar_enabled:
         from plugins.calendar.calendar_plugin import CalendarPlugin
@@ -185,6 +186,15 @@ def build_modules(
                 poll_interval=config.reading_poll_interval_seconds,
             )
         )
+    if config.voice_enabled:
+        from plugins.voice.voice_plugin import VoicePlugin
+
+        domain_plugins.append(
+            VoicePlugin(
+                utterances_path=config.voice_utterances_path,
+                poll_interval=config.voice_poll_interval_seconds,
+            )
+        )
     if domain_plugins:
         modules.append(
             PluginHost(
@@ -194,6 +204,15 @@ def build_modules(
                 episode_store=episode_store,
                 plugins=domain_plugins,
                 name="domain_plugins",
+            )
+        )
+    # A6.1 · classifies each voice utterance the PluginHost above just wrote
+    # (`VOICE_UTTERANCE_CAPTURED`) — listed right after it for the same reason
+    # L7 follows L5: whatever it reacts to must already have a listener up.
+    if config.voice_enabled:
+        modules.append(
+            VoiceIntentParser(
+                event_bus, config, graph_memory, bitnet_runtime, episode_store=episode_store
             )
         )
     modules.append(diagnosis)

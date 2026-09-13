@@ -87,6 +87,14 @@ class EventType(StrEnum):
     # for the same reason: L9 cannot import `MirrorComposer` (rules.md §0).
     MIRROR_REQUEST = auto()
     MIRROR_REPORT = auto()
+    # A6.1 · voice as a sense (VISION_PHASES.md). `plugins/voice/voice_plugin.py`
+    # publishes this once per captured utterance (via `PluginItem.events`,
+    # `PluginHost` relays it) so `learning/voice_intent.py`'s `VoiceIntentParser`
+    # can run its (model-touching) intent classification without the plugin
+    # itself calling a model — a `Plugin` stays a pure, side-effect-free reader
+    # (rules.md §0: "no module imports another module"; this is the new event
+    # that call would have been). Payload: `{entity_id, text}`.
+    VOICE_UTTERANCE_CAPTURED = auto()
 
 
 class PresenceState(StrEnum):
@@ -137,6 +145,11 @@ class EpisodeKind(StrEnum):
     PLUGIN_SPAN = auto()
     PLUGIN_FACT = auto()
     MEETING_SPAN = auto()
+    # A6.1 · voice as a sense (VISION_PHASES.md). One span per captured
+    # utterance (start == end for a typed one; a real duration once A6.3
+    # wires up an actual push-to-talk session). The parsed intent itself is
+    # a PLUGIN_FACT, not a new kind — see plugins/voice/voice_plugin.py.
+    VOICE_UTTERANCE_SPAN = auto()
 
 
 class NodeType(StrEnum):

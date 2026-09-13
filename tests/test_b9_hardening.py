@@ -26,10 +26,10 @@ import pytest
 
 from neuropaca.core.config import Config
 from neuropaca.core.errors import ConfigError, GraphMemoryError
-from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
+from neuropaca.core.graph_memory import HUB_NODE_IDS, GraphMemory, graph_schema_version
 from neuropaca.orchestration.orchestrator import NeuroPACAOrchestrator
 
-_HUB_COUNT = 12  # YOU + 11 domain hubs
+_HUB_COUNT = len(HUB_NODE_IDS)  # YOU + every domain hub
 
 
 @pytest.fixture

@@ -18,6 +18,7 @@ pytest.importorskip("neuropaca.orchestration.orchestrator")
 
 from neuropaca.core.config import Config
 from neuropaca.core.enums import EventType
+from neuropaca.core.graph_memory import HUB_NODE_IDS
 from neuropaca.core.models import Event
 from neuropaca.orchestration.orchestrator import NeuroPACAOrchestrator
 
@@ -43,7 +44,7 @@ async def test_initialize_then_start_reaches_running_idle(config: Config) -> Non
     for _ in range(5):
         await asyncio.sleep(0)
     assert orch.health_check().ok is True
-    assert orch.graph_memory.node_count == 12  # the seeded hubs
+    assert orch.graph_memory.node_count == len(HUB_NODE_IDS)  # the seeded hubs
 
     await orch.stop()
     assert orch.is_running is False

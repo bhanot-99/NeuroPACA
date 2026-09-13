@@ -31,6 +31,7 @@ from neuropaca.core.enums import SignalType
 from neuropaca.core.labels import RELATIONAL_THOUGHTS, THOUGHT_TEMPLATES
 from neuropaca.core.models import Node
 from neuropaca.learning.insight import INSIGHT_CATEGORIES, Insight
+from neuropaca.learning.voice_intent import VOICE_INTENT_CATEGORIES, VoiceIntent
 
 _ALIAS_RE = re.compile(r"^n[1-9][0-9]*$")
 
@@ -423,6 +424,98 @@ def parse_proactive(
         confidence=_PROACTIVE_CONFIDENCE,
         snapshot_count=0,
         template=template,
+    )
+
+
+# ============================================================================
+# A6.1 · voice as a sense, text-only (VISION_PHASES.md).
+#
+# The interactive model (D-12's second backend, `BitNetRuntime(interactive=
+# True)`) classifies a captured utterance the same extractive way L4/L6
+# classify everything else — two enum fields, nothing free-generated:
+#
+#   {"cited_node_id": "n1" | null, "voice_intent": "action_request" | ...}
+# ============================================================================
+
+_VOICE_INTENT_GRAMMAR_TEMPLATE = (
+    'root ::= "{" ws "\\"cited_node_id\\":" ws (alias | "null") ws "," ws '
+    '"\\"voice_intent\\":" ws category ws "}"\n'
+    "alias ::= __ALIASES__\n"
+    'category ::= "\\"action_request\\"" | "\\"reminder\\"" | "\\"question\\"" '
+    '| "\\"observation\\"" | "\\"other\\""\n'
+    "ws ::= [ \\t\\n]*\n"
+)
+
+_VOICE_INTENT_FEW_SHOT = (
+    "Facts:\n"
+    "  [n1] spotify · APP · score 6.2\n"
+    "  [n2] domain:voice · CONCEPT · score 3.0\n"
+    'Utterance: "remind me to email Maya back"\n'
+    "Pick the one fact this is most likely about, and classify what kind of "
+    "utterance it is. If it isn't clearly about any fact, cite null.\n"
+    'Answer: {"cited_node_id": null, "voice_intent": "reminder"}\n\n'
+)
+
+# Two enum fields + one alias — the same tiny cap as L4/L6's schemas.
+VOICE_INTENT_MAX_TOKENS = 48
+
+
+def build_voice_intent_grammar(aliases: Sequence[str]) -> str:
+    """Splice this prompt's alias enum into the voice-intent skeleton.
+    `aliases` must be exactly the aliases present in the prompt (`rules.md
+    §4.1`) — the same contract as `build_insight_grammar`."""
+    if not aliases:
+        raise ValueError("at least one alias is required")
+    for alias in aliases:
+        if not _ALIAS_RE.match(alias):
+            raise ValueError(f"not a local alias: {alias!r}")
+    if len(set(aliases)) != len(aliases):
+        raise ValueError(f"duplicate aliases: {list(aliases)!r}")
+    enum = " | ".join(f'"\\"{alias}\\""' for alias in aliases)
+    return _VOICE_INTENT_GRAMMAR_TEMPLATE.replace("__ALIASES__", enum)
+
+
+def build_voice_intent_prompt(text: str, aliased: Sequence[tuple[str, Node]]) -> str:
+    """One synthetic few-shot, then the distilled top-K graph facts, then the
+    utterance itself last (`problems.md` 1.13's ordering, same as L4/L6)."""
+    return (
+        _VOICE_INTENT_FEW_SHOT
+        + "Facts:\n"
+        + _context_block(aliased)
+        + "\n"
+        + f'Utterance: "{text}"\n'
+        + "Pick the one fact this is most likely about, and classify what kind of "
+        + "utterance it is. If it isn't clearly about any fact, cite null.\n"
+        + "Answer: "
+    )
+
+
+def parse_voice_intent(
+    raw: str,
+    alias_to_id: dict[str, str],
+    *,
+    raw_text: str,
+) -> VoiceIntent | None:
+    """The hard validation gate (`rules.md §4.1` item 6). Unlike
+    `parse_insight`, a null `cited_node_id` is *not* itself a discard — see
+    `learning/voice_intent.py`'s module docstring for why. Only a malformed
+    or out-of-vocabulary response is discarded (the caller never stores a
+    guess)."""
+    obj = _first_json_object(raw)
+    if obj is None:
+        return None
+    cited = obj.get("cited_node_id")
+    category = obj.get("voice_intent")
+
+    if not isinstance(category, str) or category not in VOICE_INTENT_CATEGORIES:
+        return None
+    if cited is not None and (not isinstance(cited, str) or cited not in alias_to_id):
+        return None
+
+    return VoiceIntent(
+        category=category,
+        cited_node_id=alias_to_id[cited] if isinstance(cited, str) else None,
+        raw_text=raw_text,
     )
 
 

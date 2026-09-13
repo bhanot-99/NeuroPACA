@@ -361,6 +361,13 @@ class Config:
     reading_enabled: bool = False
     reading_list_path: str = "data/plugins/reading/reading_list.json"
     reading_poll_interval_seconds: float = 300.0
+    # A6.1 · voice as a sense, text-only (VISION_PHASES.md). Each line appended
+    # to voice_utterances_path is one typed utterance, standing in for STT
+    # until A6.3. poll_interval is short relative to calendar/reading's — an
+    # utterance is meant to reach the graph promptly, not on a five-minute tick.
+    voice_enabled: bool = False
+    voice_utterances_path: str = "data/plugins/voice/utterances.jsonl"
+    voice_poll_interval_seconds: float = 5.0
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -555,9 +562,13 @@ class Config:
             "media_stale_days",
             "calendar_poll_interval_seconds",
             "reading_poll_interval_seconds",
+            "voice_poll_interval_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if self.voice_enabled and not self.voice_utterances_path:
+            errs.append("voice_utterances_path must not be empty when voice_enabled is on")
 
         if self.calendar_enabled and not self.calendar_ics_path:
             errs.append("calendar_ics_path must not be empty when calendar_enabled is on")

@@ -57,7 +57,7 @@ async def test_bridge_value_recalc_stays_under_the_50ms_loop_budget(tmp_path: Pa
     graph = GraphMemory.get_instance(persistence_path=str(FIXTURE_PATH))
     await graph.load()
     graph._path = tmp_path / "graph.json"  # never write the fixture
-    assert graph.node_count == 10_012
+    assert graph.node_count == 10_013
 
     # --- inject dense domain:* classification across the leaves ----------------
     rng = random.Random(_SEED)

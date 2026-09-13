@@ -273,6 +273,22 @@ class PluginHost(BaseModule):
             for v in violations:
                 _log.warning("PluginHost manifest warning: %s", v)
 
+        # A6.1 · a plugin's domain hub is seeded here, not assumed to already
+        # exist. `GraphMemory._seed_hubs_unsafe()` only runs for a genuinely
+        # empty graph, and `_integrate_graph_nodes` below only links to a hub
+        # that already exists (V-5's edge-time materialisation never fires
+        # because that check comes first) — so a plugin introducing a domain
+        # nobody has routed to yet (voice's `domain:voice`, the first new one
+        # since S1-S4 all reused an existing hub) would otherwise never get
+        # linked on a live, already-populated graph. A no-op for every
+        # existing plugin, since their hubs already exist.
+        if self._gm is not None:
+            for _name, _plugin in self._plugins.items():
+                _hub = _plugin.describe().domain_hub
+                if _hub and not self._gm.has_node(_hub):
+                    label = _hub.removeprefix("domain:").replace("_", " ").title()
+                    await self._gm.upsert_node(_hub, NodeType.CONCEPT, attributes={"label": label})
+
         for name, plugin in self._plugins.items():
             init_fn = getattr(plugin, "initialize", None)
             if callable(init_fn):
