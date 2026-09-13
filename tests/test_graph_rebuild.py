@@ -178,7 +178,7 @@ async def test_empty_log_rebuilds_to_just_the_hubs(tmp_path) -> None:
         store, Config(inference_backend="fake"), target_path=str(tmp_path / "g.json")
     )
     assert stats.episodes_replayed == 0
-    assert rebuilt.node_count == 11  # YOU + 10 domain hubs, nothing else
+    assert rebuilt.node_count == 12  # YOU + 11 domain hubs, nothing else
     await store.stop()
 
 

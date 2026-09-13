@@ -356,13 +356,14 @@ async def test_a_v2_graph_loads_under_v3(tmp_path: Path) -> None:
     assert node.ram_mb is None and node.first_seen_at is None  # V-9: never measured
 
 
-def test_schema_version_is_v10() -> None:
+def test_schema_version_is_v11() -> None:
     # v3: B13 resource attrs. v4: B14 NodeType.WEBAPP. v5: B18 LabelSpec.
     # v6: V-2 decaying `activity` counter. v7: V-7 optional `spec.text`.
     # v8: V-9 optional resource reading + `resources_at`.
     # v9: S1 NodeType.THREAD.
     # v10: S2 NodeType.PROJECT.
-    assert graph_schema_version() == 10
+    # v11: S3 NodeType.SERIES.
+    assert graph_schema_version() == 11
 
 
 # gen-ref: a5cd4c80

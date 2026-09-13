@@ -29,7 +29,7 @@ from neuropaca.core.errors import ConfigError, GraphMemoryError
 from neuropaca.core.graph_memory import GraphMemory, graph_schema_version
 from neuropaca.orchestration.orchestrator import NeuroPACAOrchestrator
 
-_HUB_COUNT = 11  # YOU + 10 domain hubs
+_HUB_COUNT = 12  # YOU + 11 domain hubs
 
 
 @pytest.fixture
@@ -229,7 +229,7 @@ def test_an_unopenable_log_file_does_not_stop_the_daemon(tmp_path: Path) -> None
 
 def test_config_rejects_an_empty_log_file_path_when_the_sink_is_on() -> None:
     with pytest.raises(ConfigError):
-        Config(inference_backend="fake", log_to_file=True, log_file_path="").validate()
+        Config(inference_backend="fake", log_to_file=True, log_file_path="")
 
 
 # --------------------------------------------------------- BL-1/BL-4 · packaging

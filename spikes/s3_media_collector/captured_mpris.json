@@ -1,0 +1,84 @@
+[
+  {
+    "service": "org.mpris.MediaPlayer2.brave.instance1234",
+    "pid": 1234,
+    "process": "brave",
+    "properties": {
+      "CanControl": {
+        "type": "b",
+        "data": true
+      },
+      "CanGoNext": {
+        "type": "b",
+        "data": false
+      },
+      "CanGoPrevious": {
+        "type": "b",
+        "data": false
+      },
+      "CanPause": {
+        "type": "b",
+        "data": true
+      },
+      "CanPlay": {
+        "type": "b",
+        "data": true
+      },
+      "CanSeek": {
+        "type": "b",
+        "data": true
+      },
+      "MaximumRate": {
+        "type": "d",
+        "data": 1.0
+      },
+      "Metadata": {
+        "type": "a{sv}",
+        "data": {
+          "mpris:length": {
+            "type": "x",
+            "data": 1440000000
+          },
+          "mpris:trackid": {
+            "type": "o",
+            "data": "/com/brave/MediaPlayer2/TrackList/Track1234567890ABCDEF1234567890ABCDEF"
+          },
+          "xesam:album": {
+            "type": "s",
+            "data": ""
+          },
+          "xesam:artist": {
+            "type": "as",
+            "data": [
+              ""
+            ]
+          },
+          "xesam:title": {
+            "type": "s",
+            "data": "Example Anime 3 Episode 1 Watch All Episodes at Hianime"
+          }
+        }
+      },
+      "MinimumRate": {
+        "type": "d",
+        "data": 1.0
+      },
+      "PlaybackStatus": {
+        "type": "s",
+        "data": "Playing"
+      },
+      "Position": {
+        "type": "x",
+        "data": 120000000
+      },
+      "Rate": {
+        "type": "d",
+        "data": 1.0
+      },
+      "Volume": {
+        "type": "d",
+        "data": 1.0
+      }
+    }
+  }
+]

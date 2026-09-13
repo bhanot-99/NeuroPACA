@@ -40,8 +40,8 @@ def test_enum_members_match_the_blueprint() -> None:
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).
     # +IDLE_THOUGHT (B6, D-13) +WEBAPP (B14, schema v4) +THREAD (S1, schema v9)
-    # +PROJECT (S2, schema v10)
-    assert len(NodeType) == 14
+    # +PROJECT (S2, schema v10) +SERIES (S3, schema v11)
+    assert len(NodeType) == 15
     assert len(RelationType) == 8
     assert len(SignalType) == 8  # +WORKING_SET_CHANGE (B13-B4, D-19(e))
 
@@ -145,6 +145,11 @@ def test_llama_backend_requires_existing_model_path() -> None:
         ),
         ({"inference_backend": "fake", "project_stale_days": -1}, "project_stale_days"),
         ({"inference_backend": "fake", "project_next_max_chars": -1}, "project_next_max_chars"),
+        (
+            {"inference_backend": "fake", "media_poll_interval_seconds": 0},
+            "media_poll_interval_seconds",
+        ),
+        ({"inference_backend": "fake", "media_stale_days": -1}, "media_stale_days"),
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs: dict[str, object], needle: str) -> None:
@@ -158,6 +163,14 @@ def test_project_config_defaults() -> None:
     assert cfg.project_poll_interval_seconds == 300.0
     assert cfg.project_stale_days == 3
     assert cfg.project_next_max_chars == 200
+
+
+def test_media_config_defaults() -> None:
+    cfg = Config(inference_backend="fake")
+    assert cfg.media_tracking_enabled is False
+    assert cfg.media_poll_interval_seconds == 30.0
+    assert cfg.media_stale_days == 7
+    assert cfg.media_patterns_path == "data/media_title_patterns.default.toml"
 
 
 def test_config_from_file_round_trip(tmp_path) -> None:

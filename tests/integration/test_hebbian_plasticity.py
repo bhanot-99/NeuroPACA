@@ -53,10 +53,9 @@ async def _probe(samples: list[float], stop: asyncio.Event) -> None:
 
 
 async def _loaded_10k(tmp_path: Path) -> GraphMemory:
-    from tests.fixtures.generate_10k_graph import FIXTURE_PATH, write_fixture
+    from tests.fixtures.generate_10k_graph import FIXTURE_PATH, ensure_fixture
 
-    if not FIXTURE_PATH.exists():
-        write_fixture(FIXTURE_PATH)
+    ensure_fixture(FIXTURE_PATH)
     graph = GraphMemory.get_instance(persistence_path=str(FIXTURE_PATH))
     await graph.load()
     graph._path = tmp_path / "graph.json"  # never write the fixture

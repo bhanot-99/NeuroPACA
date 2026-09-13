@@ -25,7 +25,7 @@ import pytest
 
 from neuropaca.core.enums import NodeType
 from neuropaca.core.graph_memory import HUB_NODE_IDS, GraphMemory
-from tests.fixtures.generate_10k_graph import FIXTURE_PATH, write_fixture
+from tests.fixtures.generate_10k_graph import FIXTURE_PATH, ensure_fixture
 
 pytestmark = pytest.mark.stress
 
@@ -38,8 +38,7 @@ _REQUIRED_ATTRS = ("node_type", "label", "created_at", "last_accessed", "access_
 
 @pytest.fixture(scope="session")
 def graph_10k_path() -> Path:
-    if not FIXTURE_PATH.exists():
-        write_fixture(FIXTURE_PATH)
+    ensure_fixture(FIXTURE_PATH)
     return FIXTURE_PATH
 
 

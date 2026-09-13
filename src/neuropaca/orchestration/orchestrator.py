@@ -264,8 +264,9 @@ class NeuroPACAOrchestrator:
         await self._graph_memory.reset_to_seed()
         _log.error(
             "graph was unreadable and has been quarantined at %s — "
-            "booted on a fresh 11-hub graph; run `neuropaca doctor` for detail",
+            "booted on a fresh %d-hub graph; run `neuropaca doctor` for detail",
             quarantined,
+            self._graph_memory.node_count,
         )
         self._degraded_notes.append(
             f"graph unreadable at boot; quarantined to {quarantined} and reseeded"

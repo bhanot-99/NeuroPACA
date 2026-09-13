@@ -7,6 +7,7 @@
 !/data/app_map.default.toml
 !/data/webapp_map.default.toml
 !/data/app_identity.default.toml
+!/data/media_title_patterns.default.toml
 # ...but a personal override stays untracked
 /data/webapp_map.local.toml
 *.log

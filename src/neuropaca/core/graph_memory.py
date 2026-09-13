@@ -93,7 +93,8 @@ from neuropaca.core.models import Edge, Node
 # B14 NodeType.WEBAPP).
 # v10 (S2): NodeType.PROJECT added for software projects / repositories (precedent:
 # S1 NodeType.THREAD).
-_SCHEMA_VERSION = 10
+# v11 (S3): NodeType.SERIES added for media continuity (precedent: S2 NodeType.PROJECT).
+_SCHEMA_VERSION = 11
 _FACT_PREFIXES: tuple[str, ...] = tuple(KIND_PREFIX.values())
 
 # V-2 · relevance_score = 6·activity + 2·strength + 2·bridge, each term 0-1.
@@ -152,6 +153,7 @@ DOMAIN_SLUGS: tuple[str, ...] = (
     "comms",
     "mental_models",
     "learning",
+    "media",
 )
 DOMAIN_HUB_IDS: frozenset[str] = frozenset(f"domain:{slug}" for slug in DOMAIN_SLUGS)
 HUB_NODE_IDS: frozenset[str] = DOMAIN_HUB_IDS | {"YOU"}
@@ -1172,7 +1174,7 @@ class GraphMemory:
         gc.freeze()
 
     async def reset_to_seed(self) -> None:
-        """Drop everything and come back as a bare 11-hub graph (B9/BL-2).
+        """Drop everything and come back as a bare seeded hub graph (B9/BL-2).
 
         Used only by the orchestrator's boot recovery, after the on-disk graph
         has been quarantined. It mutates *this* instance rather than building a

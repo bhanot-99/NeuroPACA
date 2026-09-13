@@ -46,7 +46,7 @@ async def _graph(tmp_path) -> GraphMemory:
 
 async def test_a_fresh_graph_loses_every_hub_nothing_routes_to(tmp_path) -> None:
     gm = await _graph(tmp_path)
-    assert gm.node_count == 11  # a first run still seeds all 11 — self-describing
+    assert gm.node_count == 12  # a first run still seeds all 12 — self-describing
 
     dropped = await gm.prune_dead_hubs()
 

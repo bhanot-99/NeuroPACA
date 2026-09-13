@@ -50,15 +50,14 @@ async def _probe(samples: list[float], stop: asyncio.Event) -> None:
 
 
 async def test_bridge_value_recalc_stays_under_the_50ms_loop_budget(tmp_path: Path) -> None:
-    from tests.fixtures.generate_10k_graph import FIXTURE_PATH, write_fixture
+    from tests.fixtures.generate_10k_graph import FIXTURE_PATH, ensure_fixture
 
-    if not FIXTURE_PATH.exists():
-        write_fixture(FIXTURE_PATH)
+    ensure_fixture(FIXTURE_PATH)
 
     graph = GraphMemory.get_instance(persistence_path=str(FIXTURE_PATH))
     await graph.load()
     graph._path = tmp_path / "graph.json"  # never write the fixture
-    assert graph.node_count == 10_011
+    assert graph.node_count == 10_012
 
     # --- inject dense domain:* classification across the leaves ----------------
     rng = random.Random(_SEED)

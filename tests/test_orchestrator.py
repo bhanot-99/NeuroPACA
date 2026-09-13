@@ -43,7 +43,7 @@ async def test_initialize_then_start_reaches_running_idle(config: Config) -> Non
     for _ in range(5):
         await asyncio.sleep(0)
     assert orch.health_check().ok is True
-    assert orch.graph_memory.node_count == 11  # the seeded hubs
+    assert orch.graph_memory.node_count == 12  # the seeded hubs
 
     await orch.stop()
     assert orch.is_running is False
