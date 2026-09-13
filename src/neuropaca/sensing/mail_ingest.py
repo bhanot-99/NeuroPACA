@@ -67,7 +67,23 @@ def _parse_iso_utc(ts: str | None) -> datetime:
 
 
 class MailPlugin:
-    """Pure plugin reader tailing mail spool files and resolving threads."""
+    """Pure plugin reader tailing mail spool files and resolving threads.
+
+    Two-way filter (s1-mail-two-way-filter):
+    - Rule 1: A record qualifies if I sent it (direction == outbound).
+    - Rule 2: A record qualifies if it references a message-ID I sent
+      (i.e. it is a genuine reply to something I wrote).
+    - Rule 3a: A person/thread node is only written to GraphMemory once
+      the interaction ledger shows >= config.mail_min_interactions two-way
+      qualifying touches for that person_slug.
+    - Rule 3b: The number of active thread nodes per person is capped at
+      config.mail_max_threads_per_person; excess threads are tracked in the
+      episode store but not promoted to the graph.
+
+    Disqualified records still flow into EpisodeStore (the append-only ledger)
+    but produce no GraphMemory nodes or edges — keeping the semantic graph clean
+    while preserving the full correspondence history for briefing and search.
+    """
 
     def __init__(
         self,
@@ -82,9 +98,23 @@ class MailPlugin:
         self._watermark_path = self._spool_dir / ".watermark.json"
         self._forgotten_path = self._spool_dir / "forgotten.json"
         self._threader_path = self._spool_dir / ".threader_state.json"
+        # Two-way filter persistence paths.
+        self._sent_ids_path = self._spool_dir / ".sent_ids.json"
+        self._ledger_path = self._spool_dir / ".interaction_ledger.json"
         self._threader = Threader()
         self._watermarks: dict[str, int] = {}
         self._forgotten: set[str] = set()
+        # Rule 1/2: message-IDs of emails I sent — used to qualify inbound
+        # replies as two-way interactions.
+        self._sent_message_ids: set[str] = set()
+        # Rule 3a: count of qualifying two-way interactions per person_slug.
+        self._interaction_ledger: dict[str, int] = {}
+        # Rule 3b: active thread node count per person_slug (in-memory mirror
+        # of the graph's thread nodes — rebuilt from GraphMemory on initialize).
+        self._thread_count_per_person: dict[str, int] = {}
+        # Set of thread_entity IDs actually written to GraphMemory this session.
+        self._graph_threads: set[str] = set()
+
         self._ingested_count = 0
         self._last_batch_processed = 0
         self._entities: set[str] = set()
@@ -102,6 +132,8 @@ class MailPlugin:
         await self._load_watermarks()
         await self._load_forgotten()
         await self._load_threader_state()
+        await self._load_sent_ids()
+        await self._load_interaction_ledger()
 
     def describe(self) -> PluginDescriptor:
         spool_p = self._spool_dir.expanduser().resolve()
@@ -173,7 +205,35 @@ class MailPlugin:
             new_offset = fh.tell()
         return records, new_offset
 
-    def _item_from_record(self, record: dict[str, Any]) -> PluginItem:
+    def _is_two_way_qualifying(
+        self,
+        is_sent: bool,
+        in_reply_to: str | None,
+        references: list[str],
+    ) -> bool:
+        """Return True if this record counts as a genuine two-way interaction.
+
+        Rule 1: I sent it.
+        Rule 2: It is an inbound reply to a message-ID I sent.
+        """
+        if is_sent:
+            return True
+        mid = in_reply_to.strip("<>") if in_reply_to else None
+        if mid and mid in self._sent_message_ids:
+            return True
+        for ref in references:
+            clean = ref.strip("<>")
+            if clean and clean in self._sent_message_ids:
+                return True
+        return False
+
+    def _item_from_record(self, record: dict[str, Any]) -> PluginItem | None:
+        """Convert one spool record to a PluginItem applying the two-way filter.
+
+        Returns None only for records that are entirely disqualified (not
+        two-way). Qualifying records always produce at least an episode entry;
+        graph nodes and edges are conditionally included based on Rules 3a/3b.
+        """
         msg_id = record.get("message_id", "")
         in_reply_to = record.get("in_reply_to")
         references = record.get("references", [])
@@ -210,6 +270,16 @@ class MailPlugin:
             and sender_clean_addr == self.config.mail_user_address.strip().lower()
         )
 
+        # ── Two-way filter (Rules 1 & 2) ──────────────────────────────────
+        if not self._is_two_way_qualifying(is_sent, in_reply_to, references):
+            return None  # pure inbound noise — skip entirely, no episode
+
+        # Track sent message-IDs for future Rule 2 lookups.
+        if is_sent and msg_id:
+            clean_mid = msg_id.strip("<>")
+            if clean_mid:
+                self._sent_message_ids.add(clean_mid)
+
         if is_sent:
             kind = EpisodeKind.MESSAGE_SENT
             p_name = recip_name or recip_addr or "recipient"
@@ -226,6 +296,29 @@ class MailPlugin:
         person_entity = f"person:{p_slug}"
         self._entities.add(thread_entity)
         self._entities.add(person_entity)
+
+        # ── Rule 3a: frequency threshold ──────────────────────────────────
+        self._interaction_ledger[p_slug] = self._interaction_ledger.get(p_slug, 0) + 1
+        interactions = self._interaction_ledger[p_slug]
+        threshold_met = interactions >= self.config.mail_min_interactions
+
+        # ── Rule 3b: max thread cap per person ────────────────────────────
+        # Use _thread_count_per_person, which counts only nodes actually written
+        # to GraphMemory — not _entities which tracks all spool-seen ids.
+        thread_is_new = thread_entity not in self._graph_threads
+        current_count = self._thread_count_per_person.get(p_slug, 0)
+        under_cap = current_count < self.config.mail_max_threads_per_person
+
+        # Gate: below threshold or over cap → no graph node, no episode.
+        # The interaction is still counted in the ledger (above), so the next
+        # qualifying interaction may cross the threshold and unlock the node.
+        emit_graph = threshold_met and under_cap
+        if not emit_graph:
+            return None
+
+        if thread_is_new:
+            self._graph_threads.add(thread_entity)
+            self._thread_count_per_person[p_slug] = current_count + 1
 
         attrs: dict[str, Any] = {
             "message_id": msg_id,
@@ -283,13 +376,17 @@ class MailPlugin:
                 self._read_new_records_blocking, spool_file
             )
             for record in records:
-                items.append(self._item_from_record(record))
+                item = self._item_from_record(record)
+                if item is not None:
+                    items.append(item)
                 total_processed += 1
             self._watermarks[spool_file.name] = new_offset
 
         if total_processed > 0:
             await self._save_watermarks()
             await self._save_threader_state()
+            await self._save_sent_ids()
+            await self._save_interaction_ledger()
 
         self._ingested_count += total_processed
         self._last_batch_processed = total_processed
@@ -526,6 +623,50 @@ class MailPlugin:
     async def save_threader_state(self) -> None:
         await self._save_threader_state()
 
+    async def _load_sent_ids(self) -> None:
+        if self._sent_ids_path.exists():
+            try:
+                data = json.loads(self._sent_ids_path.read_text("utf-8"))
+                self._sent_message_ids = set(data.get("sent_ids", []))
+            except Exception:
+                self._sent_message_ids = set()
+
+    async def _save_sent_ids(self) -> None:
+        if not self._spool_dir.exists():
+            return
+        payload = json.dumps({"sent_ids": sorted(self._sent_message_ids)}, indent=2)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self._spool_dir, delete=False
+        ) as tf:
+            tmp_path = Path(tf.name)
+            tf.write(payload)
+            tf.flush()
+            os.fsync(tf.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, self._sent_ids_path)
+
+    async def _load_interaction_ledger(self) -> None:
+        if self._ledger_path.exists():
+            try:
+                data = json.loads(self._ledger_path.read_text("utf-8"))
+                self._interaction_ledger = {k: int(v) for k, v in data.get("ledger", {}).items()}
+            except Exception:
+                self._interaction_ledger = {}
+
+    async def _save_interaction_ledger(self) -> None:
+        if not self._spool_dir.exists():
+            return
+        payload = json.dumps({"ledger": self._interaction_ledger}, indent=2)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self._spool_dir, delete=False
+        ) as tf:
+            tmp_path = Path(tf.name)
+            tf.write(payload)
+            tf.flush()
+            os.fsync(tf.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, self._ledger_path)
+
 
 class MailIngest(BaseModule):
     """Daemon-side correspondence sensor reading from the external spool.
@@ -594,6 +735,8 @@ class MailIngest(BaseModule):
         await self._host.stop()
         await self._plugin.save_watermarks()
         await self._plugin.save_threader_state()
+        await self._plugin._save_sent_ids()
+        await self._plugin._save_interaction_ledger()
 
     def health(self) -> ModuleHealth:
         return ModuleHealth(

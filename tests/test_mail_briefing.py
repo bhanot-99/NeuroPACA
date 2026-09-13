@@ -48,6 +48,7 @@ async def _setup_50_threads(
         mail_overdue_days=3,
         mail_resolved_after_days=21,
         mail_user_address="me@example.com",
+        mail_min_interactions=1,  # eval fixture tests briefing logic, not threshold
     )
 
     GraphMemory._reset_for_tests()
@@ -143,59 +144,89 @@ async def _setup_50_threads(
             }
         )
 
-    # 21..30: Contact started thread 5 days ago, user has not replied (>= 3 days overdue)
-    # expected_replied = False, expected_awaiting = True
+    # 21..30: I started thread 8 days ago, client replied 5 days ago, I haven't replied since
+    # (state = awaiting_you, >= 3 days overdue)
+    # expected_replied = True (client replied to me), expected_awaiting = True
     for i in range(21, 31):
         t_id = f"t{i:02d}"
         contact = f"client{i:02d}@partner.org"
         contact_name = f"Client {i:02d}"
-        m1_id = f"<m{t_id}_1@partner.org>"
-        labels[f"thread:{m1_id.strip('<>')}"] = {"replied": False, "awaiting": True}
+        m1_id = f"<m{t_id}_1@example.com>"
+        m2_id = f"<m{t_id}_2@partner.org>"
+        labels[f"thread:{m1_id.strip('<>')}"] = {"replied": True, "awaiting": True}
 
         records.append(
             {
                 "message_id": m1_id,
                 "in_reply_to": None,
                 "references": [],
+                "sender": "Me <me@example.com>",
+                "sender_address": "me@example.com",
+                "to": [f"{contact_name} <{contact}>"],
+                "date": (now - timedelta(days=8)).isoformat(),
+                "direction": "outbound",
+                "subject": f"Partnership Inquiry {t_id}",
+            }
+        )
+        records.append(
+            {
+                "message_id": m2_id,
+                "in_reply_to": m1_id,
+                "references": [m1_id],
                 "sender": f"{contact_name} <{contact}>",
                 "sender_address": contact,
                 "to": ["Me <me@example.com>"],
                 "date": (now - timedelta(days=5)).isoformat(),
                 "direction": "inbound",
-                "subject": f"Partnership Request {t_id}",
+                "subject": f"Re: Partnership Inquiry {t_id}",
             }
         )
 
-    # 31..40: Contact started thread 1 day ago, user has not replied (< 3 days overdue)
-    # expected_replied = False, expected_awaiting = False
+    # 31..40: I started thread 3 days ago, client replied 1 day ago, not yet overdue
+    # (state = awaiting_you, < 3 days overdue)
+    # expected_replied = True (client replied to me), expected_awaiting = False (not yet overdue)
     for i in range(31, 41):
         t_id = f"t{i:02d}"
         contact = f"client{i:02d}@partner.org"
         contact_name = f"Client {i:02d}"
-        m1_id = f"<m{t_id}_1@partner.org>"
-        labels[f"thread:{m1_id.strip('<>')}"] = {"replied": False, "awaiting": False}
+        m1_id = f"<m{t_id}_1@example.com>"
+        m2_id = f"<m{t_id}_2@partner.org>"
+        labels[f"thread:{m1_id.strip('<>')}"] = {"replied": True, "awaiting": False}
 
         records.append(
             {
                 "message_id": m1_id,
                 "in_reply_to": None,
                 "references": [],
+                "sender": "Me <me@example.com>",
+                "sender_address": "me@example.com",
+                "to": [f"{contact_name} <{contact}>"],
+                "date": (now - timedelta(days=3)).isoformat(),
+                "direction": "outbound",
+                "subject": f"Quick Note {t_id}",
+            }
+        )
+        records.append(
+            {
+                "message_id": m2_id,
+                "in_reply_to": m1_id,
+                "references": [m1_id],
                 "sender": f"{contact_name} <{contact}>",
                 "sender_address": contact,
                 "to": ["Me <me@example.com>"],
                 "date": (now - timedelta(days=1)).isoformat(),
                 "direction": "inbound",
-                "subject": f"Quick Note {t_id}",
+                "subject": f"Re: Quick Note {t_id}",
             }
         )
 
-    # 41..45: Inactive threads from 30 days ago (timeout to resolved after 21 days)
+    # 41..45: I sent a message 30 days ago, no reply (> 21 days → timeout to resolved)
     # expected_replied = False, expected_awaiting = False
     for i in range(41, 46):
         t_id = f"t{i:02d}"
         contact = f"archive{i:02d}@archive.org"
         contact_name = f"Archive {i:02d}"
-        m1_id = f"<m{t_id}_1@archive.org>"
+        m1_id = f"<m{t_id}_1@example.com>"
         labels[f"thread:{m1_id.strip('<>')}"] = {"replied": False, "awaiting": False}
 
         records.append(
@@ -203,23 +234,25 @@ async def _setup_50_threads(
                 "message_id": m1_id,
                 "in_reply_to": None,
                 "references": [],
-                "sender": f"{contact_name} <{contact}>",
-                "sender_address": contact,
-                "to": ["Me <me@example.com>"],
+                "sender": "Me <me@example.com>",
+                "sender_address": "me@example.com",
+                "to": [f"{contact_name} <{contact}>"],
                 "date": (now - timedelta(days=30)).isoformat(),
-                "direction": "inbound",
+                "direction": "outbound",
                 "subject": f"Archived Thread {t_id}",
             }
         )
 
-    # 46..50: Contact sent message, but user replied 1 hour ago (awaiting_them)
+    # 46..50: I started thread 5 hrs ago, vendor replied, I already replied 1 hr ago
+    # (state = awaiting_them: I replied last, waiting for vendor)
     # expected_replied = False, expected_awaiting = False
     for i in range(46, 51):
         t_id = f"t{i:02d}"
         contact = f"vendor{i:02d}@vendor.com"
         contact_name = f"Vendor {i:02d}"
-        m1_id = f"<m{t_id}_1@vendor.com>"
-        m2_id = f"<m{t_id}_2@example.com>"
+        m1_id = f"<m{t_id}_1@example.com>"
+        m2_id = f"<m{t_id}_2@vendor.com>"
+        m3_id = f"<m{t_id}_3@example.com>"
         labels[f"thread:{m1_id.strip('<>')}"] = {"replied": False, "awaiting": False}
 
         records.append(
@@ -227,11 +260,11 @@ async def _setup_50_threads(
                 "message_id": m1_id,
                 "in_reply_to": None,
                 "references": [],
-                "sender": f"{contact_name} <{contact}>",
-                "sender_address": contact,
-                "to": ["Me <me@example.com>"],
+                "sender": "Me <me@example.com>",
+                "sender_address": "me@example.com",
+                "to": [f"{contact_name} <{contact}>"],
                 "date": (now - timedelta(hours=5)).isoformat(),
-                "direction": "inbound",
+                "direction": "outbound",
                 "subject": f"Invoice {t_id}",
             }
         )
@@ -240,6 +273,19 @@ async def _setup_50_threads(
                 "message_id": m2_id,
                 "in_reply_to": m1_id,
                 "references": [m1_id],
+                "sender": f"{contact_name} <{contact}>",
+                "sender_address": contact,
+                "to": ["Me <me@example.com>"],
+                "date": (now - timedelta(hours=3)).isoformat(),
+                "direction": "inbound",
+                "subject": f"Re: Invoice {t_id}",
+            }
+        )
+        records.append(
+            {
+                "message_id": m3_id,
+                "in_reply_to": m2_id,
+                "references": [m1_id, m2_id],
                 "sender": "Me <me@example.com>",
                 "sender_address": "me@example.com",
                 "to": [f"{contact_name} <{contact}>"],
@@ -287,7 +333,7 @@ async def test_50_thread_eval_precision_criterion(tmp_path: Path, fake_clock: Fa
         assert precision_replied >= 0.9, (
             f"Replied precision {precision_replied:.2f} < 0.90 (TP={tp_replied}, FP={fp_replied})"
         )
-        assert tp_replied == 20  # Exactly all 20 threads (1..20) found
+        assert tp_replied == 40  # Threads 1..40 all have client replying to my outbound
 
         # 2. Test awaiting / overdue candidates ("You haven't answered ... in X days")
         overdue_candidates = await _mail_overdue_candidates(
@@ -310,7 +356,7 @@ async def test_50_thread_eval_precision_criterion(tmp_path: Path, fake_clock: Fa
             f"Awaiting precision {precision_awaiting:.2f} < 0.90 "
             f"(TP={tp_awaiting}, FP={fp_awaiting})"
         )
-        assert tp_awaiting == 20  # Exactly all 20 threads (11..30) found
+        assert tp_awaiting == 20  # Threads 11..30 have awaiting=True (replied but overdue)
 
     finally:
         await ingest.stop()

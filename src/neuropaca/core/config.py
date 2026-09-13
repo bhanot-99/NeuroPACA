@@ -344,6 +344,12 @@ class Config:
     mail_password_command: str = ""
     mail_folders: list[str] = field(default_factory=lambda: ["INBOX", "Sent"])
     mail_user_address: str = ""
+    # Two-way filter (s1-mail-two-way-filter): only graph-promote mail that
+    # involves genuine human back-and-forth — i.e. emails I sent or replies
+    # to my sent messages — and only once enough interactions exist to warrant
+    # a persistent node.
+    mail_min_interactions: int = 3  # two-way touches before person/thread enter graph
+    mail_max_threads_per_person: int = 5  # cap on active thread nodes per person
     # S2 · software projects / repositories (VISION_PHASES.md).
     project_tracking_enabled: bool = False
     project_poll_interval_seconds: float = 300.0
@@ -546,6 +552,12 @@ class Config:
             errs.append(f"mail_snippet_chars must be >= 0, got {self.mail_snippet_chars}")
         if self.mail_enabled and not self.mail_spool_dir:
             errs.append("mail_spool_dir must not be empty when mail_enabled is on")
+        if self.mail_min_interactions < 1:
+            errs.append(f"mail_min_interactions must be >= 1, got {self.mail_min_interactions}")
+        if self.mail_max_threads_per_person < 1:
+            errs.append(
+                f"mail_max_threads_per_person must be >= 1, got {self.mail_max_threads_per_person}"
+            )
 
         for name in (
             "project_poll_interval_seconds",
