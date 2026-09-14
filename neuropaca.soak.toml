@@ -14,11 +14,8 @@
 #   python scripts/validate_b7_dryrun.py --log data/actions.jsonl
 #
 # Not committed as the default config — `neuropaca.toml` (B9, systemd) ships
-# with dry-run on and only the safe tier enabled, same as this file, and (as
-# of A6.1-A6.3, 2026-09-14) for an additional reason on top of D-14(c): the
-# "dangerous"-tier voice hands (open_app / adjust_volume / adjust_brightness)
-# have no real confirmation answerer yet at all — see neuropaca.toml's own
-# top-of-file note.
+# with dry-run on and only the safe tier enabled, same as this file, per
+# D-14(c).
 
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
 # B12/dormant · no current caller (see neuropaca.toml).
@@ -54,15 +51,6 @@ webapp_browser_app_ids = ["brave-browser"]
 # Deliberately just this repo: real edit activity, and the only root that could
 # ever be written to is one under version control.
 watch_paths = ["/home/bhanot/NeuroPaca"]
-
-# A6.1-A6.3 (VISION_PHASES.md A6) · voice, on here too — this file's whole
-# point is dry-run review, so a voice command still gets transcribed and
-# classified and its proposal still lands in actions.jsonl, it just never
-# executes (action_dry_run below). Same "both" activation as neuropaca.toml.
-voice_enabled = true
-voice_commands_enabled = true
-voice_speech_enabled = true
-voice_activation_mode = "both"
 
 # L5 · drive. Defaults — the whole point is to observe the shipped gradient.
 pressure_low_threshold = 1.0

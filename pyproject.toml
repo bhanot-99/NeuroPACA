@@ -20,11 +20,11 @@ dependencies = [
 
 [project.scripts]
 # The `neuropaca` CLI client (B5, `interface/cli.py`) was removed by user
-# decision — no terminal/text control surface going forward, superseded by a
-# future voice interface. `rich` (added for the CLI's terminal renderers) was
-# removed from dependencies above for the same reason: nothing imports it any
-# more. The daemon itself is unaffected — `neuropacad` is still the systemd
-# unit's entry point.
+# decision — no terminal/text control surface will be maintained going
+# forward. `rich` (added for the CLI's terminal renderers) was removed from
+# dependencies above for the same reason: nothing imports it any more. The
+# daemon itself is unaffected — `neuropacad` is still the systemd unit's
+# entry point.
 neuropacad = "neuropaca.daemon:main"
 
 [project.optional-dependencies]

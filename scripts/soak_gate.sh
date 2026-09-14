@@ -93,8 +93,8 @@ echo "ok: the activity collector reports healthy, window✓ live"
 
 # --- 4. the daemon's own health dump is fresh (BL-1, post-terminal-removal) ---
 # The L9 socket / CLI this check used to prove (`neuropaca health`) was removed
-# by user decision — no terminal control surface, superseded eventually by
-# voice. What this check actually protects is unchanged: prove the daemon's own
+# by user decision — no terminal control surface will be maintained going
+# forward. What this check actually protects is unchanged: prove the daemon's own
 # account of itself is reachable before spending a week soaking one nobody can
 # read. That account is now a file (`config.health_dump_path`,
 # `orchestration/orchestrator.py`'s `_health_dump_loop`), written under the same

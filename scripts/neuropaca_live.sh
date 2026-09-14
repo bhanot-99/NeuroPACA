@@ -1,28 +1,15 @@
 #!/usr/bin/env bash
-# NeuroPACA — bring the whole live stack up in one step (A6.1-A6.3, 3 of 6 A6
-# sub-phases): the daemon (voice now built in), the 7-day soak supervisor,
-# and the presence tray (push-to-talk button + "hey jarvis" wake word +
-# listening indicator). One script instead of four separate `systemctl`
-# dances, and idempotent — safe to re-run any time to pick up a config or
-# code change.
-#
-# WHAT THIS DOES NOT DO
-#
-# It does not make voice's "dangerous"-tier hands (open_app / adjust_volume /
-# adjust_brightness) execute for real — neuropaca.toml keeps those gated
-# (action_enabled_tiers = ["safe"]) because the confirmation handshake
-# (action/confirm.py) has no real answerer since the L9 CLI/socket was
-# removed, and VISION_PHASES.md gates these three actions behind A6.6 on
-# purpose. Voice still senses, transcribes, VADs and classifies intent for
-# real; it just logs a would-be dangerous command to actions.jsonl rather
-# than running it. See neuropaca.toml's own top-of-file note.
+# NeuroPACA — bring the whole live stack up in one step: the daemon, the
+# 7-day soak supervisor, and the presence tray. One script instead of
+# several separate `systemctl` dances, and idempotent — safe to re-run any
+# time to pick up a config or code change.
 #
 # WHY A RESTART, NOT JUST "IS IT RUNNING"
 #
 # neuropacad.service is very likely already active (it's `enabled` and
 # `WantedBy=graphical-session.target`) — but config is only read at process
-# start, so if neuropaca.toml changed since the daemon last started (voice
-# turned on, a mode changed, etc.) a plain "start if not running" would
+# start, so if neuropaca.toml changed since the daemon last started a plain
+# "start if not running" would
 # silently keep the OLD config resident. This script always restarts
 # neuropacad so what's running matches what's on disk, and relies on the
 # 7-day soak's own healed-time accounting (scripts/soak_state.py) to treat
@@ -55,8 +42,8 @@ UNITS=(neuropacad neuropaca-tray neuropaca-soak neuropaca-soak-tray)
 # (${UNIT_DIR}/neuropacad.service.d/override.conf) redirects NEUROPACA_CONFIG
 # away from neuropaca.toml on this box. Reading the drop-in here instead of
 # hardcoding neuropaca.toml is what let a first version of this script
-# "successfully" validate and restart the daemon while voice silently never
-# loaded, because it was checking a file the daemon doesn't read.
+# "successfully" validate and restart the daemon while checking a file the
+# daemon doesn't actually read.
 LIVE_CONFIG="neuropaca.toml"
 override_conf="${UNIT_DIR}/neuropacad.service.d/override.conf"
 if [ -f "$override_conf" ]; then
@@ -76,27 +63,6 @@ for arg in "$@"; do
     esac
 done
 
-# voice_stt_backend = "gemini" (opt-in, user decision 2026-09-14) is the only
-# thing that turns neuropaca-voice-cloud.service on — it needs a Gemini API
-# key set up first (see scripts/systemd/neuropaca-voice-cloud.service's own
-# comments), so this script must not force-enable it for everyone who runs
-# neuropaca_live.sh with voice_stt_backend left at its "local" default.
-# Deliberately NOT added to UNITS: that array drives the hard pass/fail gate
-# at the end, and a not-yet-configured API key would fail that gate for a
-# unit nobody asked to have running yet. It gets its own install/start/status
-# handling below instead, that degrades to instructions, never a HALT.
-CLOUD_STT_ENABLED=0
-if [ -f "$LIVE_CONFIG" ]; then
-    backend="$(.venv/bin/python3 -c "
-import tomllib
-with open('${LIVE_CONFIG}', 'rb') as f:
-    print(tomllib.load(f).get('voice_stt_backend', 'local'))
-" 2>/dev/null || echo local)"
-    if [ "$backend" = "gemini" ]; then
-        CLOUD_STT_ENABLED=1
-    fi
-fi
-
 print_status() {
     echo
     echo "=== unit status ==="
@@ -107,31 +73,8 @@ print_status() {
     done
 
     echo
-    echo "=== voice ==="
     echo "  live config: ${LIVE_CONFIG}"
-    if [ "$CLOUD_STT_ENABLED" -eq 1 ]; then
-        vc_state="$(systemctl --user is-active neuropaca-voice-cloud.service 2>/dev/null || true)"
-        echo "  cloud STT: enabled (voice_stt_backend=gemini) — neuropaca-voice-cloud.service ${vc_state:-not installed}"
-    else
-        echo "  cloud STT: off (voice_stt_backend=local)"
-    fi
-    if [ -f data/health.json ]; then
-        .venv/bin/python3 -c "
-import json
-try:
-    with open('data/health.json') as f:
-        health = json.load(f)
-except Exception as exc:
-    print(f'  could not read data/health.json: {exc}')
-    raise SystemExit(0)
-modules = {m['name']: m for m in health.get('modules', [])}
-for name in ('voice_capture', 'voice_activation'):
-    m = modules.get(name)
-    if m is None:
-        print(f'  {name}: not running (voice_speech_enabled off, or daemon not restarted yet)')
-    else:
-        print(f'  {name}: {\"ok\" if m.get(\"ok\") else \"DEGRADED\"} — {m.get(\"detail\", \"\")}')"
-    else
+    if [ ! -f data/health.json ]; then
         echo "  data/health.json not found yet — daemon may still be starting"
     fi
 
@@ -142,7 +85,6 @@ for name in ('voice_capture', 'voice_activation'):
     echo
     echo "logs:    tail -f data/neuropaca.log"
     echo "actions: tail -f data/actions.jsonl"
-    echo "say \"hey jarvis\", or click the tray microphone icon, to start a voice command"
 }
 
 if [ "$status_only" -eq 1 ]; then
@@ -154,7 +96,7 @@ echo "=== NeuroPACA — bringing the live stack up ==="
 
 # ---------------------------------------------------------------- preflight
 [ -x .venv/bin/neuropacad ] || {
-    echo "HALT — .venv/bin/neuropacad not found. Run: uv pip install -e '.[stt,vad,audio,wake_word]'"
+    echo "HALT — .venv/bin/neuropacad not found. Run: uv pip install -e '.'"
     exit 1
 }
 [ -f "$LIVE_CONFIG" ] || { echo "HALT — ${LIVE_CONFIG} is missing."; exit 1; }
@@ -165,37 +107,7 @@ import tomllib
 from neuropaca.core.config import Config
 with open('${LIVE_CONFIG}', 'rb') as f:
     cfg = Config(**tomllib.load(f))
-print(f'   OK — voice_activation_mode={cfg.voice_activation_mode!r} '
-      f'action_dry_run={cfg.action_dry_run} action_enabled_tiers={cfg.action_enabled_tiers}')
-if not cfg.voice_speech_enabled:
-    print('   NOTE — voice_speech_enabled is False; voice will not start with the daemon.')
-"
-
-echo "-- checking voice runtime dependencies"
-.venv/bin/python3 -c "
-import importlib.util, sys
-missing = [m for m in ('faster_whisper', 'silero_vad', 'sounddevice', 'openwakeword')
-           if importlib.util.find_spec(m) is None]
-if missing:
-    print('   MISSING: ' + ', '.join(missing))
-    print('   run: uv pip install -e \".[stt,vad,audio]\"')
-    print('        ./scripts/install_wake_word_extra.sh   (openwakeword — needs --no-deps, see the script)')
-    sys.exit(1)
-print('   all voice deps importable (faster_whisper, silero_vad, sounddevice, openwakeword)')
-"
-
-echo "-- checking a microphone is visible to PortAudio"
-.venv/bin/python3 -c "
-try:
-    import sounddevice as sd
-    n = sum(1 for d in sd.query_devices() if d['max_input_channels'] > 0)
-except Exception as exc:
-    print(f'   WARNING — could not query audio devices: {exc}')
-else:
-    if n:
-        print(f'   {n} input device(s) available')
-    else:
-        print('   WARNING — no microphone input device found; voice will load but never hear anything')
+print(f'   OK — action_dry_run={cfg.action_dry_run} action_enabled_tiers={cfg.action_enabled_tiers}')
 "
 
 # ------------------------------------------------- install/refresh the units
@@ -233,28 +145,6 @@ for u in "${UNITS[@]}"; do
 done
 systemctl --user daemon-reload
 
-# ------------------------------------------------- the cloud STT helper (opt-in)
-if [ "$CLOUD_STT_ENABLED" -eq 1 ]; then
-    installed_vc="${UNIT_DIR}/neuropaca-voice-cloud.service"
-    if [ ! -f "$installed_vc" ]; then
-        sed "s|__REPO__|${REPO}|g" scripts/systemd/neuropaca-voice-cloud.service >"$installed_vc"
-        systemctl --user daemon-reload
-        echo "-- installed neuropaca-voice-cloud.service (new)"
-    fi
-    if grep -q '__API_KEY_CMD__' "$installed_vc" 2>/dev/null; then
-        echo "-- neuropaca-voice-cloud.service needs one-time setup before it can start:"
-        echo "     1. store your Gemini API key:"
-        echo "          secret-tool store --label='NeuroPACA Gemini API key' service neuropaca-gemini account <you>"
-        echo "     2. edit ${installed_vc}, replace __API_KEY_CMD__ with:"
-        echo "          secret-tool lookup service neuropaca-gemini account <you>"
-        echo "     3. systemctl --user daemon-reload && systemctl --user enable --now neuropaca-voice-cloud.service"
-        echo "   until then, voice_stt_backend=gemini just falls back to local Whisper every time (by design)."
-    else
-        echo "-- enabling the voice-cloud helper (Gemini STT bridge)"
-        systemctl --user enable --now neuropaca-voice-cloud.service
-    fi
-fi
-
 # ------------------------------------------------------------------ bring up
 # neuropacad: always restart, so a config change actually takes effect (see
 # the docstring above) — `enable` alone would leave an already-running
@@ -270,7 +160,7 @@ systemctl --user restart neuropacad.service
 echo "-- enabling the 7-day soak supervisor (continues its existing accrued runtime)"
 systemctl --user enable --now neuropaca-soak.service
 
-echo "-- enabling the presence tray (push-to-talk button + listening indicator)"
+echo "-- enabling the presence tray"
 systemctl --user enable --now neuropaca-tray.service
 
 echo "-- enabling the soak's own tray widget"

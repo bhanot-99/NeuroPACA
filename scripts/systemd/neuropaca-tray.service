@@ -16,7 +16,7 @@
 #
 # REBUILT WITHOUT THE L9 SOCKET -- this used to poll a `presence` op over
 # the L9 socket; that whole socket/CLI surface was removed (no terminal/text
-# control going forward -- voice is the planned replacement), and with it
+# control surface will be maintained going forward), and with it
 # went this tray's `pause` / `feedback` buttons and its on-demand `mirror`
 # item -- those needed to write back to the daemon, and there is no channel
 # left to write through. What is left is read-only: the presence state
