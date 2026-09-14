@@ -31,9 +31,11 @@ from neuropaca.core.enums import SignalType
 from neuropaca.core.labels import RELATIONAL_THOUGHTS, THOUGHT_TEMPLATES
 from neuropaca.core.models import Node
 from neuropaca.learning.insight import INSIGHT_CATEGORIES, Insight
+from neuropaca.learning.voice_command import VoiceCommand
 from neuropaca.learning.voice_intent import VOICE_INTENT_CATEGORIES, VoiceIntent
 
 _ALIAS_RE = re.compile(r"^n[1-9][0-9]*$")
+_WORD_ALIAS_RE = re.compile(r"^w[1-9][0-9]*$")
 
 # One logical line per rule — this llama.cpp GBNF parser ends a rule at a
 # top-level newline; a multi-line body segfaults the sampler (B0 spike note).
@@ -569,6 +571,155 @@ def parse_voice_intent(
         cited_node_id=alias_to_id[cited] if isinstance(cited, str) else None,
         raw_text=raw_text,
     )
+
+
+# ============================================================================
+# A6.2 · voice as hands — safe tier only (VISION_PHASES.md).
+#
+# Tier 1: grammar-constrained span-pointer extraction via the interactive model.
+# Utterance words are aliased as w1, w2, ... and the model selects an action
+# (closed enum or null) and a start/end word alias pointer for the target.
+# ============================================================================
+
+VOICE_COMMAND_ACTIONS: tuple[str, ...] = (
+    "open",
+    "close",
+    "search",
+    "increase",
+    "decrease",
+)
+
+_VOICE_COMMAND_GRAMMAR_TEMPLATE = (
+    'root ::= "{" ws "\\"action\\":" ws action ws "," ws '
+    '"\\"target_start\\":" ws target ws "," ws "\\"target_end\\":" ws target ws "}"\n'
+    'action ::= "\\"open\\"" | "\\"close\\"" | "\\"search\\"" | '
+    '"\\"increase\\"" | "\\"decrease\\"" | "null"\n'
+    'target ::= __ALIASES__ | "null"\n'
+    "ws ::= [ \\t\\n]*\n"
+)
+
+_VOICE_COMMAND_SYSTEM = (
+    "You are an extractive command parser for a local neuromorphic agent. "
+    "Given a user utterance and its numbered word tokens, identify if the user is issuing "
+    "an imperative action command. If so, select the action and the exact span of word tokens "
+    "representing the target of the action.\n\n"
+    "MECHANICAL INSTRUCTIONS:\n"
+    "1. You must select an action from: open, close, search, increase, decrease, or null.\n"
+    "2. If an action is identified with a target, output target_start and target_end as the "
+    'bracketed word tokens (e.g., "w1", "w2").\n'
+    "3. target_end MUST be at or after target_start. Never reverse the span.\n"
+    "4. If an action has no explicit target word in the utterance, set target_start and "
+    "target_end to null.\n"
+    "5. If the utterance is not an action command, set action, target_start, and "
+    "target_end all to null.\n"
+    "6. Do not invent words or tokens. Rely strictly on the numbered words provided.\n"
+)
+
+_VOICE_COMMAND_FEW_SHOT = (
+    "[EXAMPLES]\n"
+    'Utterance: "can you please launch Google Chrome"\n'
+    "Words: [w1] can, [w2] you, [w3] please, [w4] launch, [w5] Google, [w6] Chrome\n"
+    'Answer: {"action": "open", "target_start": "w5", "target_end": "w6"}\n\n'
+    'Utterance: "kill the terminal right away"\n'
+    "Words: [w1] kill, [w2] the, [w3] terminal, [w4] right, [w5] away\n"
+    'Answer: {"action": "close", "target_start": "w3", "target_end": "w3"}\n\n'
+    'Utterance: "look up quantum computing on the web"\n'
+    "Words: [w1] look, [w2] up, [w3] quantum, [w4] computing, [w5] on, [w6] the, [w7] web\n"
+    'Answer: {"action": "search", "target_start": "w3", "target_end": "w4"}\n\n'
+    'Utterance: "turn up the screen brightness"\n'
+    "Words: [w1] turn, [w2] up, [w3] the, [w4] screen, [w5] brightness\n"
+    'Answer: {"action": "increase", "target_start": "w5", "target_end": "w5"}\n\n'
+    'Utterance: "make the speakers louder"\n'
+    "Words: [w1] make, [w2] the, [w3] speakers, [w4] louder\n"
+    'Answer: {"action": "increase", "target_start": null, "target_end": null}\n\n'
+    'Utterance: "I worked on the project for three hours today"\n'
+    "Words: [w1] I, [w2] worked, [w3] on, [w4] the, [w5] project, "
+    "[w6] for, [w7] three, [w8] hours, [w9] today\n"
+    'Answer: {"action": null, "target_start": null, "target_end": null}\n\n'
+)
+
+VOICE_COMMAND_MAX_TOKENS = 64
+
+
+def _tokenize_words(text: str) -> list[str]:
+    """Tokenize utterance into words with outer punctuation stripped.
+
+    Assigns w1, w2, w3... word positions for span-pointer extraction.
+    """
+    words: list[str] = []
+    for raw_w in text.split():
+        cleaned = raw_w.strip(".,!?;:\"'()[]{}<>-`~/\\")
+        if cleaned:
+            words.append(cleaned)
+    return words
+
+
+def build_voice_command_grammar(word_aliases: Sequence[str]) -> str:
+    """Splice the utterance's word aliases into the voice command grammar.
+
+    `word_aliases` must be exactly the word aliases present in the prompt
+    (w1, w2, ...).
+    """
+    if not word_aliases:
+        raise ValueError("at least one word alias is required")
+    for alias in word_aliases:
+        if not _WORD_ALIAS_RE.match(alias):
+            raise ValueError(f"not a word alias: {alias!r}")
+    if len(set(word_aliases)) != len(word_aliases):
+        raise ValueError(f"duplicate aliases: {list(word_aliases)!r}")
+    enum = " | ".join(f'"\\"{alias}\\""' for alias in word_aliases)
+    return _VOICE_COMMAND_GRAMMAR_TEMPLATE.replace("__ALIASES__", enum)
+
+
+def build_voice_command_prompt(text: str, words: Sequence[str]) -> str:
+    """The system/mechanical-rules block, six worked examples, then the target
+    utterance with its numbered word tokens."""
+    word_tokens = ", ".join(f"[w{i + 1}] {w}" for i, w in enumerate(words))
+    return (
+        _VOICE_COMMAND_SYSTEM
+        + "\n"
+        + _VOICE_COMMAND_FEW_SHOT
+        + "[TARGET]\n"
+        + f'Utterance: "{text}"\n'
+        + f"Words: {word_tokens}\n"
+        + "Answer: "
+    )
+
+
+def parse_voice_command(raw: str, words: Sequence[str]) -> VoiceCommand | None:
+    """The hard validation gate for span-pointer extraction.
+
+    Rejects reversed spans, out-of-range aliases, or unknown actions.
+    Assembles target text deterministically in plain code.
+    """
+    obj = _first_json_object(raw)
+    if obj is None:
+        return None
+
+    action = obj.get("action")
+    if action is None:
+        return None
+    if not isinstance(action, str) or action not in VOICE_COMMAND_ACTIONS:
+        return None
+
+    start = obj.get("target_start")
+    end = obj.get("target_end")
+
+    if start is None and end is None:
+        return VoiceCommand(action=action, target=None, source="model")
+
+    if isinstance(start, str) and isinstance(end, str):
+        alias_to_idx = {f"w{i + 1}": i for i in range(len(words))}
+        if start not in alias_to_idx or end not in alias_to_idx:
+            return None
+        s_idx = alias_to_idx[start]
+        e_idx = alias_to_idx[end]
+        if e_idx < s_idx:
+            return None
+        target_text = " ".join(words[s_idx : e_idx + 1])
+        return VoiceCommand(action=action, target=target_text, source="model")
+
+    return None
 
 
 # gen-ref: 2eedf333

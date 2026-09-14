@@ -117,6 +117,8 @@ async def test_voice_intent_parser_classifies_and_enriches_fact(tmp_path: Path) 
 
     entity_id = "utterance:deadbeef"
     text = "open spotify"
+    classified_events: list[Event] = []
+    bus.subscribe(EventType.VOICE_INTENT_CLASSIFIED, classified_events.append)
     try:
         bus.publish(
             Event(
@@ -129,6 +131,12 @@ async def test_voice_intent_parser_classifies_and_enriches_fact(tmp_path: Path) 
         await store.flush()
 
         assert parser.health().detail.startswith("interactive model loaded")
+        assert len(classified_events) == 1
+        assert classified_events[0].payload == {
+            "entity_id": entity_id,
+            "text": text,
+            "category": "other",
+        }
         records = await store.at(datetime.now(UTC))
         matching = [r for r in records if r.subject == entity_id]
         assert len(matching) == 1
@@ -137,6 +145,7 @@ async def test_voice_intent_parser_classifies_and_enriches_fact(tmp_path: Path) 
         assert matching[0].attrs["voice_intent"] == "other"  # FakeInferenceBackend's default
         assert matching[0].source == "voice_intent"
     finally:
+        bus.unsubscribe(EventType.VOICE_INTENT_CLASSIFIED, classified_events.append)
         await parser.stop()
         await bus.stop()
         await store.stop()

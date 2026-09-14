@@ -156,6 +156,17 @@ class VoiceIntentParser(BaseModule):
             return
 
         self._store_intent(entity_id, intent.category, intent.cited_node_id, text)
+        self.event_bus.publish(
+            Event(
+                event_type=EventType.VOICE_INTENT_CLASSIFIED,
+                source=self.name,
+                payload={
+                    "entity_id": entity_id,
+                    "text": text,
+                    "category": intent.category,
+                },
+            )
+        )
         self._classified += 1
         self._last_at = datetime.now(UTC)
 

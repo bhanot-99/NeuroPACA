@@ -374,6 +374,14 @@ class Config:
     voice_enabled: bool = False
     voice_utterances_path: str = "data/plugins/voice/utterances.jsonl"
     voice_poll_interval_seconds: float = 5.0
+    # A6.2 · voice as hands (VISION_PHASES.md). Layered opt-in: voice_enabled
+    # can run as a passive sense without commands being enabled. The actions
+    # this proposes (open_app/adjust_volume/adjust_brightness) all run a
+    # process, so they are `dangerous` tier (rules.md §5.2) — turning this on
+    # alone does nothing until `action_enabled_tiers` also includes
+    # "dangerous", and even then every command still pauses for the same
+    # human confirmation handshake any other dangerous action requires.
+    voice_commands_enabled: bool = False
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -581,6 +589,8 @@ class Config:
 
         if self.voice_enabled and not self.voice_utterances_path:
             errs.append("voice_utterances_path must not be empty when voice_enabled is on")
+        if self.voice_commands_enabled and not self.voice_enabled:
+            errs.append("voice_enabled must be on for voice_commands_enabled to do anything")
 
         if self.calendar_enabled and not self.calendar_ics_path:
             errs.append("calendar_ics_path must not be empty when calendar_enabled is on")

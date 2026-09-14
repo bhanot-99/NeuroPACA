@@ -5,9 +5,12 @@
 (Architecture.md §11b, B7)."""
 
 from neuropaca.action.actions import (
+    AdjustBrightnessAction,
+    AdjustVolumeAction,
     FileWriteAction,
     MemoryWriteAction,
     NotificationAction,
+    OpenAppAction,
     RunCommandAction,
 )
 from neuropaca.action.audit import ActionAudit
@@ -23,12 +26,15 @@ __all__ = [
     "ActionExecutor",
     "ActionResult",
     "ActionTier",
+    "AdjustBrightnessAction",
+    "AdjustVolumeAction",
     "BaseAction",
     "CommandOutcome",
     "ConfirmationBroker",
     "FileWriteAction",
     "MemoryWriteAction",
     "NotificationAction",
+    "OpenAppAction",
     "PendingConfirmation",
     "Quarantine",
     "RunCommandAction",
