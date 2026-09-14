@@ -181,6 +181,11 @@ class VoiceActivationModule(BaseModule):
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.VOICE_PTT_SESSION_ENDED, self.on_session_ended)
         mode = self.config.voice_activation_mode
+        if mode in ("tray", "both"):
+            path = Path(self.config.voice_ptt_trigger_path)
+            trigger = await asyncio.to_thread(_read_trigger, path)
+            if trigger is not None:
+                self._last_seq = trigger.get("seq")
         if mode == "hotkey":
             self._hotkey_available = await asyncio.to_thread(probe_global_shortcuts_portal)
             if not self._hotkey_available:

@@ -472,4 +472,49 @@ async def test_domain_plugins_wired_in_build_modules(tmp_path: Path) -> None:
     assert "reading_list" in host.plugins
 
 
-# gen-ref: 24d89851
+async def test_plugin_host_persists_and_reloads_watermarks(tmp_path: Path) -> None:
+    clock = FakeClock(wall=datetime(2026, 9, 14, 12, 0, tzinfo=UTC))
+    bus = EventBus()
+    cfg = Config(inference_backend="fake")
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    store = EpisodeStore(tmp_path / "episodes.sqlite")
+    await store.start()
+
+    watermarks_file = tmp_path / "watermarks.json"
+    plugin = FakeSensingPlugin(name="test_sensor")
+
+    host1 = PluginHost(
+        bus,
+        cfg,
+        gm,
+        store,
+        plugins=[plugin],
+        clock=clock,
+        watermarks_path=watermarks_file,
+    )
+    await host1.initialize()
+    assert host1.last_poll_for("test_sensor") is None
+
+    # Tick at 12:00
+    await host1.poll_tick()
+    assert host1.last_poll_for("test_sensor") == datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+    assert watermarks_file.is_file()
+    await host1.stop()
+
+    # Advance clock and create a second host reusing the same watermarks file
+    await clock.advance(1800.0)
+    host2 = PluginHost(
+        bus,
+        cfg,
+        gm,
+        store,
+        plugins=[plugin],
+        clock=clock,
+        watermarks_path=watermarks_file,
+    )
+    await host2.initialize()
+    # The new host should have recovered the 12:00 watermark from the file
+    assert host2.last_poll_for("test_sensor") == datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+    await host2.stop()
+    await store.stop()
+    GraphMemory._reset_for_tests()

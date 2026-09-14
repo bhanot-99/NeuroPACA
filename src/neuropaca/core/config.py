@@ -372,6 +372,7 @@ class Config:
     reading_enabled: bool = False
     reading_list_path: str = "data/plugins/reading/reading_list.json"
     reading_poll_interval_seconds: float = 300.0
+    plugin_watermarks_path: str = "data/plugin_watermarks.json"
     # A6.1 · voice as a sense, text-only (VISION_PHASES.md). Each line appended
     # to voice_utterances_path is one typed utterance, standing in for STT
     # until A6.3. poll_interval is short relative to calendar/reading's — an

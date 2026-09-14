@@ -192,4 +192,28 @@ async def test_plugin_host_integration_seeds_new_hub_and_forget_scrubs_file(
         GraphMemory._reset_for_tests()
 
 
-# gen-ref: 233c4d43
+async def test_voice_plugin_resolves_app_identity(tmp_path: Path) -> None:
+    from neuropaca.diagnosis.app_identity import AppIdentity
+
+    path = tmp_path / "utterances.jsonl"
+    ts = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+    append_utterance(path, "open Brave browser", ts=ts)
+    append_utterance(path, "what is the weather today", ts=ts)
+
+    identity = AppIdentity.from_dict({
+        "alias": {"brave-browser": "brave", "brave": "brave"},
+        "non_app": [],
+    })
+    plugin = VoicePlugin(path, identity=identity)
+    items = await plugin.items(_EPOCH)
+
+    assert len(items) == 2
+    app_item = next(it for it in items if it.entity_id.startswith("app:"))
+    assert app_item.entity_id == "app:brave"
+    assert app_item.node_type == NodeType.APP
+    assert app_item.label == "Brave"
+    assert (app_item.entity_id, "domain:voice", RelationType.PART_OF) in app_item.edges
+
+    concept_item = next(it for it in items if it.entity_id.startswith("utterance:"))
+    assert concept_item.node_type == NodeType.CONCEPT
+    assert concept_item.label == "what is the weather today"

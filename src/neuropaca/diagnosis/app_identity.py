@@ -153,7 +153,8 @@ class AppIdentity:
         hit = self._alias.get(raw) or self._alias.get(raw.lower())
         if hit is not None:
             return hit
-        return normalise(raw)
+        norm = normalise(raw)
+        return self._alias.get(norm, norm)
 
     def is_non_app(self, raw: str | None) -> bool:
         """True for a process ``name`` that is a thread label or a bare shell —

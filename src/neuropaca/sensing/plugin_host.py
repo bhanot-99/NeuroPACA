@@ -23,12 +23,15 @@ PluginHost(BaseModule) hosts plugins and owns, once, correctly:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
@@ -134,12 +137,16 @@ class PluginHost(BaseModule):
         *,
         plugins: Sequence[Plugin] | None = None,
         clock: Clock | None = None,
+        watermarks_path: Path | str | None = None,
         name: str = "plugin_host",
     ) -> None:
         super().__init__(name, event_bus, config)
         self._gm = graph_memory
         self._store = episode_store
         self._clock: Clock = clock or SystemClock()
+        self._watermarks_path = (
+            Path(watermarks_path).expanduser().resolve() if watermarks_path else None
+        )
 
         self._plugins: dict[str, Plugin] = {}
         if plugins:
@@ -269,6 +276,23 @@ class PluginHost(BaseModule):
 
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.VOICE_PTT_SESSION_ENDED, self._on_voice_session_ended)
+        if self._watermarks_path and self._watermarks_path.is_file():
+            try:
+                data = json.loads(self._watermarks_path.read_text("utf-8"))
+                if isinstance(data, dict):
+                    for p_name, ts_str in data.items():
+                        if isinstance(ts_str, str):
+                            with contextlib.suppress(ValueError):
+                                ts = datetime.fromisoformat(ts_str)
+                                if ts.tzinfo is None:
+                                    ts = ts.replace(tzinfo=UTC)
+                                self._last_poll[p_name] = ts
+            except Exception as exc:
+                _log.warning(
+                    "PluginHost failed to load watermarks from %s: %s",
+                    self._watermarks_path,
+                    exc,
+                )
         violations = doctor(self)
         if violations:
             for v in violations:
@@ -359,6 +383,7 @@ class PluginHost(BaseModule):
                         await res
                 except Exception as exc:
                     _log.error("Failed to stop plugin '%s': %s", name, exc)
+        self._save_watermarks()
 
     def health(self) -> ModuleHealth:
         violations = doctor(self)
@@ -542,7 +567,25 @@ class PluginHost(BaseModule):
             if self._facts_written > total_facts_before and self._store is not None:
                 await self._store.flush()
 
+            self._save_watermarks()
+
             return self._facts_written - total_facts_before
+
+    def _save_watermarks(self) -> None:
+        if not self._watermarks_path:
+            return
+        try:
+            self._watermarks_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {k: v.isoformat() for k, v in self._last_poll.items()}
+            tmp_path = self._watermarks_path.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            tmp_path.replace(self._watermarks_path)
+        except Exception as exc:
+            _log.warning(
+                "PluginHost failed to save watermarks to %s: %s",
+                self._watermarks_path,
+                exc,
+            )
 
     async def _integrate_graph_nodes(
         self, desc: PluginDescriptor, item: PluginItem, now: datetime

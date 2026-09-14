@@ -188,12 +188,19 @@ def build_modules(
             )
         )
     if config.voice_enabled:
+        from neuropaca.diagnosis.app_identity import AppIdentity
         from plugins.voice.voice_plugin import VoicePlugin
 
+        identity = (
+            AppIdentity.from_file(config.app_identity_path)
+            if config.app_identity_path
+            else None
+        )
         domain_plugins.append(
             VoicePlugin(
                 utterances_path=config.voice_utterances_path,
                 poll_interval=config.voice_poll_interval_seconds,
+                identity=identity,
             )
         )
     if domain_plugins:
@@ -204,6 +211,7 @@ def build_modules(
                 graph_memory,
                 episode_store=episode_store,
                 plugins=domain_plugins,
+                watermarks_path=getattr(config, "plugin_watermarks_path", None),
                 name="domain_plugins",
             )
         )

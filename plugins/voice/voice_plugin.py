@@ -28,7 +28,10 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from neuropaca.diagnosis.app_identity import AppIdentity
 
 from neuropaca.core.enums import EpisodeKind, EventType, NodeType, RelationType
 from neuropaca.core.models import Event
@@ -43,11 +46,11 @@ _log = logging.getLogger(__name__)
 _LABEL_MAX_CHARS = 60
 
 
-def _utterance_entity_id(text: str, ts: datetime) -> str:
-    """Content-addressed, so re-reading the same file across restarts yields
-    the same entity id (calendar keys off the VEVENT `UID`; reading off the
-    title; an utterance has neither, so it's keyed off its own content)."""
-    digest = hashlib.sha256(f"{ts.isoformat()}|{text}".encode()).hexdigest()
+def _utterance_entity_id(text: str, ts: datetime | None = None) -> str:
+    """Content-addressed by normalized utterance text, so re-reading the same
+    file across restarts or speaking the same utterance yields the same entity
+    id (calendar keys off the VEVENT `UID`; reading off the title)."""
+    digest = hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
     return f"utterance:{digest[:16]}"
 
 
@@ -80,10 +83,12 @@ class VoicePlugin:
         *,
         name: str = "voice",
         poll_interval: float = 5.0,
+        identity: AppIdentity | None = None,
     ) -> None:
         self.name = name
         self.utterances_path = Path(utterances_path).expanduser().resolve()
         self.poll_interval = poll_interval
+        self._identity = identity
         # entity_id -> its exact source line (sans newline), so `forget()` can
         # rewrite the file without one. Not persisted across restarts — same
         # as reading/calendar's own in-memory `_entities`; a restart just
@@ -107,7 +112,7 @@ class VoicePlugin:
                 allow_network=False,
                 allow_subprocesses=False,
             ),
-            entity_prefixes=("utterance:",),
+            entity_prefixes=("utterance:", "app:"),
         )
 
     def _parse_lines(self) -> list[tuple[str, str, datetime]]:
@@ -160,15 +165,30 @@ class VoicePlugin:
         for line, text, ts in self._parse_lines():
             if ts <= since:
                 continue
+
             entity_id = _utterance_entity_id(text, ts)
+            node_type = NodeType.CONCEPT
+            label = _label(text)
+
+            if self._identity is not None:
+                from neuropaca.learning.voice_command import try_pattern_match
+
+                cmd = try_pattern_match(text)
+                if cmd is not None and cmd.action == "open" and cmd.target:
+                    canon = self._identity.resolve(cmd.target)
+                    if canon and not self._identity.is_non_app(canon):
+                        entity_id = f"app:{canon}"
+                        node_type = NodeType.APP
+                        label = self._identity.pretty(canon) or _label(text)
+
             self._entity_lines[entity_id] = line
 
             items.append(
                 PluginItem(
                     entity_id=entity_id,
-                    label=_label(text),
-                    node_type=NodeType.CONCEPT,
-                    node_attributes={"label": _label(text)},
+                    label=label,
+                    node_type=node_type,
+                    node_attributes={"label": label},
                     span=(ts, ts),
                     span_kind=EpisodeKind.VOICE_UTTERANCE_SPAN,
                     fact=(EpisodeKind.PLUGIN_FACT, text, {"source": "typed"}),

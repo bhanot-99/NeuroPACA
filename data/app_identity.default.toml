@@ -52,6 +52,7 @@ non_app = [
 # --- browsers (process name vs app_id) ---
 "brave-browser" = "brave"
 "Brave-Browser" = "brave"
+"brave-web-browser" = "brave"
 "com.brave.Browser" = "brave"
 "google-chrome" = "chrome"
 "google-chrome-stable" = "chrome"
