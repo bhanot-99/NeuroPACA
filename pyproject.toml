@@ -56,53 +56,6 @@ activity = [
 llama = [
     "llama-cpp-python==0.3.35",
 ]
-# A6.3 · speech in (VISION_PHASES.md). Each optional + lazy-imported, same
-# discipline as `llama`/`activity` above: the daemon runs with voice speech
-# input inert if any of these are missing, and CI never installs them.
-# Split into three groups (not one `voice` bundle) so a machine missing, say,
-# PortAudio's system headers doesn't block installing the other two.
-stt = [
-    "faster-whisper==1.0.3",
-    # faster-whisper's `utils.py` imports `requests` directly, but its own
-    # wheel metadata doesn't declare it as a dependency — a newer
-    # `huggingface-hub` no longer pulls it in transitively either, so pip
-    # silently resolves without it and `import faster_whisper` breaks at
-    # runtime. Found by actually installing this extra and running it
-    # (2026-09-14), not assumed — pinned here so the gap doesn't reopen.
-    "requests==2.34.2",
-]
-vad = [
-    "silero-vad==5.1.2",
-]
-audio = [
-    "sounddevice==0.5.1",
-]
-# A6.3 · scripts/voice_cloud_helper.py (user decision 2026-09-14) — the
-# separate, network-capable process GeminiBridgeSttBackend hands audio to.
-# Not imported by src/neuropaca/ at all (the daemon stays PrivateNetwork=true
-# and never depends on this), so it's its own group rather than folded into
-# `stt` — installing voice at all does not imply opting into the cloud path.
-voice_cloud = [
-    "requests==2.34.2",
-]
-# A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
-# original "push-to-talk only, no ambient listening" call): openWakeWord
-# (Apache-2.0, ONNX/tflite, ships pre-trained "hey_jarvis" — no custom
-# training needed). Same optional/lazy/self-disabling discipline as the
-# other three above.
-#
-# `pip install -e ".[wake_word]"` alone FAILS as of 0.6.0: it declares a
-# hard dependency on tflite-runtime, which has no published wheel for Python
-# 3.11+ (an upstream break, not fixable from this project's own metadata —
-# verified 2026-09-14, still true at the time of writing). Run
-# `scripts/install_wake_word_extra.sh` instead, which installs openwakeword
-# with `--no-deps` plus its real onnx-path dependencies explicitly — this
-# extras entry is kept for documentation/discoverability (`pip show
-# neuropaca`, dependency graphs) even though installing it directly errors.
-wake_word = [
-    "openwakeword==0.6.0",
-]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -180,14 +133,6 @@ follow_imports = "skip"
 # llama-cpp-python is an optional extra CI never installs (B4, D-11) and ships
 # no type information — fully untyped whether or not it is present.
 module = ["llama_cpp.*"]
-ignore_missing_imports = true
-follow_imports = "skip"
-
-[[tool.mypy.overrides]]
-# A6.3 (VISION_PHASES.md): faster-whisper, silero-vad, sounddevice are
-# optional extras (`stt`/`vad`/`audio`) CI never installs, same treatment as
-# llama-cpp-python/pywayland above.
-module = ["faster_whisper.*", "silero_vad.*", "sounddevice.*", "openwakeword.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
