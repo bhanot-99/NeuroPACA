@@ -60,7 +60,13 @@ from typing import Any
 _log = logging.getLogger("voice_cloud_helper")
 
 _POLL_INTERVAL_SECONDS = 0.2
-_GEMINI_TIMEOUT_SECONDS = 10.0
+# Verified live 2026-09-14: a real audio call to gemini-3.6-flash took
+# anywhere from ~2s to a 10s timeout, plus one observed transient 503 —
+# 15s + one retry on 503 gives it a real chance without the caller (this
+# helper's own caller is GeminiBridgeSttBackend, with its own separate
+# voice_cloud_timeout_seconds budget) waiting indefinitely.
+_GEMINI_TIMEOUT_SECONDS = 15.0
+_GEMINI_RETRY_DELAY_SECONDS = 1.0
 _TRANSCRIBE_PROMPT = (
     "Transcribe the following short voice-command audio clip verbatim, in "
     "English. Output ONLY the transcription text — no commentary, no "
@@ -87,10 +93,21 @@ def _call_gemini_transcribe(audio_bytes: bytes, api_key: str, model: str) -> str
     """One REST call to Gemini's `generateContent` endpoint with the audio
     inlined as base64 `audio/wav`. Raises on any HTTP/network/shape error —
     the caller turns that into an `{"error": ...}` response file, never lets
-    it propagate into the poll loop."""
+    it propagate into the poll loop.
+
+    The key goes in the `x-goog-api-key` HEADER, never a `?key=` query
+    parameter — found the hard way (2026-09-14): `requests` embeds the full
+    request URL (params included) in its own exception messages, so a
+    query-string key leaks into any `{"error": str(exc)}` response file this
+    helper writes, and into any log line built from that exception. A header
+    never appears in `requests`'s exception text or in `resp.url`, so the
+    same "log the exception" discipline the rest of this codebase relies on
+    (rules.md §2) can't leak it here even by accident.
+    """
     import requests
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {"x-goog-api-key": api_key}
     body = {
         "contents": [
             {
@@ -106,11 +123,36 @@ def _call_gemini_transcribe(audio_bytes: bytes, api_key: str, model: str) -> str
             }
         ]
     }
-    resp = requests.post(url, params={"key": api_key}, json=body, timeout=_GEMINI_TIMEOUT_SECONDS)
+
+    # One retry on a 503 only (Google's own "temporarily overloaded" signal,
+    # observed live 2026-09-14) — never on a 4xx (a bad request/key retrying
+    # would just fail the same way again) and never more than once, so a
+    # sustained outage still surfaces to the caller within a bounded time
+    # instead of doubling this function's worst-case latency indefinitely.
+    for attempt in range(2):
+        resp = requests.post(url, headers=headers, json=body, timeout=_GEMINI_TIMEOUT_SECONDS)
+        if resp.status_code == 503 and attempt == 0:
+            time.sleep(_GEMINI_RETRY_DELAY_SECONDS)
+            continue
+        break
     resp.raise_for_status()
     data = resp.json()
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return str(text).strip()
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        # No candidate at all usually means the prompt itself was blocked
+        # (promptFeedback.blockReason) before any generation happened.
+        reason = (data.get("promptFeedback") or {}).get("blockReason", "no candidates returned")
+        raise RuntimeError(f"Gemini returned no transcription: {reason}")
+
+    parts = candidates[0].get("content", {}).get("parts")
+    if not parts:
+        # A candidate with no parts (e.g. finishReason=SAFETY/RECITATION with
+        # empty content) — same "clear reason, not a bare KeyError" goal.
+        finish_reason = candidates[0].get("finishReason", "unknown")
+        raise RuntimeError(f"Gemini returned an empty response (finishReason={finish_reason})")
+
+    return str(parts[0].get("text", "")).strip()
 
 
 def _write_response(response_dir: Path, request_id: str, payload: dict[str, Any]) -> None:
@@ -152,7 +194,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pending-dir", required=True, type=Path)
     parser.add_argument("--response-dir", required=True, type=Path)
     parser.add_argument("--api-key-cmd", default=None, help="Shell command that prints the API key")
-    parser.add_argument("--model", default="gemini-2.0-flash")
+    # Verified live 2026-09-14: gemini-2.0-flash (the earlier default here)
+    # is retired — Google's own 404 on that model recommends this one.
+    # Re-check scripts/systemd/neuropaca-voice-cloud.service's --model flag
+    # too if this ever needs to change again; the two are set independently.
+    parser.add_argument("--model", default="gemini-3.6-flash")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

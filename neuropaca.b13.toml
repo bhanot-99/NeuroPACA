@@ -133,3 +133,4 @@ voice_enabled = true
 voice_commands_enabled = true
 voice_speech_enabled = true
 voice_activation_mode = "both"
+voice_stt_backend = "gemini"

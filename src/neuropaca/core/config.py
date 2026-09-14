@@ -422,7 +422,14 @@ class Config:
     # to read or round-trip.
     voice_stt_backend: str = "local"
     voice_cloud_bridge_dir: str = "data/voice_cloud"
-    voice_cloud_timeout_seconds: float = 6.0
+    # 6.0 (this field's original value) turned out too tight once measured
+    # against the real API (2026-09-14): a real audio call to Gemini took
+    # anywhere from ~2s up to voice_cloud_helper.py's own 15s timeout (plus
+    # one internal retry on a transient 503), so 6s meant the bridge nearly
+    # always gave up and fell back to local before Gemini could ever answer
+    # — defeating the entire point of turning this on. 18s gives a real
+    # attempt room to finish; the fallback to local still fires if it can't.
+    voice_cloud_timeout_seconds: float = 18.0
     # "both" (user decision 2026-09-14) runs the tray toggle and the wake-word
     # tap at once — click to talk, or just say the phrase — see
     # interface/activation.py's module docstring for how the two trigger
