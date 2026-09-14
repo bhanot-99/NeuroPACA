@@ -12,8 +12,7 @@ Grouped by blocker so a failure names the thing it protects:
 
 BL-7 (`doctor` / `export` / `panic`, the offline verbs) was removed along
 with `interface/offline.py` and the rest of the terminal accessibility
-surface — no terminal/CLI control going forward, superseded by a future
-voice interface.
+surface — no terminal/CLI control surface will be maintained going forward.
 """
 
 from __future__ import annotations

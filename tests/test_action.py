@@ -195,9 +195,9 @@ async def test_gui_true_reports_a_fast_failure(tmp_path) -> None:
 
 
 async def test_gui_true_only_passes_the_allowlisted_env_vars(tmp_path) -> None:
-    """`gui=True` (A6.2's `OpenAppAction`, added when live-testing a real
-    voice-triggered app launch: a GUI app needs DISPLAY/WAYLAND_DISPLAY/etc.
-    to show a window, which the default `env={}` strips entirely) still must
+    """`gui=True` (`OpenAppAction`, added when live-testing a real app
+    launch: a GUI app needs DISPLAY/WAYLAND_DISPLAY/etc. to show a window,
+    which the default `env={}` strips entirely) still must
     not leak anything outside its fixed allowlist. Written to a file, not
     stdout — `gui=True` never captures stdout/stderr (see `Sandbox.run`'s
     docstring), so a file is the only way to observe this."""

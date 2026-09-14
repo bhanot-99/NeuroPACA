@@ -5,8 +5,8 @@
 
 `interface/layer.py` used to track these five inputs and answer a `presence`
 socket op with them. That whole module was removed (no terminal/CLI control
-surface — a future voice interface is the planned replacement); this is the
-part of it worth keeping regardless: a small always-on subscriber, no socket,
+surface will be maintained going forward); this is the part of it worth
+keeping regardless: a small always-on subscriber, no socket,
 no write-back, that computes `core/presence.py`'s state machine from events
 the bus already carries and reports it through the normal `health()` path —
 so it shows up in `orchestration/orchestrator.py`'s periodic health-dump file

@@ -277,55 +277,6 @@ async def test_discrete_spans_and_event_publishing(tmp_path: Path, fake_clock: F
         GraphMemory._reset_for_tests()
 
 
-async def test_voice_session_ended_triggers_immediate_poll(
-    tmp_path: Path, fake_clock: FakeClock
-) -> None:
-    """A6.3: VOICE_PTT_SESSION_ENDED must poll the voice plugin out-of-cycle.
-
-    Regression for the gap flagged in the A6.1 spike notes and left unbuilt:
-    without this, a freshly captured utterance sits until the plugin's own
-    poll_interval_seconds timer next fires. poll_interval is set absurdly
-    long here so the test would fail (facts stay at 0) if the host were
-    relying on the timer instead of the event.
-    """
-    plugin = FakeSensingPlugin(name="voice", poll_interval=3600.0)
-    host, gm, store, bus = await _setup_host(tmp_path, fake_clock, plugin)
-    try:
-        plugin.items_to_return = [
-            PluginItem(
-                entity_id="utterance:1",
-                label="Utterance",
-                fact=(EpisodeKind.TOPIC_FACT, "hello", {"active": True}),
-            )
-        ]
-
-        bus.publish(Event(event_type=EventType.VOICE_PTT_SESSION_ENDED, source="test", payload={}))
-        await bus.join()
-
-        assert gm.has_node("utterance:1")
-    finally:
-        await host.stop()
-        await bus.stop()
-        await store.stop()
-        GraphMemory._reset_for_tests()
-
-
-async def test_voice_session_ended_is_noop_without_voice_plugin(
-    tmp_path: Path, fake_clock: FakeClock
-) -> None:
-    """poll_tick("voice") on an unregistered name never raises (rules.md §2)."""
-    plugin = FakeSensingPlugin(name="not_voice")
-    host, _gm, store, bus = await _setup_host(tmp_path, fake_clock, plugin)
-    try:
-        bus.publish(Event(event_type=EventType.VOICE_PTT_SESSION_ENDED, source="test", payload={}))
-        await bus.join()
-    finally:
-        await host.stop()
-        await bus.stop()
-        await store.stop()
-        GraphMemory._reset_for_tests()
-
-
 async def test_host_forget(tmp_path: Path, fake_clock: FakeClock) -> None:
     plugin = FakeSensingPlugin()
     host, gm, store, bus = await _setup_host(tmp_path, fake_clock, plugin)

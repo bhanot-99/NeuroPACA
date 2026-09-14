@@ -258,9 +258,9 @@ def test_build_modules_wires_system_and_optionally_filesystem(tmp_path) -> None:
     modules = build_modules(Config(inference_backend="fake"), bus, graph, runtime)
     # L2 -> L3 -> L4 -> L5 -> L7 -> L8 -> L6 -> A0 (B8, D-16; Architecture.md §10
     # A7; VISION_PHASES.md A0 adds `moments`, A3 adds `guardian`/`notifier`).
-    # L9 interface was removed (no terminal/CLI control surface going forward,
-    # superseded by voice); `presence` (A1's state machine, socket-free) took
-    # its place at the tail.
+    # L9 interface was removed (no terminal/CLI control surface will be
+    # maintained going forward); `presence` (A1's state machine, socket-free)
+    # took its place at the tail.
     assert [m.name for m in modules] == [
         "sensing",
         "diagnosis",
