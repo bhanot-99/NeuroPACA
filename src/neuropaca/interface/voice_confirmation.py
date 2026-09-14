@@ -6,12 +6,19 @@
 
 The gap this closes: `action/confirm.py`'s `ConfirmationBroker` was built to
 be answered by `neuropaca confirm <id>` over the (now-removed) L9 CLI/socket.
-Nothing replaced it, so every dangerous-tier voice command (`open_app`,
-`adjust_volume`, `adjust_brightness`) was proposed, waited
+Nothing replaced it, so a dangerous-tier voice command was proposed, waited
 `action_confirmation_timeout_seconds`, and auto-refused — real bug, seen
 live 2026-09-14 (`data/actions.jsonl`: "refused: tier 'dangerous' is not
 enabled" once the tier was on, "confirmation expired" is the shape it takes
-once this module exists but nobody answers).
+once this module exists but nobody answers) — at the time, on `open_app`/
+`adjust_volume`/`adjust_brightness`, since those were `DANGEROUS` tier that
+day. A later decision the same day (`action/actions.py`'s module docstring)
+reclassified all three to `SAFE`, so as of this commit nothing currently
+proposes a `DANGEROUS`-tier action at all (`file_write`/`run_command`
+proposals came from the removed CLI's `$!`/`$$` prefixes and have no live
+publisher either) — this module is correct, tested, and ready for whenever
+something does propose one (A6.6's advanced hands, or a future
+`FileWriteAction` proposer), not currently exercised by the live daemon.
 
 **Never calls `ConfirmationBroker` directly** (rules.md §0 — no module
 imports another module's internals to call it; you want a new event, and
@@ -196,14 +203,24 @@ class VoiceConfirmationBridge(BaseModule):
     def _notify(self, summary: str) -> None:
         """Fire-and-forget, display only — never awaited, never trusted for
         a click (module docstring). Missing `notify-send` degrades to
-        silence, same as `interface/notifier.py`'s own convention."""
+        silence, same as `interface/notifier.py`'s own convention.
+
+        `--expire-time=0`, not the real timeout in milliseconds — found live
+        2026-09-14 (user report: the popup vanished before there was time to
+        read it). `interface/notifier.py`'s own docstring already recorded
+        why: this machine's notification daemon (`cosmic-notifications`)
+        does not reliably honor an `--expire-time` duration hint; `0`
+        disables its own auto-hide instead of asking it to time the window
+        itself, and this module's real timeout (this method's caller,
+        `_purge_expired`) is what actually governs the window regardless of
+        how long the notification stays visible on screen.
+        """
         if shutil.which("notify-send") is None:
             return
-        timeout_ms = int(self.config.action_confirmation_timeout_seconds * 1000)
         argv = [
             "notify-send",
             f"--app-name={_APP_NAME}",
-            f"--expire-time={timeout_ms}",
+            "--expire-time=0",
             "NeuroPACA wants to confirm",
             (
                 f'{summary}\nSay "yes" to confirm or "no" to cancel '

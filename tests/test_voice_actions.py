@@ -2,8 +2,10 @@
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
 """Tests for A6.2 Step 5 · voice-hands actions
-(OpenAppAction, AdjustVolumeAction, AdjustBrightnessAction) — all `dangerous`
-tier, since each runs a process (base.py's `ActionTier`).
+(OpenAppAction, AdjustVolumeAction, AdjustBrightnessAction) — all `safe`
+tier (user decision 2026-09-14, `action/actions.py`'s module docstring has
+the reasoning: each is drawn from a closed, verified, trivially-reversible
+option set, unlike `RunCommandAction`'s arbitrary argv).
 """
 
 from __future__ import annotations
@@ -35,23 +37,6 @@ def _make_mock_tool(tmp_path: Path, name: str) -> Path:
     return script
 
 
-async def _approve_next(bus: EventBus) -> None:
-    """Stand in for the human at the terminal: approve whatever L7 asks —
-    these actions are `dangerous` tier, so the gate pauses for exactly this
-    (see test_action.py's identical helper)."""
-
-    async def responder(event: Event) -> None:
-        bus.publish(
-            Event(
-                event_type=EventType.ACTION_CONFIRMATION_RESPONSE,
-                source="test-terminal",
-                payload={"request_id": event.payload["request_id"], "approved": True},
-            )
-        )
-
-    bus.subscribe(EventType.ACTION_CONFIRMATION_REQUEST, responder)
-
-
 async def test_open_app_action_success(tmp_path: Path) -> None:
     sandbox = Sandbox([tmp_path])
     mock_app = _make_mock_tool(tmp_path, "mock-app")
@@ -62,7 +47,7 @@ async def test_open_app_action_success(tmp_path: Path) -> None:
         app_name="Mock App",
         launch_command=str(mock_app),
     )
-    assert action.tier == ActionTier.DANGEROUS
+    assert action.tier == ActionTier.SAFE
     assert action.name == "open_app"
 
     await action.validate()
@@ -102,7 +87,7 @@ async def test_adjust_volume_action(tmp_path: Path) -> None:
         direction="increase",
         tool_path=str(mock_tool),
     )
-    assert action.tier == ActionTier.DANGEROUS
+    assert action.tier == ActionTier.SAFE
     assert action.name == "adjust_volume"
 
     await action.validate()
@@ -129,7 +114,7 @@ async def test_adjust_brightness_action(tmp_path: Path) -> None:
         step="10%",
         tool_path=str(mock_tool),
     )
-    assert action.tier == ActionTier.DANGEROUS
+    assert action.tier == ActionTier.SAFE
     assert action.name == "adjust_brightness"
 
     await action.validate()
@@ -160,7 +145,7 @@ async def test_adjust_actions_payload_has_argv_before_validate(tmp_path: Path) -
     assert brightness.payload()["argv"] != []
 
 
-async def test_executor_proposes_and_runs_voice_actions_with_confirmation(tmp_path: Path) -> None:
+async def test_executor_proposes_and_runs_voice_actions(tmp_path: Path) -> None:
     bus = EventBus()
     await bus.start()
     gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
@@ -183,7 +168,6 @@ async def test_executor_proposes_and_runs_voice_actions_with_confirmation(tmp_pa
     executor = ActionExecutor(bus, cfg, gm)
     await executor.initialize()
     await executor.start()
-    await _approve_next(bus)
 
     proposal_results: list[Event] = []
     bus.subscribe(EventType.ACTION_PROPOSAL_RESULT, proposal_results.append)

@@ -9,11 +9,13 @@ ignoring anything whose category is not `action_request`.
 
 When a command is extracted:
 - For `open`: resolves target against installed applications (Tier 2).
-  - 1 match: publishes `ACTION_PROPOSAL` for `open_app` (dangerous tier — it
-    runs a process, so L7 still pauses for a human confirmation).
+  - 1 match: publishes `ACTION_PROPOSAL` for `open_app` — `SAFE` tier (user
+    decision 2026-09-14, `action/actions.py`'s module docstring has the
+    reasoning: a closed, verified app registry, trivially reversible), so
+    this executes immediately, no confirmation pause.
   - 0 or 2+ matches: publishes `notification` proposal detailing ambiguity.
 - For `increase`/`decrease`: publishes `adjust_volume` or `adjust_brightness`
-  (dangerous tier, same reason).
+  (also `SAFE` tier, same reasoning — a fixed, narrow slider nudge).
 - For `close` or other actions: safely dropped and surfaced via notification.
 """
 

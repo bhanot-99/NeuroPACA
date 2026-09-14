@@ -12,15 +12,27 @@ Four ship in B7, in ascending order of what they can break:
 | `FileWriteAction` | dangerous | one file, backed up first | restoring the quarantined copy |
 | `RunCommandAction` | dangerous | one child process, no shell/env | nothing — hence confirmation |
 
-A6.2 adds three more, all of which run a process and so are `dangerous` under
-the same rule as `RunCommandAction` — a fixed, verified argv shape narrows
-*what* can run, not whether running it needs a human's confirmation first:
+A6.2 adds three more. All three run a process, which is what first put them
+at `dangerous` under the same rule as `RunCommandAction` — a fixed, verified
+argv shape narrows *what* can run, not whether it's a process. User decision
+2026-09-14, after that classification made every voice "open X"/volume/
+brightness command require a spoken confirmation: reclassified to `safe`.
+The operator's own reasoning — kept here because it's the actual boundary,
+not "processes are safe now" — is that unlike `RunCommandAction` (an
+arbitrary argv) or `FileWriteAction` (persistent data loss/corruption if
+wrong), all three are drawn from closed, narrow, fully-reversible option
+sets: `OpenAppAction` can only launch an app already in the verified
+installed-apps registry (never an arbitrary string), and volume/brightness
+only ever nudge a percentage up or down. Worst case from a misheard command
+is an unwanted window or a wrong slider position — annoying, not damaging,
+and trivially undone by hand. Writing or running arbitrary things stays
+gated; opening/adjusting from a closed, verified set does not.
 
 | action | tier | effect | reversible by |
 | --- | --- | --- | --- |
-| `OpenAppAction` | dangerous | launches a verified installed app | nothing — hence confirmation |
-| `AdjustVolumeAction` | dangerous | one wpctl/pactl call | nothing — hence confirmation |
-| `AdjustBrightnessAction` | dangerous | one brightnessctl call | nothing — hence confirmation |
+| `OpenAppAction` | safe | launches a verified installed app | closing the app |
+| `AdjustVolumeAction` | safe | one wpctl/pactl call | adjusting it back |
+| `AdjustBrightnessAction` | safe | one brightnessctl call | adjusting it back |
 
 `ApiCallAction` is deliberately **not** built. It is the only component that
 would ever be allowed an outbound socket (rules.md §5.5), the system's whole
@@ -309,15 +321,16 @@ class OpenAppAction(BaseAction):
     """Launch a verified installed desktop application.
 
     Can only launch something already resolved in the verified installed-apps
-    list (app_registry.py) — never an arbitrary string from the model. That
-    narrows *what* can run, but it still runs a process, which is what the
-    `ActionTier` contract (base.py) conditions on tier — not whether the argv
-    came from a fixed allowlist. Same tier, same confirmation, as
-    `RunCommandAction`.
+    list (app_registry.py) — never an arbitrary string from the model. `SAFE`
+    tier (user decision 2026-09-14 — module docstring's table has the full
+    reasoning): the closed, verified option set is exactly what makes this
+    different from `RunCommandAction`'s arbitrary argv, and the worst case
+    (an unwanted window from a misheard command) is trivially undone by
+    hand — no confirmation gate for that risk shape.
     """
 
     name = "open_app"
-    tier = ActionTier.DANGEROUS
+    tier = ActionTier.SAFE
 
     def __init__(
         self,
@@ -379,11 +392,12 @@ class _AdjustAction(BaseAction):
     nudge a percentage up or down via one system tool, differing only in which
     tool and argv shape `_build_argv()` picks.
 
-    Runs a process, so both are `DANGEROUS` under the same rule as
-    `RunCommandAction` — a narrow, fixed argv shape does not change that.
+    `SAFE` tier (user decision 2026-09-14 — module docstring's table has the
+    full reasoning): a fixed, narrow "nudge a slider" argv shape, trivially
+    reversible by nudging it back — no confirmation gate for that risk shape.
     """
 
-    tier = ActionTier.DANGEROUS
+    tier = ActionTier.SAFE
     _label = "adjustment"
 
     def __init__(

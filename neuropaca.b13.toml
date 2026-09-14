@@ -111,16 +111,23 @@ pressure_decay_interval_seconds = 10
 # only — this file is the personal, opt-in one.
 #
 # "dangerous" enabled here 2026-09-14 (user decision, same day as the
-# voice_stt_backend=gemini opt-in above): action/confirm.py's confirmation
-# handshake had no real answerer after the L9 CLI/socket was removed, so
-# voice's open_app/adjust_volume/adjust_brightness proposed and silently
-# auto-refused every time (found live: data/actions.jsonl showed "refused:
-# tier 'dangerous' is not enabled"). interface/voice_confirmation.py's
-# VoiceConfirmationBridge now answers those requests with a real, strictly-
-# matched "yes"/"no" spoken reply (never a notification click — see its own
-# module docstring for why that specifically would be unsafe on this
-# machine's notification daemon). VISION_PHASES.md's A6.6 gate was about
-# there being no real answerer at all, not about which one; this is one.
+# voice_stt_backend=gemini opt-in above). Same day, two decisions:
+#   1. A real answerer for action/confirm.py's confirmation handshake —
+#      interface/voice_confirmation.py's VoiceConfirmationBridge — since the
+#      old one (a CLI command over the removed L9 socket) had no replacement
+#      and every dangerous proposal just silently auto-refused (found live:
+#      data/actions.jsonl showed "refused: tier 'dangerous' is not
+#      enabled"). Answers with a real, strictly-matched "yes"/"no" spoken
+#      reply, never a notification click (see its own module docstring for
+#      why that specifically would be unsafe on this machine's notification
+#      daemon).
+#   2. Then voice's own open_app/adjust_volume/adjust_brightness were
+#      reclassified back to SAFE tier (action/actions.py's module docstring
+#      has the operator's reasoning: closed, verified, trivially reversible
+#      option sets), so they no longer need answer #1 at all. "dangerous"
+#      stays enabled here anyway — harmless with nothing dangerous currently
+#      proposed (file_write/run_command's only publisher was the removed
+#      CLI's $!/$$ prefixes), and ready the moment something is.
 action_dry_run = false
 action_enabled_tiers = ["safe", "dangerous"]
 action_confirmation_timeout_seconds = 60

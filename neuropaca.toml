@@ -33,19 +33,15 @@
 #
 # UPDATED 2026-09-14 (A6.1-A6.3 merged to main): voice is live — sensing,
 # transcription, VAD and intent classification all run for real (see the
-# voice block below). Its "dangerous"-tier hands (open_app / adjust_volume /
-# adjust_brightness) still stay off BY DEFAULT in this shipped config, same
-# spirit as this file's original note above (D-14(c): earned, not assumed).
-#
-# This is no longer because there is no way to answer a confirmation at all
-# — `interface/voice_confirmation.py`'s `VoiceConfirmationBridge` now
-# answers `ACTION_CONFIRMATION_REQUEST` with a real, strictly-matched
-# spoken "yes"/"no" (see its own module docstring, including why it
-# deliberately never trusts a notification click instead). Enabling
-# "dangerous" tier now DOES make hands work, for whoever opts in — see
-# `neuropaca.b13.toml`'s own note for the personal config that does. This
-# file stays conservative on purpose: it's the shipped/default reference,
-# not a place to flip on real execution for everyone who never asked to.
+# voice block below), and its hands (open_app / adjust_volume /
+# adjust_brightness) are `SAFE` tier as of the same day (`action/actions.py`'s
+# module docstring has the reasoning: each draws from a closed, verified,
+# trivially reversible option set) — so they execute immediately under this
+# file's `action_enabled_tiers = ["safe"]` below, same as any other safe
+# action, no confirmation pause. `interface/voice_confirmation.py`'s
+# VoiceConfirmationBridge exists for whatever IS `dangerous` tier (nothing
+# currently proposes one — see its own module docstring) and answers with a
+# real, strictly-matched spoken "yes"/"no", never a notification click.
 
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
 # B12 · the interactive model backend. Its only caller (`neuropaca tell <path>
