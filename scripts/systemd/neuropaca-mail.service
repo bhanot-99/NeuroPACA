@@ -59,7 +59,8 @@ StartLimitBurst=5
 [Service]
 Type=simple
 WorkingDirectory=__REPO__
-ExecStart=__REPO__/.venv/bin/python __REPO__/plugins/mail/fetcher.py --host=__IMAP_HOST__ --user=__IMAP_USER__ "--password-cmd=__PASSWORD_CMD__" --spool-dir=__REPO__/data/plugins/mail/spool
+ExecStart=__REPO__/.venv/bin/python __REPO__/plugins/mail/fetcher.py --host=__IMAP_HOST__ --user=__IMAP_USER__ "--password-cmd=__PASSWORD_CMD__" --spool-dir=__REPO__/data/plugins/mail/spool "--folders=INBOX,[Gmail]/Sent Mail" --user-address=__IMAP_USER__
+
 
 Restart=on-failure
 RestartSec=60

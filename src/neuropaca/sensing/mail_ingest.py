@@ -631,6 +631,42 @@ class MailPlugin:
             except Exception:
                 self._sent_message_ids = set()
 
+        # Pre-scan spool files for outbound/sent records so sent message IDs
+        # are known even if records appear in non-chronological spool order.
+        if self._spool_dir.exists():
+            new_found = False
+            for p in sorted(self._spool_dir.glob("*.jsonl")):
+                if p.name.startswith("."):
+                    continue
+                try:
+                    with open(p, "r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                r = json.loads(line)
+                                is_sent = (
+                                    r.get("direction", "").lower() in ("outbound", "sent")
+                                    or (
+                                        self.config.mail_user_address
+                                        and (r.get("sender_address") or "").strip().lower()
+                                        == self.config.mail_user_address.strip().lower()
+                                    )
+                                )
+                                if is_sent:
+                                    mid = (r.get("message_id") or "").strip("<>")
+                                    if mid and mid not in self._sent_message_ids:
+                                        self._sent_message_ids.add(mid)
+                                        new_found = True
+                            except Exception:
+                                continue
+                except Exception:
+                    continue
+            if new_found:
+                await self._save_sent_ids()
+
+
     async def _save_sent_ids(self) -> None:
         if not self._spool_dir.exists():
             return
