@@ -361,7 +361,7 @@ class OpenAppAction(BaseAction):
 
     async def execute(self) -> str:
         outcome = await self._sandbox.run(
-            self._resolved or self.argv, timeout_seconds=self.timeout_seconds
+            self._resolved or self.argv, timeout_seconds=self.timeout_seconds, gui=True
         )
         if not outcome.ok:
             raise SafetyGateError(

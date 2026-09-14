@@ -177,6 +177,60 @@ async def test_a_sandboxed_command_inherits_no_environment(tmp_path) -> None:
         assert leaked not in outcome.stdout
 
 
+async def test_gui_true_reports_a_fast_failure_and_only_leaks_the_allowlist(tmp_path) -> None:
+    """A command that exits with an error inside the 150ms launch-check
+    window must still be reported as failed, not silently treated as a
+    successfully detached app — and `gui=True` (A6.2's `OpenAppAction`,
+    added when live-testing a real voice-triggered app launch: a GUI app
+    needs DISPLAY/WAYLAND_DISPLAY/etc. to show a window, which the default
+    `env={}` strips entirely) still must not leak anything outside its fixed
+    allowlist. The success path never captures stdout/stderr at all (a GUI
+    app's output isn't used for anything), so the failure path is the only
+    place both properties are observable together."""
+    import os
+
+    os.environ["NEUROPACA_TEST_SECRET"] = "do-not-leak"
+    try:
+        sandbox = Sandbox([tmp_path])
+        outcome = await sandbox.run(
+            [sys.executable, "-c", "import os,sys;print(sorted(os.environ));sys.exit(7)"],
+            timeout_seconds=10,
+            gui=True,
+        )
+    finally:
+        del os.environ["NEUROPACA_TEST_SECRET"]
+
+    assert outcome.ok is False
+    assert outcome.returncode == 7
+    assert "NEUROPACA_TEST_SECRET" not in outcome.stdout
+    # HOME/PATH are the allowlist's own entries — they SHOULD appear here,
+    # the opposite assertion from the non-gui test above.
+    assert "HOME" in outcome.stdout
+    assert "PATH" in outcome.stdout
+
+
+async def test_gui_true_reports_success_for_a_process_still_running(tmp_path) -> None:
+    """A GUI app that's still running after the launch-check window is
+    treated as a successful, detached launch — the sandbox does not wait for
+    it to exit, and does not kill it on `timeout_seconds` the way the
+    non-gui path does."""
+    sandbox = Sandbox([tmp_path])
+    # Long enough to outlast the 0.15s launch-check window (so the "still
+    # running" branch is what's exercised), short enough that a brief
+    # explicit wait below lets it actually finish before this test's own
+    # event loop closes — sandbox.run() doesn't expose the detached Process
+    # object, so this is the only way to avoid an asyncio
+    # "Event loop is closed" warning from its __del__ firing after teardown.
+    sandbox_run = sandbox.run(
+        [sys.executable, "-c", "import time;time.sleep(0.3)"], timeout_seconds=10, gui=True
+    )
+    outcome = await sandbox_run
+    assert outcome.ok is True
+    assert outcome.returncode == 0
+    assert outcome.stdout == ""
+    await asyncio.sleep(0.4)
+
+
 async def test_a_shell_metacharacter_is_an_argument_not_a_command(tmp_path) -> None:
     """There is no shell, so `;` is just text — nothing to inject into."""
     sandbox = Sandbox([tmp_path])
