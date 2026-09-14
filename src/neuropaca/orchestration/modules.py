@@ -278,6 +278,14 @@ def build_modules(
             )
         else:
             modules.append(VoiceActivationModule(event_bus, config))
+
+        # A6.2/rules.md §5.2 (user decision 2026-09-14): the "yes, confirm"
+        # answerer for dangerous voice actions — see its own module docstring
+        # for why this exists (the old CLI-based answerer was removed and
+        # nothing replaced it) and why it never trusts a notification click.
+        from neuropaca.interface.voice_confirmation import VoiceConfirmationBridge
+
+        modules.append(VoiceConfirmationBridge(event_bus, config))
     modules.append(diagnosis)
     modules.append(learning)
     modules.append(drive)

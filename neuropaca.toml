@@ -34,19 +34,18 @@
 # UPDATED 2026-09-14 (A6.1-A6.3 merged to main): voice is live — sensing,
 # transcription, VAD and intent classification all run for real (see the
 # voice block below). Its "dangerous"-tier hands (open_app / adjust_volume /
-# adjust_brightness) deliberately stay unreachable here, same as this file's
-# original note above says: `action/confirm.py`'s human-answers-the-prompt
-# handshake was built against the L9 socket/CLI, which was later removed
-# (interface/activation.py's own docstring), and nothing has replaced it —
-# there is currently no real way for a human to answer
-# `ACTION_CONFIRMATION_REQUEST` in production at all. Enabling "dangerous"
-# tier today would not make hands work; it would just make every voice
-# command propose, wait `action_confirmation_timeout_seconds`, and
-# auto-refuse. This also matches VISION_PHASES.md's own intent — these three
-# actions are DANGEROUS tier specifically so they stay gated until **A6.6**
-# ("dangerous-tier hands — deliberately last") builds a real confirmation
-# answerer. Voice commands still get classified and logged to
-# `actions.jsonl` as refused proposals; they just never execute.
+# adjust_brightness) still stay off BY DEFAULT in this shipped config, same
+# spirit as this file's original note above (D-14(c): earned, not assumed).
+#
+# This is no longer because there is no way to answer a confirmation at all
+# — `interface/voice_confirmation.py`'s `VoiceConfirmationBridge` now
+# answers `ACTION_CONFIRMATION_REQUEST` with a real, strictly-matched
+# spoken "yes"/"no" (see its own module docstring, including why it
+# deliberately never trusts a notification click instead). Enabling
+# "dangerous" tier now DOES make hands work, for whoever opts in — see
+# `neuropaca.b13.toml`'s own note for the personal config that does. This
+# file stays conservative on purpose: it's the shipped/default reference,
+# not a place to flip on real execution for everyone who never asked to.
 
 model_path = "models/bitnet-2b4t-tq2_0.gguf"
 # B12 · the interactive model backend. Its only caller (`neuropaca tell <path>

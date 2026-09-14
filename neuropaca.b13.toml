@@ -106,15 +106,23 @@ pressure_high_threshold = 3.0
 pressure_decay_half_life_seconds = 60
 pressure_decay_interval_seconds = 10
 
-# L7 · action. LIVE (dry-run off, user decision 2026-09-11), safe tier only —
-# notifications reach the desktop (V-12). neuropaca.toml keeps dry-run on.
-# Still safe tier only as of A6.1-A6.3 (2026-09-14): voice's "dangerous"-tier
-# hands (open_app / adjust_volume / adjust_brightness) stay unreachable here
-# too — action/confirm.py's confirmation handshake has no real answerer
-# since the L9 CLI/socket was removed, and VISION_PHASES.md gates these
-# three actions behind A6.6 on purpose. See neuropaca.toml's own note.
+# L7 · action. LIVE (dry-run off, user decision 2026-09-11), notifications
+# reach the desktop (V-12). neuropaca.toml keeps dry-run on and safe-tier
+# only — this file is the personal, opt-in one.
+#
+# "dangerous" enabled here 2026-09-14 (user decision, same day as the
+# voice_stt_backend=gemini opt-in above): action/confirm.py's confirmation
+# handshake had no real answerer after the L9 CLI/socket was removed, so
+# voice's open_app/adjust_volume/adjust_brightness proposed and silently
+# auto-refused every time (found live: data/actions.jsonl showed "refused:
+# tier 'dangerous' is not enabled"). interface/voice_confirmation.py's
+# VoiceConfirmationBridge now answers those requests with a real, strictly-
+# matched "yes"/"no" spoken reply (never a notification click — see its own
+# module docstring for why that specifically would be unsafe on this
+# machine's notification daemon). VISION_PHASES.md's A6.6 gate was about
+# there being no real answerer at all, not about which one; this is one.
 action_dry_run = false
-action_enabled_tiers = ["safe"]
+action_enabled_tiers = ["safe", "dangerous"]
 action_confirmation_timeout_seconds = 60
 quarantine_ttl_hours = 168
 
