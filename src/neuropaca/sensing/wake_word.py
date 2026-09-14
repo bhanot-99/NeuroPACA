@@ -17,7 +17,7 @@ Recording only starts (via the *existing*, unmodified
 wiring) once the phrase actually fires.
 
 Same lazy-load / self-disable / `Fake*` discipline as `stt_backend.py` and
-`vad.py`. `hey jarvis` (the shipped default, `config.voice_wake_word_phrase`)
+`vad.py`. `hey_jarvis` (the shipped default, `config.voice_wake_word_phrase`)
 is a pre-trained openWakeWord model — no custom training, per the same
 decision that chose a pre-built phrase over training "buddy" from scratch.
 """
@@ -69,15 +69,34 @@ class OpenWakeWordDetector:
         if self._model is not None:
             return
         try:
-            import openwakeword
+            import openwakeword.utils
             from openwakeword.model import Model
         except ImportError as exc:
             self.unavailable_reason = f"openwakeword not installed ({exc})"
             _log.error("A6.3 wake-word disabled — %s", self.unavailable_reason)
             return
         try:
+            # Verified live (2026-09-14): `download_models()`'s incremental
+            # cache is keyed on the *.tflite* file's existence only, for
+            # every model it fetches — a run interrupted after the .tflite
+            # download but before the paired .onnx one (a real thing that
+            # happened installing this) leaves the .onnx file permanently
+            # missing on every later call, since the .tflite already being
+            # there skips the whole pair, onnx included. Manifests as
+            # `Model(...)` raising `NO_SUCHFILE` on next load. Not something
+            # this method retries around (the pair-download bug is in
+            # openwakeword itself); if hit, the fix is deleting the affected
+            # .tflite from openwakeword's resources/models/ so the next
+            # download_models() call re-fetches the pair.
             openwakeword.utils.download_models(model_names=[self._phrase])
-            self._model = Model(wakeword_models=[self._phrase])
+            # "onnx", not the library's own "tflite" default: `tflite-runtime`
+            # has no published wheel for Python 3.11+ (a known, widely-hit
+            # packaging break — openwakeword's own code already falls back to
+            # onnx internally if tflite import fails, but only when passed a
+            # `.onnx` path or a bare name whose `.onnx` file already exists;
+            # asking for onnx explicitly is simpler and doesn't depend on
+            # that fallback's exact conditions).
+            self._model = Model(wakeword_models=[self._phrase], inference_framework="onnx")
         except Exception as exc:  # model download/open failure — never fatal (rules.md §2)
             self.unavailable_reason = f"failed to load wake-word phrase {self._phrase!r}: {exc}"
             _log.error("A6.3 wake-word disabled — %s", self.unavailable_reason)

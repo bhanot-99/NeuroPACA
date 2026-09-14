@@ -320,7 +320,7 @@ def test_health_reports_wake_word_status() -> None:
     module.is_running = True
     health = module.health()
     assert "loaded" in health.detail
-    assert "hey jarvis" in health.detail
+    assert "hey_jarvis" in health.detail
 
 
 def test_build_modules_wires_the_wake_word_backends(tmp_path) -> None:

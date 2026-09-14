@@ -425,10 +425,15 @@ class Config:
     # `voice_activation_mode = "wake_word"` selects this: the mic stays open
     # continuously, but only openWakeWord's small rolling per-frame score is
     # ever computed — no audio is written to disk or accumulated anywhere
-    # until the phrase actually fires. `hey jarvis` is a pre-trained
-    # openWakeWord model (no custom training, per that same decision) —
-    # exact string must match its bundled model name.
-    voice_wake_word_phrase: str = "hey jarvis"
+    # until the phrase actually fires. `hey_jarvis` is a pre-trained
+    # openWakeWord model (no custom training, per that same decision).
+    # Underscore, not the space `openwakeword`'s own README example shows —
+    # verified against openwakeword/__init__.py's actual `MODELS` dict key
+    # and openwakeword/utils.py's `download_models()`: the space form
+    # matches `Model()`'s lenient lookup but download_models()'s own match
+    # is a plain substring check with no space/underscore normalization, so
+    # `"hey jarvis"` (space) would have silently downloaded nothing.
+    voice_wake_word_phrase: str = "hey_jarvis"
     voice_wake_word_threshold: float = 0.5
     # How long to keep recording a command after the wake word fires, before
     # auto-stopping — distinct from (and shorter than) voice_ptt_max_seconds,

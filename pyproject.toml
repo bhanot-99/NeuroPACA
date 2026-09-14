@@ -79,9 +79,18 @@ audio = [
 ]
 # A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
 # original "push-to-talk only, no ambient listening" call): openWakeWord
-# (Apache-2.0, ONNX/tflite, ships pre-trained "hey jarvis" — no custom
+# (Apache-2.0, ONNX/tflite, ships pre-trained "hey_jarvis" — no custom
 # training needed). Same optional/lazy/self-disabling discipline as the
 # other three above.
+#
+# `pip install -e ".[wake_word]"` alone FAILS as of 0.6.0: it declares a
+# hard dependency on tflite-runtime, which has no published wheel for Python
+# 3.11+ (an upstream break, not fixable from this project's own metadata —
+# verified 2026-09-14, still true at the time of writing). Run
+# `scripts/install_wake_word_extra.sh` instead, which installs openwakeword
+# with `--no-deps` plus its real onnx-path dependencies explicitly — this
+# extras entry is kept for documentation/discoverability (`pip show
+# neuropaca`, dependency graphs) even though installing it directly errors.
 wake_word = [
     "openwakeword==0.6.0",
 ]

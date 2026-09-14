@@ -70,7 +70,7 @@ def _skip_if_openwakeword_installed() -> None:
 
 def test_open_wake_word_detector_degrades_cleanly_without_the_package() -> None:
     _skip_if_openwakeword_installed()
-    detector = OpenWakeWordDetector("hey jarvis")
+    detector = OpenWakeWordDetector("hey_jarvis")
     detector.load()
     assert detector.is_loaded is False
     assert detector.unavailable_reason is not None

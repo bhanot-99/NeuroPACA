@@ -37,7 +37,7 @@ downstream path (VISION_PHASES.md A6.3's own test requirement):
   mic runs continuously via `sensing/wake_word.py`'s `WakeWordAudioSource`,
   but nothing is recorded or transcribed pre-trigger — only a per-frame
   confidence score, immediately discarded. When `config.voice_wake_word_phrase`
-  ("hey jarvis", the shipped default — a pre-trained openWakeWord model, no
+  ("hey_jarvis", the shipped default — a pre-trained openWakeWord model, no
   custom training) scores above `voice_wake_word_threshold`: the continuous
   tap pauses (one mic consumer at a time, not two racing streams), a normal
   `VOICE_PTT_STARTED` fires (the *same* event `VoiceCaptureModule` already
