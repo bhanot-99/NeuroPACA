@@ -179,6 +179,9 @@ class VoiceIntentParser(BaseModule):
             return
         attrs: dict[str, object] = {"source": "typed", "voice_intent": category}
         if cited_node_id is not None:
+            # Persisted for scripts/eval_voice_a6_1_review.py's offline citation-
+            # accuracy report — the live pipeline (VOICE_INTENT_CLASSIFIED, the
+            # briefing) never reads it back. Known limitation, not dead code.
             attrs["cited_node_id"] = cited_node_id
         self._store.assert_fact(
             EpisodeKind.PLUGIN_FACT,

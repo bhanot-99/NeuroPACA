@@ -217,7 +217,8 @@ def build_modules(
             )
         )
     # A6.2 · voice as hands (VISION_PHASES.md). Subscribes to VOICE_INTENT_CLASSIFIED
-    # published by VoiceIntentParser above and proposes safe actions.
+    # published by VoiceIntentParser above and proposes dangerous-tier actions —
+    # each still runs through L7's confirmation handshake (rules.md §5.2).
     if config.voice_commands_enabled:
         modules.append(VoiceCommandParser(event_bus, config, graph_memory, bitnet_runtime))
     modules.append(diagnosis)

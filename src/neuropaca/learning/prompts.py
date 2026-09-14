@@ -574,7 +574,7 @@ def parse_voice_intent(
 
 
 # ============================================================================
-# A6.2 · voice as hands — safe tier only (VISION_PHASES.md).
+# A6.2 · voice as hands (VISION_PHASES.md).
 #
 # Tier 1: grammar-constrained span-pointer extraction via the interactive model.
 # Utterance words are aliased as w1, w2, ... and the model selects an action
@@ -632,6 +632,9 @@ _VOICE_COMMAND_FEW_SHOT = (
     'Utterance: "make the speakers louder"\n'
     "Words: [w1] make, [w2] the, [w3] speakers, [w4] louder\n"
     'Answer: {"action": "increase", "target_start": null, "target_end": null}\n\n'
+    'Utterance: "turn down the screen brightness"\n'
+    "Words: [w1] turn, [w2] down, [w3] the, [w4] screen, [w5] brightness\n"
+    'Answer: {"action": "decrease", "target_start": "w5", "target_end": "w5"}\n\n'
     'Utterance: "I worked on the project for three hours today"\n'
     "Words: [w1] I, [w2] worked, [w3] on, [w4] the, [w5] project, "
     "[w6] for, [w7] three, [w8] hours, [w9] today\n"
