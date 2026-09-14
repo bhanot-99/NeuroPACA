@@ -128,4 +128,64 @@ async def test_health_reports_the_trigger_path_in_tray_mode() -> None:
     assert "voice_ptt_trigger.json" in health.detail
 
 
+async def test_toggle_resurfaces_correctly_after_a_session_times_out(tmp_path) -> None:
+    """Regression, found by a live daemon run (not a design guess): a session
+    that auto-ends via `voice_ptt_max_seconds` — nobody sent a matching
+    `_STOPPED` — used to leave `_toggle_active` at `True` with no way for
+    this module to learn the capture already stopped. The *next* tray click
+    then sent a STOP instead of the START the human just pressed for — the
+    real, observed symptom, one click late. `VOICE_PTT_SESSION_ENDED`
+    (published by `VoiceCaptureModule` on every session end) fixes this by
+    resetting the toggle regardless of why the session ended.
+    """
+    from neuropaca.sensing.stt_backend import FakeSttBackend
+    from neuropaca.sensing.vad import FakeVadGate
+    from neuropaca.sensing.voice_capture import FakeAudioSource, VoiceCaptureModule
+
+    bus = EventBus()
+    await bus.start()
+    cfg = Config(
+        inference_backend="fake",
+        voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        voice_ptt_max_seconds=0.01,
+    )
+    capture = VoiceCaptureModule(
+        bus, cfg, FakeAudioSource(pcm=b"\x00"), FakeVadGate(should_reject=True), FakeSttBackend()
+    )
+    activation = VoiceActivationModule(bus, cfg)
+    await capture.initialize()
+    await activation.initialize()
+    await capture.start()
+    await activation.start()
+
+    started: list[Event] = []
+    stopped: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STARTED, started.append)
+    bus.subscribe(EventType.VOICE_PTT_STOPPED, stopped.append)
+
+    try:
+        # First click: starts a session that will time out with nobody ever
+        # sending the matching stop.
+        activation._handle_trigger({"seq": 1})
+        await bus.join()
+        assert len(started) == 1
+
+        timeout_task = capture._timeout_task
+        assert timeout_task is not None
+        await timeout_task  # deterministic — the internal timeout firing, not a real sleep
+        await bus.join()
+
+        # Second click: without the fix, the toggle is still `True` from the
+        # first click, so this would publish STOPPED instead of STARTED.
+        activation._handle_trigger({"seq": 2})
+        await bus.join()
+
+        assert len(started) == 2, "the toggle should have reset — this click must start, not stop"
+        assert len(stopped) == 0
+    finally:
+        await capture.stop()
+        await activation.stop()
+        await bus.stop()
+
+
 # gen-ref: 2e38118d

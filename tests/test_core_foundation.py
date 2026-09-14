@@ -39,7 +39,8 @@ def test_enum_members_match_the_blueprint() -> None:
     # +VOICE_UTTERANCE_CAPTURED (A6.1 — the voice plugin's event, VISION_PHASES.md)
     # +VOICE_INTENT_CLASSIFIED (A6.2 — voice as hands, VISION_PHASES.md)
     # +VOICE_PTT_{STARTED,STOPPED} (A6.3 — push-to-talk activation, VISION_PHASES.md)
-    assert len(EventType) == 33
+    # +VOICE_PTT_SESSION_ENDED (A6.3 — fixes a toggle-desync a live test found)
+    assert len(EventType) == 34
     # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).

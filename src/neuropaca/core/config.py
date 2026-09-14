@@ -394,6 +394,13 @@ class Config:
     # session does not implement the `GlobalShortcuts` portal
     # (spikes/a6_3_portal/), so "tray" is the default, not "hotkey".
     voice_speech_enabled: bool = False
+    # Verified live (2026-09-14): first daemon startup with this model size
+    # took ~7.5 minutes end to end, almost entirely a one-time network
+    # download (~1.1GB) — `VoiceCaptureModule.initialize()` blocks on it
+    # (module docstring), and module initialize() runs sequentially, so this
+    # delays every module after it in the list on a cold cache. Cached
+    # afterward; a warm-start load is seconds, not minutes. Not a bug, but a
+    # real first-run cost worth expecting, not being surprised by.
     voice_stt_model_size: str = "medium"
     voice_stt_language: str = "en"
     voice_activation_mode: str = "tray"

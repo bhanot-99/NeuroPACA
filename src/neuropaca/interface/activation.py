@@ -108,7 +108,18 @@ def probe_global_shortcuts_portal() -> bool:
 
 class VoiceActivationModule(BaseModule):
     """Watches whichever trigger `config.voice_activation_mode` selects and
-    publishes `VOICE_PTT_STARTED`/`VOICE_PTT_STOPPED`."""
+    publishes `VOICE_PTT_STARTED`/`VOICE_PTT_STOPPED`.
+
+    Subscribes to `VOICE_PTT_SESSION_ENDED` (published by `voice_capture.py`
+    on every session end, including its own internal `voice_ptt_max_seconds`
+    timeout) purely to reset the tray toggle — found necessary by a live
+    daemon run: without it, a session that auto-ends via the timeout leaves
+    `_toggle_active` at `True` with nobody having told this module the
+    capture already stopped, so the *next* click sends a STOP instead of the
+    START the human just pressed for. Resetting on every session-end is safe
+    even when the toggle already matches (a normal stop-before-timeout) —
+    setting it to `False` twice is a no-op.
+    """
 
     def __init__(
         self,
@@ -127,6 +138,7 @@ class VoiceActivationModule(BaseModule):
         self._last_at: datetime | None = None
 
     async def initialize(self) -> None:
+        self.event_bus.subscribe(EventType.VOICE_PTT_SESSION_ENDED, self.on_session_ended)
         if self.config.voice_activation_mode == "hotkey":
             self._hotkey_available = await asyncio.to_thread(probe_global_shortcuts_portal)
             if not self._hotkey_available:
@@ -146,11 +158,15 @@ class VoiceActivationModule(BaseModule):
         if not self.is_running:
             return
         self.is_running = False
+        self.event_bus.unsubscribe(EventType.VOICE_PTT_SESSION_ENDED, self.on_session_ended)
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+
+    async def on_session_ended(self, event: Event) -> None:
+        self._toggle_active = False
 
     def health(self) -> ModuleHealth:
         mode = self.config.voice_activation_mode

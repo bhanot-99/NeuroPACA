@@ -110,6 +110,15 @@ class EventType(StrEnum):
     # in-flight session, and a stray STARTED while one is already running.
     VOICE_PTT_STARTED = auto()
     VOICE_PTT_STOPPED = auto()
+    # A6.3 (found by live testing, not designed up front): `voice_capture.py`
+    # publishes this at the end of *every* session — a real `_STOPPED`, or
+    # `voice_ptt_max_seconds`'s internal timeout firing with no `_STOPPED` ever
+    # arriving. `activation.py`'s tray-toggle state has no other way to learn
+    # a session ended without a matching click: a live daemon run found the
+    # toggle would desync after a single timeout (the tray's next click then
+    # sent a STOP instead of the intended START, and the real START was one
+    # click later than the human expected). Payload: `{}`.
+    VOICE_PTT_SESSION_ENDED = auto()
 
 
 class PresenceState(StrEnum):

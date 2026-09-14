@@ -236,7 +236,13 @@ class VoiceCaptureModule(BaseModule):
     async def _finish_session(self) -> None:
         """The one path that ends a session, whether triggered by a real
         `_STOPPED` event or by `_enforce_max_duration`'s timeout — both need
-        the exact same capture -> VAD -> STT -> file pipeline afterward."""
+        the exact same capture -> VAD -> STT -> file pipeline afterward.
+
+        Always publishes `VOICE_PTT_SESSION_ENDED`, on every exit path
+        (`finally`) — found by a live daemon run: `activation.py`'s tray
+        toggle has no other way to learn a session ended via the timeout
+        rather than a matching click, and without this it desyncs (the next
+        click sends a STOP instead of the START the human expects)."""
         self._session_active = False
         # Guard against cancelling ourselves: when `_enforce_max_duration`
         # calls this, it *is* `self._timeout_task` — cancelling it here would
@@ -246,29 +252,36 @@ class VoiceCaptureModule(BaseModule):
             self._timeout_task.cancel()
         self._timeout_task = None
 
-        pcm = await asyncio.to_thread(self._audio.stop)
-        self._last_at = datetime.now(UTC)
-        if not pcm:
-            return
-
-        if self.config.voice_vad_enabled:
-            maybe_trimmed = await asyncio.to_thread(self._vad.trim, pcm, SAMPLE_RATE_HZ)
-            if maybe_trimmed is None:
-                self._rejected_silence += 1
+        try:
+            pcm = await asyncio.to_thread(self._audio.stop)
+            self._last_at = datetime.now(UTC)
+            if not pcm:
                 return
-            trimmed = maybe_trimmed
-        else:
-            trimmed = pcm
 
-        text = await asyncio.to_thread(self._stt.transcribe, trimmed, SAMPLE_RATE_HZ)
-        if not text.strip():
-            self._empty_transcripts += 1
-            return
+            if self.config.voice_vad_enabled:
+                maybe_trimmed = await asyncio.to_thread(self._vad.trim, pcm, SAMPLE_RATE_HZ)
+                if maybe_trimmed is None:
+                    self._rejected_silence += 1
+                    return
+                trimmed = maybe_trimmed
+            else:
+                trimmed = pcm
 
-        from plugins.voice.voice_plugin import append_utterance
+            text = await asyncio.to_thread(self._stt.transcribe, trimmed, SAMPLE_RATE_HZ)
+            if not text.strip():
+                self._empty_transcripts += 1
+                return
 
-        await asyncio.to_thread(append_utterance, self.config.voice_utterances_path, text.strip())
-        self._transcribed += 1
+            from plugins.voice.voice_plugin import append_utterance
+
+            await asyncio.to_thread(
+                append_utterance, self.config.voice_utterances_path, text.strip()
+            )
+            self._transcribed += 1
+        finally:
+            self.event_bus.publish(
+                Event(event_type=EventType.VOICE_PTT_SESSION_ENDED, source=self.name, payload={})
+            )
 
     def _fail(self, where: str, exc: Exception) -> None:
         self._errors += 1
