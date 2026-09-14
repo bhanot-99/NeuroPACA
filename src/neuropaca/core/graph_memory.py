@@ -154,7 +154,6 @@ DOMAIN_SLUGS: tuple[str, ...] = (
     "mental_models",
     "learning",
     "media",
-    "voice",
 )
 DOMAIN_HUB_IDS: frozenset[str] = frozenset(f"domain:{slug}" for slug in DOMAIN_SLUGS)
 HUB_NODE_IDS: frozenset[str] = DOMAIN_HUB_IDS | {"YOU"}
