@@ -81,3 +81,6 @@ def try_pattern_match(text: str) -> VoiceCommand | None:
             return VoiceCommand(action="close", target=target, source="pattern")
 
     return None
+
+
+# gen-ref: ff446a57

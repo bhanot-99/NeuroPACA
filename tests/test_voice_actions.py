@@ -275,3 +275,6 @@ async def test_executor_proposes_and_runs_voice_actions_with_confirmation(tmp_pa
         await executor.stop()
         await bus.stop()
         GraphMemory._reset_for_tests()
+
+
+# gen-ref: 8e6618c0
