@@ -11,8 +11,8 @@ from B4 on.
 
 L9 (`InterfaceLayer`, the socket/CLI/tray-facing "terminal accessibility"
 surface) was removed by user decision: a text/CLI control surface will not be
-maintained going forward, superseded by a future voice interface. Every
-producer still publishes exactly what it always did (`MOMENT_PROPOSED`,
+maintained going forward. Every producer still publishes exactly what it
+always did (`MOMENT_PROPOSED`,
 `ACTION_PROPOSAL`, `ACTION_CONFIRMATION_REQUEST`, `DMN_CYCLE_STARTED`/`_ENDED`,
 the `BRIEFING_REQUEST`/`MIRROR_REQUEST`/`SYSTEM_HEALTH_REQUEST` bridges) —
 none of that is "terminal", it is the general "ask without importing"
@@ -50,8 +50,6 @@ from neuropaca.idle.dmn import DefaultModeNetwork
 from neuropaca.interface.moments import MomentComposer
 from neuropaca.interface.notifier import NotificationDispatcher
 from neuropaca.learning.plasticity import BitNetPlasticity
-from neuropaca.learning.voice_command_parser import VoiceCommandParser
-from neuropaca.learning.voice_intent_parser import VoiceIntentParser
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
 from neuropaca.sensing.collectors.filesystem import FileSystemCollector
@@ -167,7 +165,7 @@ def build_modules(
         modules.append(MediaIngest(event_bus, config, graph_memory, episode_store=episode_store))
 
     domain_plugins: list[Plugin] = []
-    if config.calendar_enabled or config.reading_enabled or config.voice_enabled:
+    if config.calendar_enabled or config.reading_enabled:
         _ensure_repo_root_importable()
     if config.calendar_enabled:
         from plugins.calendar.calendar_plugin import CalendarPlugin
@@ -187,22 +185,6 @@ def build_modules(
                 poll_interval=config.reading_poll_interval_seconds,
             )
         )
-    if config.voice_enabled:
-        from neuropaca.diagnosis.app_identity import AppIdentity
-        from plugins.voice.voice_plugin import VoicePlugin
-
-        identity = (
-            AppIdentity.from_file(config.app_identity_path)
-            if config.app_identity_path
-            else None
-        )
-        domain_plugins.append(
-            VoicePlugin(
-                utterances_path=config.voice_utterances_path,
-                poll_interval=config.voice_poll_interval_seconds,
-                identity=identity,
-            )
-        )
     if domain_plugins:
         modules.append(
             PluginHost(
@@ -215,85 +197,6 @@ def build_modules(
                 name="domain_plugins",
             )
         )
-    # A6.1 · classifies each voice utterance the PluginHost above just wrote
-    # (`VOICE_UTTERANCE_CAPTURED`) — listed right after it for the same reason
-    # L7 follows L5: whatever it reacts to must already have a listener up.
-    if config.voice_enabled:
-        modules.append(
-            VoiceIntentParser(
-                event_bus, config, graph_memory, bitnet_runtime, episode_store=episode_store
-            )
-        )
-    # A6.2 · voice as hands (VISION_PHASES.md). Subscribes to VOICE_INTENT_CLASSIFIED
-    # published by VoiceIntentParser above and proposes dangerous-tier actions —
-    # each still runs through L7's confirmation handshake (rules.md §5.2).
-    if config.voice_commands_enabled:
-        modules.append(VoiceCommandParser(event_bus, config, graph_memory, bitnet_runtime))
-    # A6.3 · speech in (VISION_PHASES.md). VoiceCaptureModule must already be
-    # subscribed to VOICE_PTT_STARTED/_STOPPED before VoiceActivationModule
-    # can publish either — same "listener before publisher" ordering as the
-    # A6.1/A6.2 block above. Real backends only here (never Fake*): each one
-    # self-disables cleanly if its optional dependency is missing (`stt_
-    # backend.py`/`vad.py`/`voice_capture.py`'s own docstrings), the same
-    # discipline `LlamaCppBackend` already follows — a dep-less CI runner
-    # builds this module fine, it just never transcribes anything.
-    if config.voice_speech_enabled:
-        from neuropaca.interface.activation import VoiceActivationModule
-        from neuropaca.sensing.stt_backend import FasterWhisperBackend, SttBackend
-        from neuropaca.sensing.vad import SileroVadGate
-        from neuropaca.sensing.voice_capture import SoundDeviceSource, VoiceCaptureModule
-
-        local_stt = FasterWhisperBackend(
-            config.voice_stt_model_size,
-            language=config.voice_stt_language,
-            n_threads=config.n_threads,
-        )
-        # "gemini" (user decision 2026-09-14): faster-whisper stays wired in
-        # either way — as the wrapped fallback GeminiBridgeSttBackend falls
-        # back to on any timeout/helper error, never a second, unused model.
-        stt: SttBackend = local_stt
-        if config.voice_stt_backend == "gemini":
-            from neuropaca.sensing.cloud_voice_bridge import GeminiBridgeSttBackend
-
-            stt = GeminiBridgeSttBackend(
-                local_stt,
-                bridge_dir=config.voice_cloud_bridge_dir,
-                timeout_seconds=config.voice_cloud_timeout_seconds,
-            )
-
-        modules.append(
-            VoiceCaptureModule(
-                event_bus,
-                config,
-                SoundDeviceSource(),
-                SileroVadGate(),
-                stt,
-            )
-        )
-        # "wake_word" and "both" are the only modes needing extra dependencies
-        # (an always-on tap + a detector model) — "tray"/"hotkey" need nothing
-        # beyond config, so those two args stay None otherwise.
-        if config.voice_activation_mode in ("wake_word", "both"):
-            from neuropaca.sensing.wake_word import OpenWakeWordDetector, SoundDeviceWakeWordSource
-
-            modules.append(
-                VoiceActivationModule(
-                    event_bus,
-                    config,
-                    wake_word_detector=OpenWakeWordDetector(config.voice_wake_word_phrase),
-                    wake_word_audio_source=SoundDeviceWakeWordSource(),
-                )
-            )
-        else:
-            modules.append(VoiceActivationModule(event_bus, config))
-
-        # A6.2/rules.md §5.2 (user decision 2026-09-14): the "yes, confirm"
-        # answerer for dangerous voice actions — see its own module docstring
-        # for why this exists (the old CLI-based answerer was removed and
-        # nothing replaced it) and why it never trusts a notification click.
-        from neuropaca.interface.voice_confirmation import VoiceConfirmationBridge
-
-        modules.append(VoiceConfirmationBridge(event_bus, config))
     modules.append(diagnosis)
     modules.append(learning)
     modules.append(drive)

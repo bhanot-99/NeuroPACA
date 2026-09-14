@@ -36,7 +36,7 @@ from uuid import uuid4
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
 from neuropaca.core.config import Config
-from neuropaca.core.enums import EpisodeKind, EventType, NodeType, RelationType
+from neuropaca.core.enums import EpisodeKind, NodeType, RelationType
 from neuropaca.core.episodes import EpisodeStore
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.graph_memory import GraphMemory
@@ -275,7 +275,6 @@ class PluginHost(BaseModule):
         return violations
 
     async def initialize(self) -> None:
-        self.event_bus.subscribe(EventType.VOICE_PTT_SESSION_ENDED, self._on_voice_session_ended)
         if self._watermarks_path and self._watermarks_path.is_file():
             try:
                 data = json.loads(self._watermarks_path.read_text("utf-8"))
@@ -298,15 +297,14 @@ class PluginHost(BaseModule):
             for v in violations:
                 _log.warning("PluginHost manifest warning: %s", v)
 
-        # A6.1 · a plugin's domain hub is seeded here, not assumed to already
-        # exist. `GraphMemory._seed_hubs_unsafe()` only runs for a genuinely
-        # empty graph, and `_integrate_graph_nodes` below only links to a hub
-        # that already exists (V-5's edge-time materialisation never fires
-        # because that check comes first) — so a plugin introducing a domain
-        # nobody has routed to yet (voice's `domain:voice`, the first new one
-        # since S1-S4 all reused an existing hub) would otherwise never get
-        # linked on a live, already-populated graph. A no-op for every
-        # existing plugin, since their hubs already exist.
+        # A plugin's domain hub is seeded here, not assumed to already exist.
+        # `GraphMemory._seed_hubs_unsafe()` only runs for a genuinely empty
+        # graph, and `_integrate_graph_nodes` below only links to a hub that
+        # already exists (V-5's edge-time materialisation never fires because
+        # that check comes first) — so a plugin introducing a domain nobody
+        # has routed to yet would otherwise never get linked on a live,
+        # already-populated graph. A no-op for every existing plugin, since
+        # their hubs already exist.
         if self._gm is not None:
             for _name, _plugin in self._plugins.items():
                 _hub = _plugin.describe().domain_hub
@@ -338,7 +336,6 @@ class PluginHost(BaseModule):
 
     async def stop(self) -> None:
         self.is_running = False
-        self.event_bus.unsubscribe(EventType.VOICE_PTT_SESSION_ENDED, self._on_voice_session_ended)
         for task in self._poll_tasks:
             task.cancel()
             try:
@@ -415,25 +412,6 @@ class PluginHost(BaseModule):
                 break
             except Exception as exc:
                 _log.error("Error in plugin '%s' poll loop: %s", plugin_name, exc)
-
-    async def _on_voice_session_ended(self, event: Event) -> None:
-        """A6.3 (VISION_PHASES.md): the exact gap the A6.1 spike notes flagged
-        and never built — "does the Voice plugin need `items(since)` called
-        directly right after a session ends, rather than on a timer?
-        Expected: the latter." Without this, a just-written utterance sits
-        until the voice plugin's next scheduled `poll_interval_seconds`
-        (5s default) tick, adding pure dead time to every voice interaction
-        on top of real transcription/classification latency — confirmed live
-        (2026-09-14), the single biggest lever on "why does this take so
-        long". `poll_tick("voice")` is a no-op if no plugin named "voice" is
-        registered (rules.md §2 — never raises), which also means this never
-        needs to check `config.voice_enabled` itself: the event only exists
-        because `VoiceCaptureModule` is running, which already requires it.
-        """
-        try:
-            await self.poll_tick("voice")
-        except Exception as exc:  # a handler never raises (rules.md §2)
-            _log.error("PluginHost: out-of-cycle voice poll failed: %s", exc)
 
     async def poll_tick(self, plugin_name: str | None = None) -> int:
         """Poll one or all registered plugins. Returns total facts written this tick."""

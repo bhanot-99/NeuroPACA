@@ -87,38 +87,6 @@ class EventType(StrEnum):
     # for the same reason: L9 cannot import `MirrorComposer` (rules.md §0).
     MIRROR_REQUEST = auto()
     MIRROR_REPORT = auto()
-    # A6.1 · voice as a sense (VISION_PHASES.md). `plugins/voice/voice_plugin.py`
-    # publishes this once per captured utterance (via `PluginItem.events`,
-    # `PluginHost` relays it) so `learning/voice_intent.py`'s `VoiceIntentParser`
-    # can run its (model-touching) intent classification without the plugin
-    # itself calling a model — a `Plugin` stays a pure, side-effect-free reader
-    # (rules.md §0: "no module imports another module"; this is the new event
-    # that call would have been). Payload: `{entity_id, text}`.
-    VOICE_UTTERANCE_CAPTURED = auto()
-    # A6.2 · voice as hands (VISION_PHASES.md). `learning/voice_intent_parser.py`
-    # publishes this once per classified utterance so `learning/voice_command_parser.py`
-    # can react to classified commands without duplicating classification work.
-    # Payload: `{entity_id, text, category}`.
-    VOICE_INTENT_CLASSIFIED = auto()
-    # A6.3 · speech in (VISION_PHASES.md). `interface/activation.py` publishes
-    # these on push-to-talk press/release (hotkey or tray trigger-file,
-    # whichever fired) so `sensing/voice_capture.py`'s `VoiceCaptureModule`
-    # can start/stop the mic without activation importing it directly
-    # (rules.md §0: "no module imports another module"). Payload: `{}` for
-    # both — one capture session runs at a time, so no session id is needed
-    # yet; `VoiceCaptureModule` itself refuses a stray STOPPED with no
-    # in-flight session, and a stray STARTED while one is already running.
-    VOICE_PTT_STARTED = auto()
-    VOICE_PTT_STOPPED = auto()
-    # A6.3 (found by live testing, not designed up front): `voice_capture.py`
-    # publishes this at the end of *every* session — a real `_STOPPED`, or
-    # `voice_ptt_max_seconds`'s internal timeout firing with no `_STOPPED` ever
-    # arriving. `activation.py`'s tray-toggle state has no other way to learn
-    # a session ended without a matching click: a live daemon run found the
-    # toggle would desync after a single timeout (the tray's next click then
-    # sent a STOP instead of the intended START, and the real START was one
-    # click later than the human expected). Payload: `{}`.
-    VOICE_PTT_SESSION_ENDED = auto()
 
 
 class PresenceState(StrEnum):
@@ -169,11 +137,6 @@ class EpisodeKind(StrEnum):
     PLUGIN_SPAN = auto()
     PLUGIN_FACT = auto()
     MEETING_SPAN = auto()
-    # A6.1 · voice as a sense (VISION_PHASES.md). One span per captured
-    # utterance (start == end for a typed one; a real duration once A6.3
-    # wires up an actual push-to-talk session). The parsed intent itself is
-    # a PLUGIN_FACT, not a new kind — see plugins/voice/voice_plugin.py.
-    VOICE_UTTERANCE_SPAN = auto()
 
 
 class NodeType(StrEnum):
