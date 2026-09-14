@@ -295,6 +295,65 @@ def test_build_modules_wires_voice_capture_and_activation(tmp_path: Path) -> Non
         GraphMemory._reset_for_tests()
 
 
+def test_build_modules_wires_the_gemini_bridge_when_configured(tmp_path: Path) -> None:
+    """voice_stt_backend = 'gemini' (user decision 2026-09-14): VoiceCaptureModule
+    should hold a GeminiBridgeSttBackend wrapping the same local FasterWhisperBackend
+    it would otherwise use directly, never a second, unused model."""
+    from neuropaca.core.bitnet_runtime import BitNetRuntime
+    from neuropaca.core.graph_memory import GraphMemory
+    from neuropaca.core.inference import FakeInferenceBackend
+    from neuropaca.orchestration.modules import build_modules
+    from neuropaca.sensing.cloud_voice_bridge import GeminiBridgeSttBackend
+    from neuropaca.sensing.stt_backend import FasterWhisperBackend
+
+    bus = EventBus()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    backend = FakeInferenceBackend()
+    runtime = BitNetRuntime(backend, backend)
+
+    try:
+        cfg = Config(
+            inference_backend="fake",
+            voice_enabled=True,
+            voice_speech_enabled=True,
+            voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+            voice_stt_backend="gemini",
+            voice_cloud_bridge_dir=str(tmp_path / "voice_cloud"),
+        )
+        modules = build_modules(cfg, bus, gm, runtime)
+        capture = next(m for m in modules if m.name == "voice_capture")
+        assert isinstance(capture._stt, GeminiBridgeSttBackend)
+        assert isinstance(capture._stt._local, FasterWhisperBackend)
+    finally:
+        GraphMemory._reset_for_tests()
+
+
+def test_build_modules_uses_the_local_backend_directly_by_default(tmp_path: Path) -> None:
+    from neuropaca.core.bitnet_runtime import BitNetRuntime
+    from neuropaca.core.graph_memory import GraphMemory
+    from neuropaca.core.inference import FakeInferenceBackend
+    from neuropaca.orchestration.modules import build_modules
+    from neuropaca.sensing.stt_backend import FasterWhisperBackend
+
+    bus = EventBus()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    backend = FakeInferenceBackend()
+    runtime = BitNetRuntime(backend, backend)
+
+    try:
+        cfg = Config(
+            inference_backend="fake",
+            voice_enabled=True,
+            voice_speech_enabled=True,
+            voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        )
+        modules = build_modules(cfg, bus, gm, runtime)
+        capture = next(m for m in modules if m.name == "voice_capture")
+        assert isinstance(capture._stt, FasterWhisperBackend)
+    finally:
+        GraphMemory._reset_for_tests()
+
+
 # ------------------------------------------------------ listening indicator
 
 

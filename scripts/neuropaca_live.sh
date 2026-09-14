@@ -76,6 +76,27 @@ for arg in "$@"; do
     esac
 done
 
+# voice_stt_backend = "gemini" (opt-in, user decision 2026-09-14) is the only
+# thing that turns neuropaca-voice-cloud.service on — it needs a Gemini API
+# key set up first (see scripts/systemd/neuropaca-voice-cloud.service's own
+# comments), so this script must not force-enable it for everyone who runs
+# neuropaca_live.sh with voice_stt_backend left at its "local" default.
+# Deliberately NOT added to UNITS: that array drives the hard pass/fail gate
+# at the end, and a not-yet-configured API key would fail that gate for a
+# unit nobody asked to have running yet. It gets its own install/start/status
+# handling below instead, that degrades to instructions, never a HALT.
+CLOUD_STT_ENABLED=0
+if [ -f "$LIVE_CONFIG" ]; then
+    backend="$(.venv/bin/python3 -c "
+import tomllib
+with open('${LIVE_CONFIG}', 'rb') as f:
+    print(tomllib.load(f).get('voice_stt_backend', 'local'))
+" 2>/dev/null || echo local)"
+    if [ "$backend" = "gemini" ]; then
+        CLOUD_STT_ENABLED=1
+    fi
+fi
+
 print_status() {
     echo
     echo "=== unit status ==="
@@ -88,6 +109,12 @@ print_status() {
     echo
     echo "=== voice ==="
     echo "  live config: ${LIVE_CONFIG}"
+    if [ "$CLOUD_STT_ENABLED" -eq 1 ]; then
+        vc_state="$(systemctl --user is-active neuropaca-voice-cloud.service 2>/dev/null || true)"
+        echo "  cloud STT: enabled (voice_stt_backend=gemini) — neuropaca-voice-cloud.service ${vc_state:-not installed}"
+    else
+        echo "  cloud STT: off (voice_stt_backend=local)"
+    fi
     if [ -f data/health.json ]; then
         .venv/bin/python3 -c "
 import json
@@ -205,6 +232,28 @@ for u in "${UNITS[@]}"; do
     fi
 done
 systemctl --user daemon-reload
+
+# ------------------------------------------------- the cloud STT helper (opt-in)
+if [ "$CLOUD_STT_ENABLED" -eq 1 ]; then
+    installed_vc="${UNIT_DIR}/neuropaca-voice-cloud.service"
+    if [ ! -f "$installed_vc" ]; then
+        sed "s|__REPO__|${REPO}|g" scripts/systemd/neuropaca-voice-cloud.service >"$installed_vc"
+        systemctl --user daemon-reload
+        echo "-- installed neuropaca-voice-cloud.service (new)"
+    fi
+    if grep -q '__API_KEY_CMD__' "$installed_vc" 2>/dev/null; then
+        echo "-- neuropaca-voice-cloud.service needs one-time setup before it can start:"
+        echo "     1. store your Gemini API key:"
+        echo "          secret-tool store --label='NeuroPACA Gemini API key' service neuropaca-gemini account <you>"
+        echo "     2. edit ${installed_vc}, replace __API_KEY_CMD__ with:"
+        echo "          secret-tool lookup service neuropaca-gemini account <you>"
+        echo "     3. systemctl --user daemon-reload && systemctl --user enable --now neuropaca-voice-cloud.service"
+        echo "   until then, voice_stt_backend=gemini just falls back to local Whisper every time (by design)."
+    else
+        echo "-- enabling the voice-cloud helper (Gemini STT bridge)"
+        systemctl --user enable --now neuropaca-voice-cloud.service
+    fi
+fi
 
 # ------------------------------------------------------------------ bring up
 # neuropacad: always restart, so a config change actually takes effect (see

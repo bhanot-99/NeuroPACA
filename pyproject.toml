@@ -77,6 +77,14 @@ vad = [
 audio = [
     "sounddevice==0.5.1",
 ]
+# A6.3 · scripts/voice_cloud_helper.py (user decision 2026-09-14) — the
+# separate, network-capable process GeminiBridgeSttBackend hands audio to.
+# Not imported by src/neuropaca/ at all (the daemon stays PrivateNetwork=true
+# and never depends on this), so it's its own group rather than folded into
+# `stt` — installing voice at all does not imply opting into the cloud path.
+voice_cloud = [
+    "requests==2.34.2",
+]
 # A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
 # original "push-to-talk only, no ambient listening" call): openWakeWord
 # (Apache-2.0, ONNX/tflite, ships pre-trained "hey_jarvis" — no custom

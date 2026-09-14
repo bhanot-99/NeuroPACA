@@ -231,9 +231,27 @@ def build_modules(
     # builds this module fine, it just never transcribes anything.
     if config.voice_speech_enabled:
         from neuropaca.interface.activation import VoiceActivationModule
-        from neuropaca.sensing.stt_backend import FasterWhisperBackend
+        from neuropaca.sensing.stt_backend import FasterWhisperBackend, SttBackend
         from neuropaca.sensing.vad import SileroVadGate
         from neuropaca.sensing.voice_capture import SoundDeviceSource, VoiceCaptureModule
+
+        local_stt = FasterWhisperBackend(
+            config.voice_stt_model_size,
+            language=config.voice_stt_language,
+            n_threads=config.n_threads,
+        )
+        # "gemini" (user decision 2026-09-14): faster-whisper stays wired in
+        # either way — as the wrapped fallback GeminiBridgeSttBackend falls
+        # back to on any timeout/helper error, never a second, unused model.
+        stt: SttBackend = local_stt
+        if config.voice_stt_backend == "gemini":
+            from neuropaca.sensing.cloud_voice_bridge import GeminiBridgeSttBackend
+
+            stt = GeminiBridgeSttBackend(
+                local_stt,
+                bridge_dir=config.voice_cloud_bridge_dir,
+                timeout_seconds=config.voice_cloud_timeout_seconds,
+            )
 
         modules.append(
             VoiceCaptureModule(
@@ -241,11 +259,7 @@ def build_modules(
                 config,
                 SoundDeviceSource(),
                 SileroVadGate(),
-                FasterWhisperBackend(
-                    config.voice_stt_model_size,
-                    language=config.voice_stt_language,
-                    n_threads=config.n_threads,
-                ),
+                stt,
             )
         )
         # "wake_word" and "both" are the only modes needing extra dependencies

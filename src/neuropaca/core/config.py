@@ -26,6 +26,7 @@ _VALID_BACKENDS = frozenset({"llama", "fake"})
 # on for push-to-talk. See `voice_activation_mode`'s own comment for why
 # "tray" is the default.
 _VALID_ACTIVATION_MODES = frozenset({"hotkey", "tray", "wake_word", "both"})
+_VALID_STT_BACKENDS = frozenset({"local", "gemini"})
 # B7 (D-14). The L7 action tiers. Mirrored by `action.base.ActionTier` — the enum
 # lives in the layer that owns the behaviour, but `Config` cannot import L7 (that
 # would invert the layering), so the closed set of *names* is spelled here, the
@@ -403,6 +404,25 @@ class Config:
     # real first-run cost worth expecting, not being surprised by.
     voice_stt_model_size: str = "medium"
     voice_stt_language: str = "en"
+    # User decision 2026-09-14: "local" (faster-whisper, this machine's CPU)
+    # is the default and the only option `neuropaca.toml` (the shipped
+    # config) ships with — the daemon itself stays `PrivateNetwork=true`,
+    # zero egress, unchanged. "gemini" is a personal, opt-in speed/accuracy
+    # trade: `sensing/cloud_voice_bridge.py`'s `GeminiBridgeSttBackend` hands
+    # the captured audio to `scripts/voice_cloud_helper.py` — a SEPARATE
+    # process with its own scoped network access, never the daemon itself —
+    # via a request/response file drop under `voice_cloud_bridge_dir`, same
+    # file-handoff convention as `voice_ptt_trigger_path`. Falls back to a
+    # wrapped local `FasterWhisperBackend` on any timeout or helper error, so
+    # voice never just stops working because wifi or the helper is down.
+    # Which Gemini model to call, and the API key, are NOT config fields —
+    # they belong to scripts/voice_cloud_helper.py's own CLI flags
+    # (--model / --api-key-cmd), a completely separate process the daemon
+    # never talks to directly, so there is nothing here for the daemon side
+    # to read or round-trip.
+    voice_stt_backend: str = "local"
+    voice_cloud_bridge_dir: str = "data/voice_cloud"
+    voice_cloud_timeout_seconds: float = 6.0
     # "both" (user decision 2026-09-14) runs the tray toggle and the wake-word
     # tap at once — click to talk, or just say the phrase — see
     # interface/activation.py's module docstring for how the two trigger
@@ -671,6 +691,15 @@ class Config:
             errs.append(
                 f"voice_activation_mode must be one of {sorted(_VALID_ACTIVATION_MODES)}, "
                 f"got {self.voice_activation_mode!r}"
+            )
+        if self.voice_stt_backend not in _VALID_STT_BACKENDS:
+            errs.append(
+                f"voice_stt_backend must be one of {sorted(_VALID_STT_BACKENDS)}, "
+                f"got {self.voice_stt_backend!r}"
+            )
+        if self.voice_cloud_timeout_seconds <= 0:
+            errs.append(
+                f"voice_cloud_timeout_seconds must be > 0, got {self.voice_cloud_timeout_seconds}"
             )
 
         if self.calendar_enabled and not self.calendar_ics_path:

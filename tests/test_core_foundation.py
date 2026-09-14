@@ -190,6 +190,14 @@ def test_llama_backend_requires_existing_model_path() -> None:
             {"inference_backend": "fake", "voice_wake_word_threshold": 0.0},
             "voice_wake_word_threshold",
         ),
+        (
+            {"inference_backend": "fake", "voice_stt_backend": "openai"},
+            "voice_stt_backend",
+        ),
+        (
+            {"inference_backend": "fake", "voice_cloud_timeout_seconds": 0},
+            "voice_cloud_timeout_seconds",
+        ),
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs: dict[str, object], needle: str) -> None:

@@ -1,0 +1,100 @@
+# NeuroPACA · voice-cloud helper — systemd --user unit (A6.3, user decision
+# 2026-09-14).
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" scripts/systemd/neuropaca-voice-cloud.service \
+#     > ~/.config/systemd/user/neuropaca-voice-cloud.service
+#   systemctl --user daemon-reload && systemctl --user enable --now neuropaca-voice-cloud
+#
+# WHAT THIS IS
+#
+# scripts/voice_cloud_helper.py — the ONE process in this whole feature that
+# talks to the internet. `neuropacad.service` keeps PrivateNetwork=true
+# (unchanged, see its own unit file): it drops captured audio into
+# data/voice_cloud/pending/ and reads answers from data/voice_cloud/
+# responses/, both purely local files, and never opens a socket itself. This
+# helper is what actually calls the Gemini API, entirely outside the
+# daemon's sandbox — same separation of concerns as neuropaca-mail.service
+# for S1 mail fetching.
+#
+# WHY NOT IPAddressAllow LIKE neuropaca-mail.service
+#
+# The mail unit pins egress to one resolved IP because an IMAP host is one
+# fixed machine. Google's Gemini API (generativelanguage.googleapis.com) is
+# served from Google's edge network across a large, load-balanced, and not
+# publicly enumerable IP range — pinning to whatever IP `getent` happens to
+# resolve at install time would silently break the next time Google's load
+# balancer answers from a different address. RestrictAddressFamilies below
+# still confines this process to real network protocols only (no raw
+# sockets, no exotic address families), and ReadWritePaths confines its
+# filesystem writes to voice_cloud's own request/response folders — nothing
+# else this process could do if it were compromised has anywhere to go.
+#
+# NOT Requires=neuropacad.service: this helper's only coupling to the daemon
+# is the shared folder, so it can be started, stopped, or crash-looped
+# independently without taking voice down — GeminiBridgeSttBackend already
+# falls back to the local model the moment this helper stops answering.
+
+[Unit]
+Description=NeuroPACA voice-cloud helper (Gemini STT bridge, opt-in)
+Documentation=file://__REPO__/src/neuropaca/sensing/cloud_voice_bridge.py
+After=graphical-session.target network-online.target
+Wants=network-online.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+# __API_KEY_CMD__ — fill in at install time, e.g.:
+#   secret-tool lookup service neuropaca-gemini account __GEMINI_ACCOUNT__
+# Store the key first:
+#   secret-tool store --label="NeuroPACA Gemini API key" service neuropaca-gemini account __GEMINI_ACCOUNT__
+ExecStart=__REPO__/.venv/bin/python __REPO__/scripts/voice_cloud_helper.py \
+    --pending-dir __REPO__/data/voice_cloud/pending \
+    --response-dir __REPO__/data/voice_cloud/responses \
+    --api-key-cmd "__API_KEY_CMD__"
+
+Restart=on-failure
+RestartSec=15
+
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=neuropaca-voice-cloud
+
+# Lightweight: one REST call at a time, no model resident in this process.
+MemoryMax=256M
+CPUWeight=10
+IOWeight=10
+Nice=10
+
+# Hardening. This process needs real internet (Gemini), so PrivateNetwork
+# stays false and AF_INET/AF_INET6 are allowed — see the note above for why
+# IP-pinning isn't practical here. Everything else stays as locked down as
+# neuropacad.service's own template.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__REPO__/data/voice_cloud
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+NoNewPrivileges=true
+PrivateNetwork=false
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=graphical-session.target
