@@ -277,4 +277,69 @@ async def test_on_briefing_request_reports_none_when_nothing_to_say(tmp_path) ->
     await bus.stop()
 
 
+async def test_voice_candidate_surfaces_action_requests_and_reminders_only(tmp_path) -> None:
+    """A6.1 · an `action_request`/`reminder` utterance earns a briefing slot;
+    a `question`/`observation`/`other` one does not — 'attention is sacred'
+    (VISION.md §6), not every classified utterance is worth a slot."""
+    gm = await _graph(tmp_path)
+    store = await _store(tmp_path)
+
+    for suffix, category, text in (
+        ("a", "action_request", "open spotify"),
+        ("b", "reminder", "remind me to email Maya back"),
+        ("c", "question", "what time is the meeting"),
+    ):
+        entity_id = f"utterance:{suffix}"
+        await gm.add_node(entity_id, NodeType.CONCEPT, {"label": text, "relevance_score": 5.0})
+        store.assert_fact(
+            EpisodeKind.PLUGIN_FACT,
+            entity_id,
+            text,
+            valid_from=_NOW - timedelta(minutes=1),
+            source="voice_intent",
+            attrs={"source": "typed", "voice_intent": category},
+        )
+    await store.flush()
+
+    since_last = await store.since(0)
+    from neuropaca.interface.briefing import _voice_candidates
+
+    items = _voice_candidates(gm, since_last)
+    assert {i.anchor for i in items} == {"utterance:a", "utterance:b"}
+    assert any("open spotify" in i.text for i in items)
+    assert any("remind me to email Maya back" in i.text for i in items)
+    await store.stop()
+
+
+async def test_include_voice_flag_toggles_voice_candidates_in_and_out(tmp_path) -> None:
+    """The ablation flag `scripts/eval_voice_a6_1_briefing.py` needs to answer
+    A6.1's own exit criterion (with vs. without voice episodes)."""
+    gm = await _graph(tmp_path)
+    store = await _store(tmp_path)
+    await gm.add_node(
+        "utterance:a", NodeType.CONCEPT, {"label": "open spotify", "relevance_score": 5.0}
+    )
+    store.assert_fact(
+        EpisodeKind.PLUGIN_FACT,
+        "utterance:a",
+        "open spotify",
+        valid_from=_NOW - timedelta(minutes=1),
+        source="voice_intent",
+        attrs={"source": "typed", "voice_intent": "action_request"},
+    )
+    await store.flush()
+
+    from neuropaca.interface.briefing import build_candidates
+
+    with_voice = await build_candidates(
+        gm, store, now=_NOW, last_briefing_seq=0, include_voice=True
+    )
+    without_voice = await build_candidates(
+        gm, store, now=_NOW, last_briefing_seq=0, include_voice=False
+    )
+    assert any(i.anchor == "utterance:a" for i in with_voice)
+    assert not any(i.anchor == "utterance:a" for i in without_voice)
+    await store.stop()
+
+
 # gen-ref: a4e7b2c9

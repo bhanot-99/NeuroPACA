@@ -161,6 +161,33 @@ def _insight_candidates(gm: GraphMemory, rows: list[EpisodeRecord]) -> list[Brie
     return items
 
 
+def _voice_candidates(gm: GraphMemory, rows: list[EpisodeRecord]) -> list[BriefingItem]:
+    """A6.1 · what you asked for, surfaced the same way an insight is (VISION_
+    PHASES.md). Only the categories worth a briefing slot: `action_request`/
+    `reminder` — a question/observation/other doesn't belong in "what's
+    waiting for you". `row.subject.startswith("utterance:")` is how a voice
+    fact is told apart from any other plugin's `PLUGIN_FACT` (calendar's,
+    reading's) sharing the same `EpisodeKind`."""
+    items: list[BriefingItem] = []
+    for row in rows:
+        if row.kind != str(EpisodeKind.PLUGIN_FACT) or not row.subject.startswith("utterance:"):
+            continue
+        if row.attrs.get("voice_intent") not in ("action_request", "reminder"):
+            continue
+        text = (row.object or "").strip()
+        if not text or not gm.has_node(row.subject):
+            continue
+        items.append(
+            BriefingItem(
+                anchor=row.subject,
+                text=f'You asked: "{text}"',
+                evidence=(row.subject,),
+                value=0.0,
+            )
+        )
+    return items
+
+
 def _format_duration_human(seconds: float) -> str:
     if seconds < 3600:
         mins = max(1, int(seconds // 60))
@@ -476,16 +503,24 @@ async def build_candidates(
     last_briefing_seq: int,
     lookback: timedelta = timedelta(days=7),
     config: Config | None = None,
+    include_voice: bool = True,
 ) -> list[BriefingItem]:
     """Everything the briefing might say, unranked and unfiltered: open threads
     (from recent focus spans), insights since the last briefing, mail, project,
-    and media continuity candidates."""
+    media continuity, and voice-intent candidates.
+
+    `include_voice` exists for `scripts/eval_voice_a6_1_briefing.py`'s ablation
+    (VISION_PHASES.md A6.1's own exit criterion: does the briefing measurably
+    change with vs. without voice episodes) — production callers always leave
+    it at the default."""
     recent = await store.between(now - lookback, now)
     since_last = await store.since(last_briefing_seq)
     candidates: list[BriefingItem] = [
         *_open_thread_candidates(gm, recent, now=now),
         *_insight_candidates(gm, since_last),
     ]
+    if include_voice:
+        candidates.extend(_voice_candidates(gm, since_last))
 
     overdue_days = getattr(config, "mail_overdue_days", 3) if config else 3
     resolved_days = getattr(config, "mail_resolved_after_days", 21) if config else 21
@@ -544,13 +579,20 @@ async def compose_briefing(
     now: datetime,
     last_briefing_seq: int,
     config: Config,
+    include_voice: bool = True,
 ) -> Moment | None:
     """The whole pipeline: candidates -> rank -> greedy submodular select ->
     render. `None` when there is nothing grounded to say (F1's grounding
     check — every candidate here already required a live graph node, so
-    nothing ungrounded can reach this point)."""
+    nothing ungrounded can reach this point). `include_voice` — see
+    `build_candidates`."""
     raw = await build_candidates(
-        gm, store, now=now, last_briefing_seq=last_briefing_seq, config=config
+        gm,
+        store,
+        now=now,
+        last_briefing_seq=last_briefing_seq,
+        config=config,
+        include_voice=include_voice,
     )
     ranked = rank_candidates(gm, raw, focus_history=focus_history, now=now, config=config)
     ranked = [item for item in ranked if item.value > 0.0]

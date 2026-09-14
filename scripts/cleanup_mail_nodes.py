@@ -108,3 +108,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# gen-ref: ec5c99b5
