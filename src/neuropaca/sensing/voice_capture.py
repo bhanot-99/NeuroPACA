@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from neuropaca.core.base_module import BaseModule
@@ -198,11 +200,13 @@ class VoiceCaptureModule(BaseModule):
                 _log.warning("A6.3: VOICE_PTT_STARTED while a session was already active")
                 return
             self._session_active = True
+            self._write_listening_state(True)
             self._sessions += 1
             await asyncio.to_thread(self._audio.start)
             self._timeout_task = asyncio.create_task(self._enforce_max_duration())
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._session_active = False
+            self._write_listening_state(False)
             self._fail("on_ptt_started", exc)
 
     async def on_ptt_stopped(self, event: Event) -> None:
@@ -238,12 +242,17 @@ class VoiceCaptureModule(BaseModule):
         `_STOPPED` event or by `_enforce_max_duration`'s timeout — both need
         the exact same capture -> VAD -> STT -> file pipeline afterward.
 
+        Writes `listening: false` immediately (before any of the slow VAD/
+        STT work below) — the indicator should disappear the instant capture
+        stops, not once transcription finishes.
+
         Always publishes `VOICE_PTT_SESSION_ENDED`, on every exit path
         (`finally`) — found by a live daemon run: `activation.py`'s tray
         toggle has no other way to learn a session ended via the timeout
         rather than a matching click, and without this it desyncs (the next
         click sends a STOP instead of the START the human expects)."""
         self._session_active = False
+        self._write_listening_state(False)
         # Guard against cancelling ourselves: when `_enforce_max_duration`
         # calls this, it *is* `self._timeout_task` — cancelling it here would
         # raise CancelledError into the very next `await` below, aborting the
@@ -282,6 +291,26 @@ class VoiceCaptureModule(BaseModule):
             self.event_bus.publish(
                 Event(event_type=EventType.VOICE_PTT_SESSION_ENDED, source=self.name, payload={})
             )
+
+    def _write_listening_state(self, listening: bool) -> None:
+        """The daemon's one write-back for the tray's "listening" indicator
+        (`scripts/neuropaca_tray.py`'s `read_listening_state()`) — same
+        atomic tmp+replace convention as `orchestrator.py`'s health dump and
+        the tray's own `write_ptt_trigger()`. Called synchronously (no
+        `asyncio.to_thread`) on purpose: this is a session start/end, a rare
+        event, not a hot path, and `orchestrator._write_health_dump()`
+        already sets the precedent that a write this small and this
+        infrequent doesn't need offloading. Never raises (rules.md §2) — a
+        stale indicator is a UI nit, not a reason to fail the session."""
+        try:
+            path = Path(self.config.voice_listening_state_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps({"listening": listening})
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            _log.warning("A6.3: failed to write listening-state indicator: %s", exc)
 
     def _fail(self, where: str, exc: Exception) -> None:
         self._errors += 1

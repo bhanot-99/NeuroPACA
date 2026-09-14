@@ -295,4 +295,73 @@ def test_build_modules_wires_voice_capture_and_activation(tmp_path: Path) -> Non
         GraphMemory._reset_for_tests()
 
 
+# ------------------------------------------------------ listening indicator
+
+
+def _read_listening(path: Path) -> bool:
+    return json.loads(path.read_text("utf-8"))["listening"]
+
+
+async def test_listening_state_file_is_true_while_a_session_is_active(
+    tmp_path: Path,
+) -> None:
+    bus = EventBus()
+    await bus.start()
+    listening_path = tmp_path / "listening.json"
+    cfg = Config(
+        inference_backend="fake",
+        voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        voice_listening_state_path=str(listening_path),
+    )
+    module = VoiceCaptureModule(
+        bus, cfg, FakeAudioSource(pcm=b"\x00"), FakeVadGate(), FakeSttBackend()
+    )
+    await module.initialize()
+    await module.start()
+
+    try:
+        bus.publish(Event(event_type=EventType.VOICE_PTT_STARTED, source="test", payload={}))
+        await bus.join()
+        assert _read_listening(listening_path) is True
+
+        bus.publish(Event(event_type=EventType.VOICE_PTT_STOPPED, source="test", payload={}))
+        await bus.join()
+        assert _read_listening(listening_path) is False
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_listening_state_is_false_after_a_forced_timeout(tmp_path: Path) -> None:
+    bus = EventBus()
+    await bus.start()
+    listening_path = tmp_path / "listening.json"
+    cfg = Config(
+        inference_backend="fake",
+        voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        voice_listening_state_path=str(listening_path),
+        voice_ptt_max_seconds=0.01,
+    )
+    module = VoiceCaptureModule(
+        bus, cfg, FakeAudioSource(pcm=b"\x00"), FakeVadGate(), FakeSttBackend()
+    )
+    await module.initialize()
+    await module.start()
+
+    try:
+        bus.publish(Event(event_type=EventType.VOICE_PTT_STARTED, source="test", payload={}))
+        await bus.join()
+        assert _read_listening(listening_path) is True
+
+        timeout_task = module._timeout_task
+        assert timeout_task is not None
+        await timeout_task
+        await bus.join()
+
+        assert _read_listening(listening_path) is False
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
 # gen-ref: 996103d8

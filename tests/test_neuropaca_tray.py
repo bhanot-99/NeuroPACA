@@ -203,4 +203,42 @@ def test_find_module_is_none_when_voice_speech_is_disabled() -> None:
     assert tray._find_module(health, "voice_activation") is None
 
 
+# --------------------------------------------------------- listening indicator
+
+
+def test_default_voice_listening_state_path_honours_the_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("NEUROPACA_VOICE_LISTENING_STATE", "/tmp/custom-listening.json")
+    assert tray.default_voice_listening_state_path() == Path("/tmp/custom-listening.json")
+
+
+def test_default_voice_listening_state_path_falls_back_to_the_repo_data_dir(monkeypatch) -> None:
+    monkeypatch.delenv("NEUROPACA_VOICE_LISTENING_STATE", raising=False)
+    assert (
+        tray.default_voice_listening_state_path()
+        == tray.REPO / "data" / "voice_listening_state.json"
+    )
+
+
+def test_read_listening_state_true_when_the_file_says_so(tmp_path: Path) -> None:
+    path = tmp_path / "listening.json"
+    path.write_text(json.dumps({"listening": True}), encoding="utf-8")
+    assert tray.read_listening_state(path) is True
+
+
+def test_read_listening_state_false_when_the_file_says_so(tmp_path: Path) -> None:
+    path = tmp_path / "listening.json"
+    path.write_text(json.dumps({"listening": False}), encoding="utf-8")
+    assert tray.read_listening_state(path) is False
+
+
+def test_read_listening_state_false_when_the_file_is_absent(tmp_path: Path) -> None:
+    assert tray.read_listening_state(tmp_path / "nonexistent.json") is False
+
+
+def test_read_listening_state_false_when_the_file_is_malformed(tmp_path: Path) -> None:
+    path = tmp_path / "listening.json"
+    path.write_text("not json", encoding="utf-8")
+    assert tray.read_listening_state(path) is False
+
+
 # gen-ref: b50d3aca

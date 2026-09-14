@@ -98,6 +98,12 @@ GRAPH_RENDER = REPO / "scripts" / "neuropaca_graph.py"
 GRAPH_HTML = REPO / "data" / "graph_view.html"
 
 POLL_SECONDS = 5
+# A6.3: the health dump above is far too coarse for a "recording right now"
+# indicator (voice_wake_word_listen_seconds defaults to 8s — a 5s-granularity
+# poll could show it up to 5s late and clear it up to 5s late). Polled
+# separately, much faster, off its own small file
+# (voice_listening_state_path) rather than health.json.
+LISTENING_POLL_MS = 300
 # A few missed ticks of the daemon's default `health_dump_interval_seconds`
 # (30s) — long enough that one slow write is not mistaken for the daemon
 # being gone, short enough that a genuinely dead daemon is caught quickly.
@@ -110,6 +116,7 @@ ICON_IDLE = "user-idle"
 ICON_AWAKE = "user-available"
 ICON_ASLEEP = "user-offline"  # the daemon is unreachable/stale — not one of the five real states
 ICON_ERROR = "dialog-error"
+ICON_LISTENING = "audio-input-microphone"  # standard freedesktop icon name
 
 _ICON_BY_STATE = {
     "thinking": ICON_THINKING,
@@ -119,10 +126,10 @@ _ICON_BY_STATE = {
     "awake": ICON_AWAKE,
 }
 
-# The widest label this tray ever actually shows ("Thinking", 8 chars) — the
+# The widest label this tray ever actually shows ("Listening…", A6.3) — the
 # fixed sizing hint AppIndicator3.set_label's second argument wants, so the
 # panel does not resize on every state change.
-LABEL_WIDTH_GUIDE = "Thinking"
+LABEL_WIDTH_GUIDE = "Listening…"
 
 # Same fallback chain as soak_tray.py, duplicated rather than imported —
 # see the module docstring for why the two scripts stay independent.
@@ -158,6 +165,28 @@ def write_ptt_trigger(path: Path, seq: int) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
     tmp.replace(path)  # atomic on the same filesystem — never a half-written read
+
+
+def default_voice_listening_state_path() -> Path:
+    """A6.3. Same kept-in-sync-by-hand convention as
+    `default_voice_ptt_trigger_path()` — mirrors `Config.
+    voice_listening_state_path`'s own default."""
+    override = os.environ.get("NEUROPACA_VOICE_LISTENING_STATE")
+    if override:
+        return Path(override)
+    return REPO / "data" / "voice_listening_state.json"
+
+
+def read_listening_state(path: Path) -> bool:
+    """`True` only when the file exists, parses, and says `listening: true`
+    — every other outcome (absent, unreadable, malformed, `false`) reads as
+    "not listening", the same "any failure looks like no data" discipline as
+    `read_health()`."""
+    try:
+        parsed = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(parsed, dict) and parsed.get("listening") is True
 
 
 def read_health(path: Path) -> dict[str, Any] | None:
@@ -350,11 +379,21 @@ def _run_tray() -> None:
             self._ptt_path = default_voice_ptt_trigger_path()
             self._ptt_seq = 0
             self._health: dict[str, Any] | None = None
+            self._listening_path = default_voice_listening_state_path()
+            self._listening = False
             self.refresh()
             GLib.timeout_add_seconds(POLL_SECONDS, self._on_timer)
+            GLib.timeout_add(LISTENING_POLL_MS, self._on_listening_timer)
 
         def _on_timer(self) -> bool:
             self.refresh()
+            return True  # GLib.SOURCE_CONTINUE
+
+        def _on_listening_timer(self) -> bool:
+            listening = read_listening_state(self._listening_path)
+            if listening != self._listening:
+                self._listening = listening
+                self._apply_icon()
             return True  # GLib.SOURCE_CONTINUE
 
         def refresh(self) -> None:
@@ -366,9 +405,21 @@ def _run_tray() -> None:
             except OSError:
                 stale = True
             self.view = compute_tray_view(health, stale=stale)
-            self.indicator.set_icon_full(self.view.icon_name, self.view.label)
-            self.indicator.set_label(self.view.label, LABEL_WIDTH_GUIDE)
+            self._apply_icon()
             self._populate_menu()
+
+        def _apply_icon(self) -> None:
+            # A6.3: "listening right now" always wins over the regular
+            # presence icon — it's the more time-critical, more actionable
+            # of the two signals, and it's meant to disappear the instant
+            # capture actually stops (poll granularity above), not linger
+            # until the next 5s presence refresh happens to redraw over it.
+            if self._listening:
+                self.indicator.set_icon_full(ICON_LISTENING, "Listening…")
+                self.indicator.set_label("Listening…", LABEL_WIDTH_GUIDE)
+            else:
+                self.indicator.set_icon_full(self.view.icon_name, self.view.label)
+                self.indicator.set_label(self.view.label, LABEL_WIDTH_GUIDE)
 
         def _on_refresh_clicked(self, *_args: object) -> None:
             # Hand the rebuild to the next idle turn so the menu is not torn

@@ -410,6 +410,13 @@ class Config:
     # sides agree on a path convention rather than sharing one object. The
     # tray's own default must be kept in sync with this one by hand.
     voice_ptt_trigger_path: str = "data/voice_ptt_trigger.json"
+    # The reverse direction of voice_ptt_trigger_path — the daemon writes
+    # this, the tray polls it fast (0.3s, not the 5s health-dump cadence) to
+    # show/hide a "listening" indicator the instant a capture session
+    # actually starts/ends, whatever triggered it (tray click or wake word).
+    # Same kept-in-sync-by-hand file convention; tray's own default must
+    # match.
+    voice_listening_state_path: str = "data/voice_listening_state.json"
     voice_ptt_max_seconds: float = 30.0
     voice_vad_enabled: bool = True
     # A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
