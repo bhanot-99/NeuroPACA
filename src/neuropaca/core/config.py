@@ -374,6 +374,9 @@ class Config:
     voice_enabled: bool = False
     voice_utterances_path: str = "data/plugins/voice/utterances.jsonl"
     voice_poll_interval_seconds: float = 5.0
+    # A6.2 · voice as hands — safe tier only (VISION_PHASES.md). Layered opt-in:
+    # voice_enabled can run as a passive sense without commands being enabled.
+    voice_commands_enabled: bool = False
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4

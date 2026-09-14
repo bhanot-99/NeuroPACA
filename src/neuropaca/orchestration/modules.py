@@ -50,6 +50,7 @@ from neuropaca.idle.dmn import DefaultModeNetwork
 from neuropaca.interface.moments import MomentComposer
 from neuropaca.interface.notifier import NotificationDispatcher
 from neuropaca.learning.plasticity import BitNetPlasticity
+from neuropaca.learning.voice_command_parser import VoiceCommandParser
 from neuropaca.learning.voice_intent_parser import VoiceIntentParser
 from neuropaca.sensing.activity.collector import ActivityCollector
 from neuropaca.sensing.collector_module import XMetricCollector
@@ -215,6 +216,10 @@ def build_modules(
                 event_bus, config, graph_memory, bitnet_runtime, episode_store=episode_store
             )
         )
+    # A6.2 · voice as hands (VISION_PHASES.md). Subscribes to VOICE_INTENT_CLASSIFIED
+    # published by VoiceIntentParser above and proposes safe actions.
+    if config.voice_commands_enabled:
+        modules.append(VoiceCommandParser(event_bus, config, graph_memory, bitnet_runtime))
     modules.append(diagnosis)
     modules.append(learning)
     modules.append(drive)

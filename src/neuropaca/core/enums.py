@@ -95,6 +95,11 @@ class EventType(StrEnum):
     # (rules.md §0: "no module imports another module"; this is the new event
     # that call would have been). Payload: `{entity_id, text}`.
     VOICE_UTTERANCE_CAPTURED = auto()
+    # A6.2 · voice as hands (VISION_PHASES.md). `learning/voice_intent_parser.py`
+    # publishes this once per classified utterance so `learning/voice_command_parser.py`
+    # can react to classified commands without duplicating classification work.
+    # Payload: `{entity_id, text, category}`.
+    VOICE_INTENT_CLASSIFIED = auto()
 
 
 class PresenceState(StrEnum):

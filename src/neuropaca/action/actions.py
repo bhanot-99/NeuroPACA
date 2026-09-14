@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -289,6 +291,217 @@ class RunCommandAction(BaseAction):
         """A finished process cannot be un-run. This is exactly why the tier is
         `DANGEROUS` and why confirmation happens *before* execution rather than
         relying on undo afterwards."""
+        return False
+
+
+class OpenAppAction(BaseAction):
+    """Launch a verified installed desktop application (SAFE tier).
+
+    Can only launch something already resolved in the verified installed-apps
+    list (app_registry.py) — never an arbitrary string from the model.
+    """
+
+    name = "open_app"
+    tier = ActionTier.SAFE
+
+    def __init__(
+        self,
+        sandbox: Sandbox,
+        *,
+        reason: str,
+        app_name: str,
+        launch_command: str,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        super().__init__(reason=reason)
+        self._sandbox = sandbox
+        self.app_name = app_name.strip()
+        self.launch_command = launch_command.strip()
+        self.argv = tuple(shlex.split(self.launch_command))
+        self.timeout_seconds = float(timeout_seconds)
+        self._resolved: tuple[str, ...] = ()
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "kind": self.name,
+            "reason": self.reason,
+            "app_name": self.app_name,
+            "launch_command": self.launch_command,
+            "argv": list(self._resolved or self.argv),
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+    async def validate(self) -> None:
+        if not self.app_name:
+            raise SafetyGateError("empty app_name")
+        if not self.launch_command or not self.argv:
+            raise SafetyGateError("empty launch_command")
+        if self.timeout_seconds <= 0:
+            raise SafetyGateError("open_app timeout must be > 0")
+        self._resolved = self._sandbox.validate_argv(self.argv)
+
+    async def dry_run(self) -> str:
+        head = (self._resolved or self.argv)[0]
+        return f"open app {self.app_name} via {head}"
+
+    async def execute(self) -> str:
+        outcome = await self._sandbox.run(
+            self._resolved or self.argv, timeout_seconds=self.timeout_seconds
+        )
+        if not outcome.ok:
+            raise SafetyGateError(
+                f"failed to open {self.app_name}: "
+                f"{outcome.stderr.strip()[:200] or f'exit code {outcome.returncode}'}"
+            )
+        return f"opened {self.app_name}"
+
+    async def rollback(self) -> bool:
+        return False  # opening an app cannot be un-run automatically
+
+
+class AdjustVolumeAction(BaseAction):
+    """Adjust system volume up or down via standard system tools (wpctl/pactl)."""
+
+    name = "adjust_volume"
+    tier = ActionTier.SAFE
+
+    def __init__(
+        self,
+        sandbox: Sandbox,
+        *,
+        reason: str,
+        direction: str,
+        step: str = "5%",
+        tool_path: str | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(reason=reason)
+        self._sandbox = sandbox
+        self.direction = direction.strip().lower()
+        self.step = step.strip()
+        self.tool_path = tool_path
+        self.timeout_seconds = float(timeout_seconds)
+        self._resolved: tuple[str, ...] = ()
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "kind": self.name,
+            "reason": self.reason,
+            "direction": self.direction,
+            "step": self.step,
+            "argv": list(self._resolved),
+        }
+
+    async def validate(self) -> None:
+        if self.direction not in ("increase", "decrease", "up", "down"):
+            raise SafetyGateError(f"invalid volume adjustment direction: {self.direction!r}")
+        if self.timeout_seconds <= 0:
+            raise SafetyGateError("timeout must be > 0")
+
+        is_up = self.direction in ("increase", "up")
+        if self.tool_path is not None:
+            argv = (
+                self.tool_path,
+                "set-volume",
+                "@DEFAULT_AUDIO_SINK@",
+                f"{self.step}+" if is_up else f"{self.step}-",
+            )
+        elif shutil.which("wpctl"):
+            argv = (
+                "wpctl",
+                "set-volume",
+                "@DEFAULT_AUDIO_SINK@",
+                f"{self.step}+" if is_up else f"{self.step}-",
+            )
+        elif shutil.which("pactl"):
+            argv = (
+                "pactl",
+                "set-sink-volume",
+                "@DEFAULT_SINK@",
+                f"+{self.step}" if is_up else f"-{self.step}",
+            )
+        else:
+            argv = (
+                "wpctl",
+                "set-volume",
+                "@DEFAULT_AUDIO_SINK@",
+                f"{self.step}+" if is_up else f"{self.step}-",
+            )
+
+        self._resolved = self._sandbox.validate_argv(argv)
+
+    async def dry_run(self) -> str:
+        return f"adjust volume {self.direction} by {self.step} via {self._resolved[0]}"
+
+    async def execute(self) -> str:
+        outcome = await self._sandbox.run(self._resolved, timeout_seconds=self.timeout_seconds)
+        if not outcome.ok:
+            err_detail = outcome.stderr.strip()[:200] or f"exit code {outcome.returncode}"
+            raise SafetyGateError(f"failed to adjust volume: {err_detail}")
+        return f"adjusted volume {self.direction} by {self.step}"
+
+    async def rollback(self) -> bool:
+        return False
+
+
+class AdjustBrightnessAction(BaseAction):
+    """Adjust display brightness up or down via standard system tools (brightnessctl)."""
+
+    name = "adjust_brightness"
+    tier = ActionTier.SAFE
+
+    def __init__(
+        self,
+        sandbox: Sandbox,
+        *,
+        reason: str,
+        direction: str,
+        step: str = "5%",
+        tool_path: str | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(reason=reason)
+        self._sandbox = sandbox
+        self.direction = direction.strip().lower()
+        self.step = step.strip()
+        self.tool_path = tool_path
+        self.timeout_seconds = float(timeout_seconds)
+        self._resolved: tuple[str, ...] = ()
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "kind": self.name,
+            "reason": self.reason,
+            "direction": self.direction,
+            "step": self.step,
+            "argv": list(self._resolved),
+        }
+
+    async def validate(self) -> None:
+        if self.direction not in ("increase", "decrease", "up", "down"):
+            raise SafetyGateError(f"invalid brightness adjustment direction: {self.direction!r}")
+        if self.timeout_seconds <= 0:
+            raise SafetyGateError("timeout must be > 0")
+
+        is_up = self.direction in ("increase", "up")
+        if self.tool_path is not None:
+            argv = (self.tool_path, "set", f"{self.step}+" if is_up else f"{self.step}-")
+        else:
+            argv = ("brightnessctl", "set", f"{self.step}+" if is_up else f"{self.step}-")
+
+        self._resolved = self._sandbox.validate_argv(argv)
+
+    async def dry_run(self) -> str:
+        return f"adjust brightness {self.direction} by {self.step} via {self._resolved[0]}"
+
+    async def execute(self) -> str:
+        outcome = await self._sandbox.run(self._resolved, timeout_seconds=self.timeout_seconds)
+        if not outcome.ok:
+            err_detail = outcome.stderr.strip()[:200] or f"exit code {outcome.returncode}"
+            raise SafetyGateError(f"failed to adjust brightness: {err_detail}")
+        return f"adjusted brightness {self.direction} by {self.step}"
+
+    async def rollback(self) -> bool:
         return False
 
 

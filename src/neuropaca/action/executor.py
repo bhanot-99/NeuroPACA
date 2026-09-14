@@ -67,9 +67,12 @@ from typing import Any
 from uuid import uuid4
 
 from neuropaca.action.actions import (
+    AdjustBrightnessAction,
+    AdjustVolumeAction,
     FileWriteAction,
     MemoryWriteAction,
     NotificationAction,
+    OpenAppAction,
     RunCommandAction,
 )
 from neuropaca.action.audit import ActionAudit
@@ -98,14 +101,25 @@ _COMMAND_TIMEOUT_SECONDS = 30.0
 #: refused, so a proposal can never reach a class L7 did not intend to expose.
 #: `ApiCallAction` is absent because it does not exist (rules.md §5.5).
 _PROPOSABLE: frozenset[str] = frozenset(
-    {"notification", "memory_write", "file_write", "run_command"}
+    {
+        "notification",
+        "memory_write",
+        "file_write",
+        "run_command",
+        "open_app",
+        "adjust_volume",
+        "adjust_brightness",
+    }
 )
 
 __all__ = [
     "ActionExecutor",
+    "AdjustBrightnessAction",
+    "AdjustVolumeAction",
     "FileWriteAction",
     "MemoryWriteAction",
     "NotificationAction",
+    "OpenAppAction",
     "RunCommandAction",
 ]
 
@@ -312,6 +326,32 @@ class ActionExecutor(BaseModule):
                     reason=reason,
                     path=str(kwargs["path"]),
                     content=str(kwargs["content"]),
+                )
+            if name == "open_app":
+                return OpenAppAction(
+                    self.sandbox,
+                    reason=reason,
+                    app_name=str(kwargs["app_name"]),
+                    launch_command=str(kwargs["launch_command"]),
+                    timeout_seconds=float(kwargs.get("timeout_seconds", 10.0)),
+                )
+            if name == "adjust_volume":
+                return AdjustVolumeAction(
+                    self.sandbox,
+                    reason=reason,
+                    direction=str(kwargs.get("direction", "increase")),
+                    step=str(kwargs.get("step", "5%")),
+                    tool_path=str(kwargs["tool_path"]) if kwargs.get("tool_path") else None,
+                    timeout_seconds=float(kwargs.get("timeout_seconds", 5.0)),
+                )
+            if name == "adjust_brightness":
+                return AdjustBrightnessAction(
+                    self.sandbox,
+                    reason=reason,
+                    direction=str(kwargs.get("direction", "increase")),
+                    step=str(kwargs.get("step", "5%")),
+                    tool_path=str(kwargs["tool_path"]) if kwargs.get("tool_path") else None,
+                    timeout_seconds=float(kwargs.get("timeout_seconds", 5.0)),
                 )
             # run_command — dangerous, and the confirmation in front of it is not
             # removable by any flag (rules.md §5.2). argv is exec'd as a list with
