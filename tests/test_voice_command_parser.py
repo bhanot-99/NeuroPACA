@@ -359,3 +359,6 @@ def test_build_modules_wires_voice_command_parser(tmp_path: Path) -> None:
     idx_cmd = names.index("voice_command")
     assert idx_cmd == idx_intent + 1
     GraphMemory._reset_for_tests()
+
+
+# gen-ref: 1bbebca2

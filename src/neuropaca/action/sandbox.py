@@ -129,21 +129,82 @@ class Sandbox:
         return (str(exe), *argv[1:])
 
     async def run(
-        self, argv: Sequence[str], *, timeout_seconds: float, cwd: str | Path | None = None
+        self,
+        argv: Sequence[str],
+        *,
+        timeout_seconds: float,
+        cwd: str | Path | None = None,
+        gui: bool = False,
     ) -> CommandOutcome:
-        """Run a validated argv with no shell, no environment, and a hard timeout."""
+        """Run a validated argv with no shell, no environment (or a fixed GUI
+        display allowlist if `gui=True`), and a hard timeout.
+
+        `gui=True` (A6.2's `OpenAppAction`): a launched GUI app needs
+        `DISPLAY`/`WAYLAND_DISPLAY`/`XDG_RUNTIME_DIR`/etc. to actually show a
+        window — the default `env={}` strips those along with everything
+        else. Also skips waiting for the process to exit: after a short
+        launch-check window, a still-running process is reported as a
+        successful, detached launch, and `timeout_seconds` never kills it
+        the way it does the non-gui path.
+
+        `stdout`/`stderr` are `DEVNULL`, not `PIPE`, for the *entire*
+        `gui=True` call, including the launch-check window — found live
+        (2026-09-14): a real `google-chrome-stable` launch survived the
+        launch-check window, was reported as a successful detached launch,
+        and then died minutes later with no error captured. Root cause: a
+        `PIPE` nobody ever reads from fills its kernel buffer and/or gets
+        closed once this method's local `proc` goes out of scope, and a
+        detached GUI app that writes to a stdout/stderr whose read end just
+        closed gets `SIGPIPE` — killed, well after this method already
+        reported success. `DEVNULL` has no reader to starve and no pipe to
+        close, so nothing can back up or break later. The tradeoff: a fast
+        failure inside the launch-check window is still caught (the
+        `returncode`), but its `stdout`/`stderr` text is not — acceptable,
+        since the alternative (a `PIPE` that later kills a working app) is
+        strictly worse for the common, successful case this exists for."""
         resolved = self.validate_argv(argv)
         workdir = str(cwd) if cwd is not None else None
-        _log.info("L7 sandbox exec %s", resolved[0])
+        _log.info("L7 sandbox exec %s (gui=%s)", resolved[0], gui)
+        env: dict[str, str] = {}
+        if gui:
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if k
+                in (
+                    "DISPLAY",
+                    "WAYLAND_DISPLAY",
+                    "XDG_RUNTIME_DIR",
+                    "XDG_SESSION_TYPE",
+                    "XDG_CURRENT_DESKTOP",
+                    "HOME",
+                    "PATH",
+                    "DBUS_SESSION_BUS_ADDRESS",
+                )
+            }
         proc = await asyncio.create_subprocess_exec(
             *resolved,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={},
+            stdout=asyncio.subprocess.DEVNULL if gui else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL if gui else asyncio.subprocess.PIPE,
+            env=env,
             cwd=workdir,
             start_new_session=True,
         )
+        if gui:
+            try:
+                await asyncio.wait_for(proc.wait(), 0.15)
+                return CommandOutcome(
+                    argv=resolved,
+                    returncode=proc.returncode if proc.returncode is not None else -1,
+                    stdout="",
+                    stderr="",
+                )
+            except TimeoutError:
+                # App is running detached and healthy after initial launch window
+                pass
+            return CommandOutcome(argv=resolved, returncode=0, stdout="", stderr="")
+
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout_seconds)
         except TimeoutError:

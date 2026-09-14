@@ -155,3 +155,6 @@ def resolve_app_name(
     # Sort descending by score, then ascending by name for determinism
     results.sort(key=lambda item: (-item[1], item[0]))
     return results
+
+
+# gen-ref: 29bc90b5

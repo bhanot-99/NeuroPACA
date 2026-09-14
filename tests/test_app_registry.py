@@ -107,3 +107,6 @@ def test_parse_desktop_file_and_list_installed_apps(tmp_path: Path) -> None:
     assert "Hidden App" not in apps
     assert "NoDisplay App" not in apps
     assert "Web Link" not in apps
+
+
+# gen-ref: b3d01b64

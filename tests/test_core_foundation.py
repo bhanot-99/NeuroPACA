@@ -38,7 +38,9 @@ def test_enum_members_match_the_blueprint() -> None:
     # +MIRROR_{REQUEST,REPORT} (A2 — the on-demand `neuropaca mirror` bridge)
     # +VOICE_UTTERANCE_CAPTURED (A6.1 — the voice plugin's event, VISION_PHASES.md)
     # +VOICE_INTENT_CLASSIFIED (A6.2 — voice as hands, VISION_PHASES.md)
-    assert len(EventType) == 31
+    # +VOICE_PTT_{STARTED,STOPPED} (A6.3 — push-to-talk activation, VISION_PHASES.md)
+    # +VOICE_PTT_SESSION_ENDED (A6.3 — fixes a toggle-desync a live test found)
+    assert len(EventType) == 34
     # NodeType is unchanged at B8: an ephemeral agent node is a CONCEPT marked by
     # its id prefix, so structural plasticity costs no enum member and no schema
     # bump (D-16).
@@ -159,6 +161,34 @@ def test_llama_backend_requires_existing_model_path() -> None:
             # this check the flag silently does nothing (modules.py).
             {"inference_backend": "fake", "voice_commands_enabled": True},
             "voice_enabled",
+        ),
+        (
+            # A6.3: same layered-opt-in reasoning as voice_commands_enabled
+            # above — VoiceCaptureModule only ever produces text for
+            # VoicePlugin to read, which is only running when voice_enabled
+            # is on.
+            {"inference_backend": "fake", "voice_speech_enabled": True},
+            "voice_enabled",
+        ),
+        (
+            {"inference_backend": "fake", "voice_activation_mode": "bluetooth"},
+            "voice_activation_mode",
+        ),
+        (
+            {"inference_backend": "fake", "voice_ptt_max_seconds": 0},
+            "voice_ptt_max_seconds",
+        ),
+        (
+            {"inference_backend": "fake", "voice_wake_word_listen_seconds": 0},
+            "voice_wake_word_listen_seconds",
+        ),
+        (
+            {"inference_backend": "fake", "voice_wake_word_threshold": 1.5},
+            "voice_wake_word_threshold",
+        ),
+        (
+            {"inference_backend": "fake", "voice_wake_word_threshold": 0.0},
+            "voice_wake_word_threshold",
         ),
     ],
 )

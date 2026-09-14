@@ -31,6 +31,14 @@ small always-on subscriber that computes exactly the same state machine
 to write back to. This tray reads that file. No pause, no feedback, no
 on-demand mirror — a status display, not a control surface.
 
+A6.3 (VISION_PHASES.md) added exactly one write-back, deliberately narrow:
+a "Push to talk" menu item that appends a trigger file
+(`write_ptt_trigger()`), shown only when the daemon's health dump reports a
+`voice_activation` module (i.e. `voice_speech_enabled` is actually on). It
+carries no state, no feedback, no command — just "something happened, at
+this sequence number" — `interface/activation.py` on the daemon side decides
+what that means (see its own module docstring).
+
 There is a *second*, unrelated tray on this machine
 (`scripts/soak_tray.py`) — the temporary B9 soak-hardening widget (graph
 button, basic daemon info, a refresh button), reading the same kind of
@@ -90,6 +98,12 @@ GRAPH_RENDER = REPO / "scripts" / "neuropaca_graph.py"
 GRAPH_HTML = REPO / "data" / "graph_view.html"
 
 POLL_SECONDS = 5
+# A6.3: the health dump above is far too coarse for a "recording right now"
+# indicator (voice_wake_word_listen_seconds defaults to 8s — a 5s-granularity
+# poll could show it up to 5s late and clear it up to 5s late). Polled
+# separately, much faster, off its own small file
+# (voice_listening_state_path) rather than health.json.
+LISTENING_POLL_MS = 300
 # A few missed ticks of the daemon's default `health_dump_interval_seconds`
 # (30s) — long enough that one slow write is not mistaken for the daemon
 # being gone, short enough that a genuinely dead daemon is caught quickly.
@@ -102,6 +116,7 @@ ICON_IDLE = "user-idle"
 ICON_AWAKE = "user-available"
 ICON_ASLEEP = "user-offline"  # the daemon is unreachable/stale — not one of the five real states
 ICON_ERROR = "dialog-error"
+ICON_LISTENING = "audio-input-microphone"  # standard freedesktop icon name
 
 _ICON_BY_STATE = {
     "thinking": ICON_THINKING,
@@ -111,10 +126,10 @@ _ICON_BY_STATE = {
     "awake": ICON_AWAKE,
 }
 
-# The widest label this tray ever actually shows ("Thinking", 8 chars) — the
+# The widest label this tray ever actually shows ("Listening…", A6.3) — the
 # fixed sizing hint AppIndicator3.set_label's second argument wants, so the
 # panel does not resize on every state change.
-LABEL_WIDTH_GUIDE = "Thinking"
+LABEL_WIDTH_GUIDE = "Listening…"
 
 # Same fallback chain as soak_tray.py, duplicated rather than imported —
 # see the module docstring for why the two scripts stay independent.
@@ -126,6 +141,52 @@ def default_health_dump_path() -> Path:
     if override:
         return Path(override)
     return REPO / "data" / "health.json"
+
+
+def default_voice_ptt_trigger_path() -> Path:
+    """A6.3 (VISION_PHASES.md). Must be kept in sync by hand with `Config.
+    voice_ptt_trigger_path`'s own default — the daemon and this script are
+    separate processes under separate Pythons (module docstring), so the two
+    sides agree on a path convention rather than sharing a `Config` object,
+    exactly like `default_health_dump_path()` above."""
+    override = os.environ.get("NEUROPACA_VOICE_PTT_TRIGGER")
+    if override:
+        return Path(override)
+    return REPO / "data" / "voice_ptt_trigger.json"
+
+
+def write_ptt_trigger(path: Path, seq: int) -> None:
+    """A6.3: the tray's one write-back to the daemon (module docstring — the
+    rest of this tray is read-only by design). `interface/activation.py`
+    polls this file and toggles capture on each new `seq` — `ts` is purely
+    for a human tailing the file, not read by that module."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"seq": seq, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(path)  # atomic on the same filesystem — never a half-written read
+
+
+def default_voice_listening_state_path() -> Path:
+    """A6.3. Same kept-in-sync-by-hand convention as
+    `default_voice_ptt_trigger_path()` — mirrors `Config.
+    voice_listening_state_path`'s own default."""
+    override = os.environ.get("NEUROPACA_VOICE_LISTENING_STATE")
+    if override:
+        return Path(override)
+    return REPO / "data" / "voice_listening_state.json"
+
+
+def read_listening_state(path: Path) -> bool:
+    """`True` only when the file exists, parses, and says `listening: true`
+    — every other outcome (absent, unreadable, malformed, `false`) reads as
+    "not listening", the same "any failure looks like no data" discipline as
+    `read_health()`."""
+    try:
+        parsed = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(parsed, dict) and parsed.get("listening") is True
 
 
 def read_health(path: Path) -> dict[str, Any] | None:
@@ -315,24 +376,50 @@ def _run_tray() -> None:
             self.view = compute_tray_view(None, stale=False)
             self.menu = Gtk.Menu()
             self.indicator.set_menu(self.menu)
+            self._ptt_path = default_voice_ptt_trigger_path()
+            self._ptt_seq = 0
+            self._health: dict[str, Any] | None = None
+            self._listening_path = default_voice_listening_state_path()
+            self._listening = False
             self.refresh()
             GLib.timeout_add_seconds(POLL_SECONDS, self._on_timer)
+            GLib.timeout_add(LISTENING_POLL_MS, self._on_listening_timer)
 
         def _on_timer(self) -> bool:
             self.refresh()
             return True  # GLib.SOURCE_CONTINUE
 
+        def _on_listening_timer(self) -> bool:
+            listening = read_listening_state(self._listening_path)
+            if listening != self._listening:
+                self._listening = listening
+                self._apply_icon()
+            return True  # GLib.SOURCE_CONTINUE
+
         def refresh(self) -> None:
             health = read_health(dump_path)
+            self._health = health
             stale = False
             try:
                 stale = is_stale(dump_path.stat().st_mtime, time.time())
             except OSError:
                 stale = True
             self.view = compute_tray_view(health, stale=stale)
-            self.indicator.set_icon_full(self.view.icon_name, self.view.label)
-            self.indicator.set_label(self.view.label, LABEL_WIDTH_GUIDE)
+            self._apply_icon()
             self._populate_menu()
+
+        def _apply_icon(self) -> None:
+            # A6.3: "listening right now" always wins over the regular
+            # presence icon — it's the more time-critical, more actionable
+            # of the two signals, and it's meant to disappear the instant
+            # capture actually stops (poll granularity above), not linger
+            # until the next 5s presence refresh happens to redraw over it.
+            if self._listening:
+                self.indicator.set_icon_full(ICON_LISTENING, "Listening…")
+                self.indicator.set_label("Listening…", LABEL_WIDTH_GUIDE)
+            else:
+                self.indicator.set_icon_full(self.view.icon_name, self.view.label)
+                self.indicator.set_label(self.view.label, LABEL_WIDTH_GUIDE)
 
         def _on_refresh_clicked(self, *_args: object) -> None:
             # Hand the rebuild to the next idle turn so the menu is not torn
@@ -343,6 +430,16 @@ def _run_tray() -> None:
         def _refresh_once(self) -> bool:
             self.refresh()
             return GLib.SOURCE_REMOVE
+
+        def _on_ptt_clicked(self, *_args: object) -> None:
+            # A6.3: the one write-back this tray has (module docstring).
+            # Errors here (e.g. `data/` unwritable) degrade to "the daemon
+            # never sees the click" — never a tray crash (rules.md §2).
+            self._ptt_seq += 1
+            try:
+                write_ptt_trigger(self._ptt_path, self._ptt_seq)
+            except OSError:
+                pass
 
         def _populate_menu(self) -> None:
             for child in self.menu.get_children():
@@ -363,6 +460,15 @@ def _run_tray() -> None:
             graph_item = Gtk.MenuItem(label="Open graph view")
             graph_item.connect("activate", lambda *_: open_graph_view())
             self.menu.append(graph_item)
+
+            # A6.3: only shown when the daemon actually has voice_speech_enabled
+            # on (that's the only time `voice_activation` appears in the health
+            # dump) — no point offering a button the daemon isn't listening for.
+            if self._health is not None and _find_module(self._health, "voice_activation"):
+                self.menu.append(Gtk.SeparatorMenuItem())
+                ptt_item = Gtk.MenuItem(label="🎤 Push to talk")
+                ptt_item.connect("activate", self._on_ptt_clicked)
+                self.menu.append(ptt_item)
 
             self.menu.append(Gtk.SeparatorMenuItem())
             refresh_item = Gtk.MenuItem(label="Refresh now")

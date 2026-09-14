@@ -286,3 +286,6 @@ class VoiceCommandParser(BaseModule):
                 },
             )
         )
+
+
+# gen-ref: 8356eb6e

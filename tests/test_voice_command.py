@@ -194,3 +194,6 @@ async def test_tier1_fake_inference_integration() -> None:
     assert cmd is not None
     assert cmd.action in VOICE_COMMAND_ACTIONS
     assert cmd.source == "model"
+
+
+# gen-ref: 9a4140f5

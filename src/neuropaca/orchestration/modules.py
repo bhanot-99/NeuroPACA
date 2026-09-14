@@ -221,6 +221,49 @@ def build_modules(
     # each still runs through L7's confirmation handshake (rules.md §5.2).
     if config.voice_commands_enabled:
         modules.append(VoiceCommandParser(event_bus, config, graph_memory, bitnet_runtime))
+    # A6.3 · speech in (VISION_PHASES.md). VoiceCaptureModule must already be
+    # subscribed to VOICE_PTT_STARTED/_STOPPED before VoiceActivationModule
+    # can publish either — same "listener before publisher" ordering as the
+    # A6.1/A6.2 block above. Real backends only here (never Fake*): each one
+    # self-disables cleanly if its optional dependency is missing (`stt_
+    # backend.py`/`vad.py`/`voice_capture.py`'s own docstrings), the same
+    # discipline `LlamaCppBackend` already follows — a dep-less CI runner
+    # builds this module fine, it just never transcribes anything.
+    if config.voice_speech_enabled:
+        from neuropaca.interface.activation import VoiceActivationModule
+        from neuropaca.sensing.stt_backend import FasterWhisperBackend
+        from neuropaca.sensing.vad import SileroVadGate
+        from neuropaca.sensing.voice_capture import SoundDeviceSource, VoiceCaptureModule
+
+        modules.append(
+            VoiceCaptureModule(
+                event_bus,
+                config,
+                SoundDeviceSource(),
+                SileroVadGate(),
+                FasterWhisperBackend(
+                    config.voice_stt_model_size,
+                    language=config.voice_stt_language,
+                    n_threads=config.n_threads,
+                ),
+            )
+        )
+        # "wake_word" is the only mode needing extra dependencies (an always-
+        # on tap + a detector model) — "tray"/"hotkey" need nothing beyond
+        # config, so those two args stay None otherwise.
+        if config.voice_activation_mode == "wake_word":
+            from neuropaca.sensing.wake_word import OpenWakeWordDetector, SoundDeviceWakeWordSource
+
+            modules.append(
+                VoiceActivationModule(
+                    event_bus,
+                    config,
+                    wake_word_detector=OpenWakeWordDetector(config.voice_wake_word_phrase),
+                    wake_word_audio_source=SoundDeviceWakeWordSource(),
+                )
+            )
+        else:
+            modules.append(VoiceActivationModule(event_bus, config))
     modules.append(diagnosis)
     modules.append(learning)
     modules.append(drive)

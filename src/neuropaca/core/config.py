@@ -22,6 +22,10 @@ from pathlib import Path
 from neuropaca.core.errors import ConfigError
 
 _VALID_BACKENDS = frozenset({"llama", "fake"})
+# A6.3 (VISION_PHASES.md). Which trigger `interface/activation.py` listens
+# on for push-to-talk. See `voice_activation_mode`'s own comment for why
+# "tray" is the default.
+_VALID_ACTIVATION_MODES = frozenset({"hotkey", "tray", "wake_word"})
 # B7 (D-14). The L7 action tiers. Mirrored by `action.base.ActionTier` — the enum
 # lives in the layer that owns the behaviour, but `Config` cannot import L7 (that
 # would invert the layering), so the closed set of *names* is spelled here, the
@@ -382,6 +386,64 @@ class Config:
     # "dangerous", and even then every command still pauses for the same
     # human confirmation handshake any other dangerous action requires.
     voice_commands_enabled: bool = False
+    # A6.3 · speech in, English (VISION_PHASES.md). Layered opt-in, same as
+    # voice_commands_enabled: this only ever produces text for VoicePlugin to
+    # read (via `append_utterance()`), so it requires voice_enabled to do
+    # anything. `voice_activation_mode` picks which trigger `interface/
+    # activation.py` listens on — the A6.3 spike found this machine's COSMIC
+    # session does not implement the `GlobalShortcuts` portal
+    # (spikes/a6_3_portal/), so "tray" is the default, not "hotkey".
+    voice_speech_enabled: bool = False
+    # Verified live (2026-09-14): first daemon startup with this model size
+    # took ~7.5 minutes end to end, almost entirely a one-time network
+    # download (~1.1GB) — `VoiceCaptureModule.initialize()` blocks on it
+    # (module docstring), and module initialize() runs sequentially, so this
+    # delays every module after it in the list on a cold cache. Cached
+    # afterward; a warm-start load is seconds, not minutes. Not a bug, but a
+    # real first-run cost worth expecting, not being surprised by.
+    voice_stt_model_size: str = "medium"
+    voice_stt_language: str = "en"
+    voice_activation_mode: str = "tray"
+    # Same shared-file convention as `health_dump_path`/`neuropaca_tray.py`'s
+    # `default_health_dump_path()`: the tray runs as a separate process under
+    # system Python (no access to this daemon's in-process Config), so the two
+    # sides agree on a path convention rather than sharing one object. The
+    # tray's own default must be kept in sync with this one by hand.
+    voice_ptt_trigger_path: str = "data/voice_ptt_trigger.json"
+    # The reverse direction of voice_ptt_trigger_path — the daemon writes
+    # this, the tray polls it fast (0.3s, not the 5s health-dump cadence) to
+    # show/hide a "listening" indicator the instant a capture session
+    # actually starts/ends, whatever triggered it (tray click or wake word).
+    # Same kept-in-sync-by-hand file convention; tray's own default must
+    # match.
+    voice_listening_state_path: str = "data/voice_listening_state.json"
+    voice_ptt_max_seconds: float = 30.0
+    voice_vad_enabled: bool = True
+    # A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
+    # original "push-to-talk only, no ambient listening" call — see
+    # memory's voice-feature-plan-and-privacy-decisions.md for the override).
+    # `voice_activation_mode = "wake_word"` selects this: the mic stays open
+    # continuously, but only openWakeWord's small rolling per-frame score is
+    # ever computed — no audio is written to disk or accumulated anywhere
+    # until the phrase actually fires. `hey_jarvis` is a pre-trained
+    # openWakeWord model (no custom training, per that same decision).
+    # Underscore, not the space `openwakeword`'s own README example shows —
+    # verified against openwakeword/__init__.py's actual `MODELS` dict key
+    # and openwakeword/utils.py's `download_models()`: the space form
+    # matches `Model()`'s lenient lookup but download_models()'s own match
+    # is a plain substring check with no space/underscore normalization, so
+    # `"hey jarvis"` (space) would have silently downloaded nothing.
+    voice_wake_word_phrase: str = "hey_jarvis"
+    voice_wake_word_threshold: float = 0.5
+    # How long to keep recording a command after the wake word fires, before
+    # auto-stopping — distinct from (and shorter than) voice_ptt_max_seconds,
+    # which still applies underneath as the outer safety cap. A command like
+    # "open calculator" doesn't need 30s; this is deliberately short so the
+    # UX doesn't feel like it's stuck waiting after you've finished talking.
+    # Real trailing-silence cutoff (stop as soon as you stop talking, not on
+    # a fixed clock) is a real UX improvement — not built here; this fixed
+    # window is the honestly-scoped v1.
+    voice_wake_word_listen_seconds: float = 8.0
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -583,14 +645,29 @@ class Config:
             "calendar_poll_interval_seconds",
             "reading_poll_interval_seconds",
             "voice_poll_interval_seconds",
+            "voice_ptt_max_seconds",
+            "voice_wake_word_listen_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if not 0.0 < self.voice_wake_word_threshold <= 1.0:
+            errs.append(
+                f"voice_wake_word_threshold must be in (0.0, 1.0], "
+                f"got {self.voice_wake_word_threshold}"
+            )
 
         if self.voice_enabled and not self.voice_utterances_path:
             errs.append("voice_utterances_path must not be empty when voice_enabled is on")
         if self.voice_commands_enabled and not self.voice_enabled:
             errs.append("voice_enabled must be on for voice_commands_enabled to do anything")
+        if self.voice_speech_enabled and not self.voice_enabled:
+            errs.append("voice_enabled must be on for voice_speech_enabled to do anything")
+        if self.voice_activation_mode not in _VALID_ACTIVATION_MODES:
+            errs.append(
+                f"voice_activation_mode must be one of {sorted(_VALID_ACTIVATION_MODES)}, "
+                f"got {self.voice_activation_mode!r}"
+            )
 
         if self.calendar_enabled and not self.calendar_ics_path:
             errs.append("calendar_ics_path must not be empty when calendar_enabled is on")
