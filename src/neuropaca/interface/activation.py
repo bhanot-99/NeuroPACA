@@ -30,6 +30,24 @@ downstream path (VISION_PHASES.md A6.3's own test requirement):
   `hotkey: unavailable` from `health()` forever after, publishing nothing.
   Wiring the real session/signal handshake is future work, gated on a
   compositor that actually implements the portal to test it against.
+
+- **`"wake_word"`.** User decision 2026-09-14, overriding A6's original
+  "push-to-talk only, no ambient listening" call (memory:
+  `voice-feature-plan-and-privacy-decisions.md` records the override). The
+  mic runs continuously via `sensing/wake_word.py`'s `WakeWordAudioSource`,
+  but nothing is recorded or transcribed pre-trigger — only a per-frame
+  confidence score, immediately discarded. When `config.voice_wake_word_phrase`
+  ("hey jarvis", the shipped default — a pre-trained openWakeWord model, no
+  custom training) scores above `voice_wake_word_threshold`: the continuous
+  tap pauses (one mic consumer at a time, not two racing streams), a normal
+  `VOICE_PTT_STARTED` fires (the *same* event `VoiceCaptureModule` already
+  handles — no new capture path), and a `voice_wake_word_listen_seconds`
+  timer (shorter than, and independent of, `VoiceCaptureModule`'s own
+  `voice_ptt_max_seconds` safety cap) auto-publishes `VOICE_PTT_STOPPED` if
+  nothing else does first. `VOICE_PTT_SESSION_ENDED` (see below) resumes the
+  continuous tap once the command capture finishes. This is a fixed-window
+  v1, not true trailing-silence end-of-utterance detection — an honest
+  scope call, not an oversight (module's own inline notes explain why).
 """
 
 from __future__ import annotations
@@ -49,6 +67,7 @@ from neuropaca.core.enums import EventType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.health import ModuleHealth
 from neuropaca.core.models import Event, system_error_event
+from neuropaca.sensing.wake_word import WakeWordAudioSource, WakeWordDetector
 
 _log = logging.getLogger(__name__)
 
@@ -127,6 +146,8 @@ class VoiceActivationModule(BaseModule):
         config: Config,
         *,
         name: str = "voice_activation",
+        wake_word_detector: WakeWordDetector | None = None,
+        wake_word_audio_source: WakeWordAudioSource | None = None,
     ) -> None:
         super().__init__(name, event_bus, config)
         self._task: asyncio.Task[None] | None = None
@@ -136,6 +157,13 @@ class VoiceActivationModule(BaseModule):
         self._triggers = 0
         self._errors = 0
         self._last_at: datetime | None = None
+        # Only meaningful when voice_activation_mode == "wake_word"; unused
+        # (and may be None) for "tray"/"hotkey".
+        self._wake_word = wake_word_detector
+        self._wake_word_audio = wake_word_audio_source
+        self._listening_for_command = False
+        self._wake_triggers = 0
+        self._wake_word_timeout_task: asyncio.Task[None] | None = None
 
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.VOICE_PTT_SESSION_ENDED, self.on_session_ended)
@@ -148,11 +176,16 @@ class VoiceActivationModule(BaseModule):
                     "Switch voice_activation_mode to 'tray', or see "
                     "spikes/a6_3_portal/README.md."
                 )
+        elif self.config.voice_activation_mode == "wake_word" and self._wake_word is not None:
+            if not self._wake_word.is_loaded:
+                await asyncio.to_thread(self._wake_word.load)
 
     async def start(self) -> None:
         self.is_running = True
         if self.config.voice_activation_mode == "tray":
             self._task = asyncio.create_task(self._poll_trigger_file())
+        elif self.config.voice_activation_mode == "wake_word":
+            self._start_wake_word_listening()
 
     async def stop(self) -> None:
         if not self.is_running:
@@ -164,14 +197,34 @@ class VoiceActivationModule(BaseModule):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+        if self._wake_word_timeout_task is not None:
+            self._wake_word_timeout_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._wake_word_timeout_task
+            self._wake_word_timeout_task = None
+        if self._wake_word_audio is not None:
+            self._wake_word_audio.stop()
 
     async def on_session_ended(self, event: Event) -> None:
         self._toggle_active = False
+        if self._listening_for_command:
+            self._listening_for_command = False
+            if self._wake_word_timeout_task is not None:
+                self._wake_word_timeout_task.cancel()
+                self._wake_word_timeout_task = None
+            if self.config.voice_activation_mode == "wake_word" and self.is_running:
+                self._start_wake_word_listening()  # resume the always-on tap
 
     def health(self) -> ModuleHealth:
         mode = self.config.voice_activation_mode
         if mode == "hotkey":
             detail = f"hotkey: {'available' if self._hotkey_available else 'unavailable'}"
+        elif mode == "wake_word":
+            loaded = self._wake_word is not None and self._wake_word.is_loaded
+            detail = (
+                f"wake_word: {'loaded' if loaded else 'unavailable'} "
+                f"({self.config.voice_wake_word_phrase!r}) · {self._wake_triggers} triggers"
+            )
         else:
             detail = f"tray trigger file: {self.config.voice_ptt_trigger_path}"
         return ModuleHealth(
@@ -179,6 +232,50 @@ class VoiceActivationModule(BaseModule):
             ok=self.is_running,
             detail=f"mode={mode} · {detail} · {self._triggers} triggers · {self._errors} errors",
             last_event_at=self._last_at,
+        )
+
+    # -------------------------------------------------------- wake-word mode
+    def _start_wake_word_listening(self) -> None:
+        if self._wake_word is None or self._wake_word_audio is None:
+            return
+        if not self._wake_word.is_loaded:
+            _log.warning("A6.3: wake-word model not loaded — listening will never fire")
+            return
+        loop = asyncio.get_running_loop()
+
+        def _on_frame(frame: bytes) -> None:
+            # Runs on PortAudio's own callback thread, not the event loop —
+            # score() must stay cheap (openWakeWord's whole design point),
+            # and the trigger itself is marshalled back via
+            # call_soon_threadsafe rather than touched here directly.
+            score = self._wake_word.score(frame) if self._wake_word is not None else 0.0
+            if score >= self.config.voice_wake_word_threshold:
+                loop.call_soon_threadsafe(self._on_wake_word_detected)
+
+        self._wake_word_audio.start(_on_frame)
+
+    def _on_wake_word_detected(self) -> None:
+        if self._listening_for_command:
+            return  # already triggered; ignore re-detections mid-command
+        self._listening_for_command = True
+        self._wake_triggers += 1
+        self._last_at = datetime.now(UTC)
+        if self._wake_word_audio is not None:
+            self._wake_word_audio.stop()  # one mic consumer at a time
+        self.event_bus.publish(
+            Event(event_type=EventType.VOICE_PTT_STARTED, source=self.name, payload={})
+        )
+        self._wake_word_timeout_task = asyncio.create_task(self._auto_stop_after_wake_word())
+
+    async def _auto_stop_after_wake_word(self) -> None:
+        try:
+            await asyncio.sleep(self.config.voice_wake_word_listen_seconds)
+        except asyncio.CancelledError:
+            raise
+        if not self._listening_for_command:
+            return
+        self.event_bus.publish(
+            Event(event_type=EventType.VOICE_PTT_STOPPED, source=self.name, payload={})
         )
 
     # ------------------------------------------------------------- tray mode

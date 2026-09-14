@@ -25,7 +25,7 @@ _VALID_BACKENDS = frozenset({"llama", "fake"})
 # A6.3 (VISION_PHASES.md). Which trigger `interface/activation.py` listens
 # on for push-to-talk. See `voice_activation_mode`'s own comment for why
 # "tray" is the default.
-_VALID_ACTIVATION_MODES = frozenset({"hotkey", "tray"})
+_VALID_ACTIVATION_MODES = frozenset({"hotkey", "tray", "wake_word"})
 # B7 (D-14). The L7 action tiers. Mirrored by `action.base.ActionTier` — the enum
 # lives in the layer that owns the behaviour, but `Config` cannot import L7 (that
 # would invert the layering), so the closed set of *names* is spelled here, the
@@ -412,6 +412,26 @@ class Config:
     voice_ptt_trigger_path: str = "data/voice_ptt_trigger.json"
     voice_ptt_max_seconds: float = 30.0
     voice_vad_enabled: bool = True
+    # A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
+    # original "push-to-talk only, no ambient listening" call — see
+    # memory's voice-feature-plan-and-privacy-decisions.md for the override).
+    # `voice_activation_mode = "wake_word"` selects this: the mic stays open
+    # continuously, but only openWakeWord's small rolling per-frame score is
+    # ever computed — no audio is written to disk or accumulated anywhere
+    # until the phrase actually fires. `hey jarvis` is a pre-trained
+    # openWakeWord model (no custom training, per that same decision) —
+    # exact string must match its bundled model name.
+    voice_wake_word_phrase: str = "hey jarvis"
+    voice_wake_word_threshold: float = 0.5
+    # How long to keep recording a command after the wake word fires, before
+    # auto-stopping — distinct from (and shorter than) voice_ptt_max_seconds,
+    # which still applies underneath as the outer safety cap. A command like
+    # "open calculator" doesn't need 30s; this is deliberately short so the
+    # UX doesn't feel like it's stuck waiting after you've finished talking.
+    # Real trailing-silence cutoff (stop as soon as you stop talking, not on
+    # a fixed clock) is a real UX improvement — not built here; this fixed
+    # window is the honestly-scoped v1.
+    voice_wake_word_listen_seconds: float = 8.0
     inference_backend: str = "llama"
     # Concept variant (Architecture.md §3.4).
     n_threads: int = 4
@@ -614,9 +634,16 @@ class Config:
             "reading_poll_interval_seconds",
             "voice_poll_interval_seconds",
             "voice_ptt_max_seconds",
+            "voice_wake_word_listen_seconds",
         ):
             if getattr(self, name) <= 0:
                 errs.append(f"{name} must be > 0, got {getattr(self, name)}")
+
+        if not 0.0 < self.voice_wake_word_threshold <= 1.0:
+            errs.append(
+                f"voice_wake_word_threshold must be in (0.0, 1.0], "
+                f"got {self.voice_wake_word_threshold}"
+            )
 
         if self.voice_enabled and not self.voice_utterances_path:
             errs.append("voice_utterances_path must not be empty when voice_enabled is on")

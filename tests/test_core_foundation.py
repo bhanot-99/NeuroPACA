@@ -178,6 +178,18 @@ def test_llama_backend_requires_existing_model_path() -> None:
             {"inference_backend": "fake", "voice_ptt_max_seconds": 0},
             "voice_ptt_max_seconds",
         ),
+        (
+            {"inference_backend": "fake", "voice_wake_word_listen_seconds": 0},
+            "voice_wake_word_listen_seconds",
+        ),
+        (
+            {"inference_backend": "fake", "voice_wake_word_threshold": 1.5},
+            "voice_wake_word_threshold",
+        ),
+        (
+            {"inference_backend": "fake", "voice_wake_word_threshold": 0.0},
+            "voice_wake_word_threshold",
+        ),
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs: dict[str, object], needle: str) -> None:

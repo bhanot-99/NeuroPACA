@@ -10,6 +10,7 @@ repeatedly forever" wrapper with nothing of its own to verify.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 
 from neuropaca.core.config import Config
@@ -17,6 +18,7 @@ from neuropaca.core.enums import EventType
 from neuropaca.core.event_bus import EventBus
 from neuropaca.core.models import Event
 from neuropaca.interface.activation import VoiceActivationModule, probe_global_shortcuts_portal
+from neuropaca.sensing.wake_word import FakeWakeWordAudioSource, FakeWakeWordDetector
 
 
 def test_probe_returns_false_when_gdbus_is_missing(monkeypatch) -> None:
@@ -186,6 +188,168 @@ async def test_toggle_resurfaces_correctly_after_a_session_times_out(tmp_path) -
         await capture.stop()
         await activation.stop()
         await bus.stop()
+
+
+# ------------------------------------------------------------ wake-word mode
+
+
+def _wake_word_module(
+    bus: EventBus, *, threshold: float = 0.5, listen_seconds: float = 30.0
+) -> tuple[VoiceActivationModule, FakeWakeWordDetector, FakeWakeWordAudioSource]:
+    cfg = Config(
+        inference_backend="fake",
+        voice_activation_mode="wake_word",
+        voice_wake_word_threshold=threshold,
+        voice_wake_word_listen_seconds=listen_seconds,
+    )
+    detector = FakeWakeWordDetector()
+    audio = FakeWakeWordAudioSource()
+    module = VoiceActivationModule(
+        bus, cfg, wake_word_detector=detector, wake_word_audio_source=audio
+    )
+    return module, detector, audio
+
+
+async def test_a_frame_above_threshold_publishes_started_and_pauses_the_tap() -> None:
+    bus = EventBus()
+    await bus.start()
+    module, detector, audio = _wake_word_module(bus)
+    detector.next_score = 0.9
+    await module.initialize()
+    await module.start()
+
+    started: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STARTED, started.append)
+
+    try:
+        audio.push_frame(b"\x00" * 2560)
+        await asyncio.sleep(0)  # let call_soon_threadsafe's scheduled callback run
+        await bus.join()
+
+        assert len(started) == 1
+        assert audio.stop_count == 1  # one mic consumer at a time (module docstring)
+        assert module._listening_for_command is True
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_a_frame_below_threshold_never_triggers() -> None:
+    bus = EventBus()
+    await bus.start()
+    module, detector, audio = _wake_word_module(bus, threshold=0.5)
+    detector.next_score = 0.1
+    await module.initialize()
+    await module.start()
+
+    started: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STARTED, started.append)
+
+    try:
+        audio.push_frame(b"\x00" * 2560)
+        await asyncio.sleep(0)
+        await bus.join()
+
+        assert started == []
+        assert audio.stop_count == 0
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_repeated_detections_mid_command_are_ignored() -> None:
+    bus = EventBus()
+    await bus.start()
+    module, detector, _audio = _wake_word_module(bus)
+    detector.next_score = 0.9
+    await module.initialize()
+    await module.start()
+
+    started: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STARTED, started.append)
+
+    try:
+        module._on_wake_word_detected()
+        module._on_wake_word_detected()  # a stray re-trigger while already listening
+        await bus.join()
+
+        assert len(started) == 1
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_the_listen_window_auto_stops_and_resumes_the_tap() -> None:
+    """The full cycle: wake -> record -> auto-stop -> (VoiceCaptureModule
+    publishes SESSION_ENDED, simulated here) -> the tap resumes."""
+    bus = EventBus()
+    await bus.start()
+    module, detector, audio = _wake_word_module(bus, listen_seconds=0.01)
+    detector.next_score = 0.9
+    await module.initialize()
+    await module.start()
+
+    stopped: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STOPPED, stopped.append)
+
+    try:
+        module._on_wake_word_detected()
+        timeout_task = module._wake_word_timeout_task
+        assert timeout_task is not None
+        await timeout_task  # deterministic — the internal timer firing, not a real sleep
+        await bus.join()
+
+        assert len(stopped) == 1
+        assert audio.stop_count == 1  # still paused — SESSION_ENDED hasn't arrived yet
+
+        # VoiceCaptureModule would publish this once it finishes processing.
+        bus.publish(Event(event_type=EventType.VOICE_PTT_SESSION_ENDED, source="test", payload={}))
+        await bus.join()
+
+        assert module._listening_for_command is False
+        assert audio.start_count == 2  # resumed
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+def test_health_reports_wake_word_status() -> None:
+    bus = EventBus()
+    module, detector, _audio = _wake_word_module(bus)
+    detector.load()
+    module.is_running = True
+    health = module.health()
+    assert "loaded" in health.detail
+    assert "hey jarvis" in health.detail
+
+
+def test_build_modules_wires_the_wake_word_backends(tmp_path) -> None:
+    from neuropaca.core.bitnet_runtime import BitNetRuntime
+    from neuropaca.core.graph_memory import GraphMemory
+    from neuropaca.core.inference import FakeInferenceBackend
+    from neuropaca.orchestration.modules import build_modules
+    from neuropaca.sensing.wake_word import OpenWakeWordDetector, SoundDeviceWakeWordSource
+
+    bus = EventBus()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    backend = FakeInferenceBackend()
+    runtime = BitNetRuntime(backend, backend)
+
+    try:
+        cfg = Config(
+            inference_backend="fake",
+            voice_enabled=True,
+            voice_speech_enabled=True,
+            voice_activation_mode="wake_word",
+            voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        )
+        modules = build_modules(cfg, bus, gm, runtime)
+        activation = next(m for m in modules if m.name == "voice_activation")
+        assert isinstance(activation, VoiceActivationModule)
+        assert isinstance(activation._wake_word, OpenWakeWordDetector)
+        assert isinstance(activation._wake_word_audio, SoundDeviceWakeWordSource)
+    finally:
+        GraphMemory._reset_for_tests()
 
 
 # gen-ref: 2e38118d

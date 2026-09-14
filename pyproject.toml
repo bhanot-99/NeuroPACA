@@ -77,6 +77,14 @@ vad = [
 audio = [
     "sounddevice==0.5.1",
 ]
+# A6.3 · wake-word activation (user decision 2026-09-14, overriding A6's
+# original "push-to-talk only, no ambient listening" call): openWakeWord
+# (Apache-2.0, ONNX/tflite, ships pre-trained "hey jarvis" — no custom
+# training needed). Same optional/lazy/self-disabling discipline as the
+# other three above.
+wake_word = [
+    "openwakeword==0.6.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -162,7 +170,7 @@ follow_imports = "skip"
 # A6.3 (VISION_PHASES.md): faster-whisper, silero-vad, sounddevice are
 # optional extras (`stt`/`vad`/`audio`) CI never installs, same treatment as
 # llama-cpp-python/pywayland above.
-module = ["faster_whisper.*", "silero_vad.*", "sounddevice.*"]
+module = ["faster_whisper.*", "silero_vad.*", "sounddevice.*", "openwakeword.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
