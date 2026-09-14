@@ -110,7 +110,12 @@ LISTENING_POLL_MS = 300
 STALE_AFTER_SECONDS = 90.0
 
 ICON_THINKING = "view-refresh"
-ICON_NOTICED = "mail-unread"
+# A6.3 cleanup (user feedback, 2026-09-14): "noticed" is a generic presence
+# state (something drew the daemon's attention), not an email-specific one —
+# "mail-unread" read as "you have new mail" and confused what it meant.
+# "appointment-soon" is the standard freedesktop reminder/alert icon
+# (renders as a bell in most themes, e.g. Adwaita) and doesn't imply mail.
+ICON_NOTICED = "appointment-soon"
 ICON_FOCUSED = "user-available"
 ICON_IDLE = "user-idle"
 ICON_AWAKE = "user-available"
@@ -450,11 +455,11 @@ def _run_tray() -> None:
             header.set_sensitive(False)
             self.menu.append(header)
 
-            if view.since:
-                since_item = Gtk.MenuItem(label=f"since {view.since}")
-                since_item.set_sensitive(False)
-                self.menu.append(since_item)
-
+            # Dropped the "since <ISO timestamp>" line (user feedback,
+            # 2026-09-14): a raw timestamp reads as debug output, not
+            # something a tray menu should be showing. `TrayView.since` /
+            # `compute_tray_view()` still compute it — kept for any future
+            # UI or a "how long" phrasing, just not rendered raw here.
             self.menu.append(Gtk.SeparatorMenuItem())
 
             graph_item = Gtk.MenuItem(label="Open graph view")
