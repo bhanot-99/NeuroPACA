@@ -12,12 +12,12 @@ Four ship in B7, in ascending order of what they can break:
 | `FileWriteAction` | dangerous | one file, backed up first | restoring the quarantined copy |
 | `RunCommandAction` | dangerous | one child process, no shell/env | nothing — hence confirmation |
 
-A6.2 adds three more. All three run a process, which is what first put them
-at `dangerous` under the same rule as `RunCommandAction` — a fixed, verified
+Three more actions run a process, which is what first put them at
+`dangerous` under the same rule as `RunCommandAction` — a fixed, verified
 argv shape narrows *what* can run, not whether it's a process. User decision
-2026-09-14, after that classification made every voice "open X"/volume/
-brightness command require a spoken confirmation: reclassified to `safe`.
-The operator's own reasoning — kept here because it's the actual boundary,
+2026-09-14, after that classification made every "open X"/volume/brightness
+command require a confirmation: reclassified to `safe`. The operator's own
+reasoning — kept here because it's the actual boundary,
 not "processes are safe now" — is that unlike `RunCommandAction` (an
 arbitrary argv) or `FileWriteAction` (persistent data loss/corruption if
 wrong), all three are drawn from closed, narrow, fully-reversible option

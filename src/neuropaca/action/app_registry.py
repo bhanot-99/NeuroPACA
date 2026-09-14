@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Jatin Bhanot <bhanot1054@gmail.com>
 
-"""A6.2 · `app_registry` — resolution of app names against installed software (VISION_PHASES.md).
+"""`app_registry` — resolution of app names against installed software.
 
-Tier 2 of the voice command pipeline:
 Reads `.desktop` files from freedesktop standard directories (/usr/share/applications,
 ~/.local/share/applications) to find installed applications, and resolves target
 names using `difflib.SequenceMatcher` (stdlib, zero new dependencies).
