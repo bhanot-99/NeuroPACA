@@ -23,7 +23,7 @@ WHY NOT THE L9 SOCKET ANY MORE.
 
 This originally read `neuropaca health` over the L9 unix socket. That whole
 interface (the socket, the CLI, the tray) was removed by user decision -- no
-terminal/text control surface, superseded eventually by voice. The daemon's
+terminal/text control surface will be maintained going forward. The daemon's
 own account of itself did not go away with it: `orchestration/orchestrator.py`
 now periodically writes its own `health_check()` as JSON to
 `config.health_dump_path` (atomically -- temp file + rename), and this script
