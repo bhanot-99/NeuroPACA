@@ -207,6 +207,54 @@ async def test_voice_command_parser_tier1_model_fallback(
         GraphMemory._reset_for_tests()
 
 
+async def test_voice_command_parser_tier1_model_fallback_non_open_action(
+    bus: EventBus, fake_runtime: BitNetRuntime, tmp_path: Path
+) -> None:
+    """Regression: `_fake_voice_command` used to scan the *whole* prompt,
+    including the fixed system instructions ("select an action from: open,
+    close, ..."), so it always resolved to "open" no matter the utterance.
+    A Tier-1 fallback for any other action was untested and, on the real
+    model, would have been misclassified by anything relying on this fake."""
+    await bus.start()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    await gm.load()
+    cfg = Config(inference_backend="fake")
+
+    parser = VoiceCommandParser(bus, cfg, gm, fake_runtime, app_registry=_MOCK_APPS)
+    await parser.initialize()
+    await parser.start()
+
+    proposals: list[Event] = []
+    bus.subscribe(EventType.ACTION_PROPOSAL, proposals.append)
+
+    try:
+        # Does not match the Tier 0 volume/brightness regex (wrong phrasing),
+        # but contains "increase" and ends in "brightness" for the fake
+        # backend's span-pointer stand-in to pick up.
+        bus.publish(
+            Event(
+                event_type=EventType.VOICE_INTENT_CLASSIFIED,
+                source="voice_intent",
+                payload={
+                    "entity_id": "e1",
+                    "text": "hey machine please increase the brightness",
+                    "category": "action_request",
+                },
+            )
+        )
+        await bus.join()
+
+        assert len(proposals) == 1
+        assert proposals[0].payload["action_type"] == "adjust_brightness"
+        assert proposals[0].payload["kwargs"]["direction"] == "increase"
+        assert parser._tier1_hits == 1
+    finally:
+        bus.unsubscribe(EventType.ACTION_PROPOSAL, proposals.append)
+        await parser.stop()
+        await bus.stop()
+        GraphMemory._reset_for_tests()
+
+
 async def test_voice_command_parser_ambiguity_surfaces_notification(
     bus: EventBus, fake_runtime: BitNetRuntime, tmp_path: Path
 ) -> None:

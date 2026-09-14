@@ -12,6 +12,16 @@ Four ship in B7, in ascending order of what they can break:
 | `FileWriteAction` | dangerous | one file, backed up first | restoring the quarantined copy |
 | `RunCommandAction` | dangerous | one child process, no shell/env | nothing — hence confirmation |
 
+A6.2 adds three more, all of which run a process and so are `dangerous` under
+the same rule as `RunCommandAction` — a fixed, verified argv shape narrows
+*what* can run, not whether running it needs a human's confirmation first:
+
+| action | tier | effect | reversible by |
+| --- | --- | --- | --- |
+| `OpenAppAction` | dangerous | launches a verified installed app | nothing — hence confirmation |
+| `AdjustVolumeAction` | dangerous | one wpctl/pactl call | nothing — hence confirmation |
+| `AdjustBrightnessAction` | dangerous | one brightnessctl call | nothing — hence confirmation |
+
 `ApiCallAction` is deliberately **not** built. It is the only component that
 would ever be allowed an outbound socket (rules.md §5.5), the system's whole
 premise is zero egress (rules.md §6), and `problems.md` 1.9 says to leave the
@@ -32,6 +42,7 @@ import os
 import shlex
 import shutil
 import tempfile
+from abc import abstractmethod
 from pathlib import Path
 from typing import Any
 
@@ -295,14 +306,18 @@ class RunCommandAction(BaseAction):
 
 
 class OpenAppAction(BaseAction):
-    """Launch a verified installed desktop application (SAFE tier).
+    """Launch a verified installed desktop application.
 
     Can only launch something already resolved in the verified installed-apps
-    list (app_registry.py) — never an arbitrary string from the model.
+    list (app_registry.py) — never an arbitrary string from the model. That
+    narrows *what* can run, but it still runs a process, which is what the
+    `ActionTier` contract (base.py) conditions on tier — not whether the argv
+    came from a fixed allowlist. Same tier, same confirmation, as
+    `RunCommandAction`.
     """
 
     name = "open_app"
-    tier = ActionTier.SAFE
+    tier = ActionTier.DANGEROUS
 
     def __init__(
         self,
@@ -359,11 +374,17 @@ class OpenAppAction(BaseAction):
         return False  # opening an app cannot be un-run automatically
 
 
-class AdjustVolumeAction(BaseAction):
-    """Adjust system volume up or down via standard system tools (wpctl/pactl)."""
+class _AdjustAction(BaseAction):
+    """Shared plumbing for `AdjustVolumeAction`/`AdjustBrightnessAction`: both
+    nudge a percentage up or down via one system tool, differing only in which
+    tool and argv shape `_build_argv()` picks.
 
-    name = "adjust_volume"
-    tier = ActionTier.SAFE
+    Runs a process, so both are `DANGEROUS` under the same rule as
+    `RunCommandAction` — a narrow, fixed argv shape does not change that.
+    """
+
+    tier = ActionTier.DANGEROUS
+    _label = "adjustment"
 
     def __init__(
         self,
@@ -381,7 +402,21 @@ class AdjustVolumeAction(BaseAction):
         self.step = step.strip()
         self.tool_path = tool_path
         self.timeout_seconds = float(timeout_seconds)
+        # Fixed at construction so payload() has a real argv to show in the
+        # audit log's pre-execution "attempt" line, before validate() (which
+        # runs later, after that line is written) confirms the executable
+        # actually exists.
+        self.argv = self._build_argv()
         self._resolved: tuple[str, ...] = ()
+
+    @property
+    def _is_up(self) -> bool:
+        return self.direction in ("increase", "up")
+
+    @abstractmethod
+    def _build_argv(self) -> tuple[str, ...]:
+        """The tool + args this adjustment would run, given `self.direction`
+        and `self.tool_path` as they stand right now."""
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -389,117 +424,59 @@ class AdjustVolumeAction(BaseAction):
             "reason": self.reason,
             "direction": self.direction,
             "step": self.step,
-            "argv": list(self._resolved),
+            "argv": list(self._resolved or self.argv),
         }
 
     async def validate(self) -> None:
         if self.direction not in ("increase", "decrease", "up", "down"):
-            raise SafetyGateError(f"invalid volume adjustment direction: {self.direction!r}")
+            raise SafetyGateError(f"invalid {self._label} adjustment direction: {self.direction!r}")
         if self.timeout_seconds <= 0:
             raise SafetyGateError("timeout must be > 0")
-
-        is_up = self.direction in ("increase", "up")
-        if self.tool_path is not None:
-            argv = (
-                self.tool_path,
-                "set-volume",
-                "@DEFAULT_AUDIO_SINK@",
-                f"{self.step}+" if is_up else f"{self.step}-",
-            )
-        elif shutil.which("wpctl"):
-            argv = (
-                "wpctl",
-                "set-volume",
-                "@DEFAULT_AUDIO_SINK@",
-                f"{self.step}+" if is_up else f"{self.step}-",
-            )
-        elif shutil.which("pactl"):
-            argv = (
-                "pactl",
-                "set-sink-volume",
-                "@DEFAULT_SINK@",
-                f"+{self.step}" if is_up else f"-{self.step}",
-            )
-        else:
-            argv = (
-                "wpctl",
-                "set-volume",
-                "@DEFAULT_AUDIO_SINK@",
-                f"{self.step}+" if is_up else f"{self.step}-",
-            )
-
-        self._resolved = self._sandbox.validate_argv(argv)
+        self._resolved = self._sandbox.validate_argv(self.argv)
 
     async def dry_run(self) -> str:
-        return f"adjust volume {self.direction} by {self.step} via {self._resolved[0]}"
+        head = (self._resolved or self.argv)[0]
+        return f"adjust {self._label} {self.direction} by {self.step} via {head}"
 
     async def execute(self) -> str:
-        outcome = await self._sandbox.run(self._resolved, timeout_seconds=self.timeout_seconds)
+        outcome = await self._sandbox.run(
+            self._resolved or self.argv, timeout_seconds=self.timeout_seconds
+        )
         if not outcome.ok:
             err_detail = outcome.stderr.strip()[:200] or f"exit code {outcome.returncode}"
-            raise SafetyGateError(f"failed to adjust volume: {err_detail}")
-        return f"adjusted volume {self.direction} by {self.step}"
+            raise SafetyGateError(f"failed to adjust {self._label}: {err_detail}")
+        return f"adjusted {self._label} {self.direction} by {self.step}"
 
     async def rollback(self) -> bool:
         return False
 
 
-class AdjustBrightnessAction(BaseAction):
+class AdjustVolumeAction(_AdjustAction):
+    """Adjust system volume up or down via standard system tools (wpctl/pactl)."""
+
+    name = "adjust_volume"
+    _label = "volume"
+
+    def _build_argv(self) -> tuple[str, ...]:
+        delta = f"{self.step}+" if self._is_up else f"{self.step}-"
+        if self.tool_path is not None:
+            return (self.tool_path, "set-volume", "@DEFAULT_AUDIO_SINK@", delta)
+        if shutil.which("wpctl") or not shutil.which("pactl"):
+            return ("wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", delta)
+        pactl_delta = f"+{self.step}" if self._is_up else f"-{self.step}"
+        return ("pactl", "set-sink-volume", "@DEFAULT_SINK@", pactl_delta)
+
+
+class AdjustBrightnessAction(_AdjustAction):
     """Adjust display brightness up or down via standard system tools (brightnessctl)."""
 
     name = "adjust_brightness"
-    tier = ActionTier.SAFE
+    _label = "brightness"
 
-    def __init__(
-        self,
-        sandbox: Sandbox,
-        *,
-        reason: str,
-        direction: str,
-        step: str = "5%",
-        tool_path: str | None = None,
-        timeout_seconds: float = 5.0,
-    ) -> None:
-        super().__init__(reason=reason)
-        self._sandbox = sandbox
-        self.direction = direction.strip().lower()
-        self.step = step.strip()
-        self.tool_path = tool_path
-        self.timeout_seconds = float(timeout_seconds)
-        self._resolved: tuple[str, ...] = ()
-
-    def payload(self) -> dict[str, Any]:
-        return {
-            "kind": self.name,
-            "reason": self.reason,
-            "direction": self.direction,
-            "step": self.step,
-            "argv": list(self._resolved),
-        }
-
-    async def validate(self) -> None:
-        if self.direction not in ("increase", "decrease", "up", "down"):
-            raise SafetyGateError(f"invalid brightness adjustment direction: {self.direction!r}")
-        if self.timeout_seconds <= 0:
-            raise SafetyGateError("timeout must be > 0")
-
-        is_up = self.direction in ("increase", "up")
-        if self.tool_path is not None:
-            argv = (self.tool_path, "set", f"{self.step}+" if is_up else f"{self.step}-")
-        else:
-            argv = ("brightnessctl", "set", f"{self.step}+" if is_up else f"{self.step}-")
-
-        self._resolved = self._sandbox.validate_argv(argv)
-
-    async def dry_run(self) -> str:
-        return f"adjust brightness {self.direction} by {self.step} via {self._resolved[0]}"
-
-    async def execute(self) -> str:
-        outcome = await self._sandbox.run(self._resolved, timeout_seconds=self.timeout_seconds)
-        if not outcome.ok:
-            err_detail = outcome.stderr.strip()[:200] or f"exit code {outcome.returncode}"
-            raise SafetyGateError(f"failed to adjust brightness: {err_detail}")
-        return f"adjusted brightness {self.direction} by {self.step}"
+    def _build_argv(self) -> tuple[str, ...]:
+        delta = f"{self.step}+" if self._is_up else f"{self.step}-"
+        tool = self.tool_path or "brightnessctl"
+        return (tool, "set", delta)
 
     async def rollback(self) -> bool:
         return False

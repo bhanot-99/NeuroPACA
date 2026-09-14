@@ -181,7 +181,7 @@ async def test_tier1_fake_inference_integration() -> None:
     runtime = BitNetRuntime(backend, backend)
     await runtime.load_interactive_model_async()
 
-    text = "could you launch Brave"
+    text = "could you open Brave"
     words = _tokenize_words(text)
     aliases = [f"w{i + 1}" for i in range(len(words))]
     grammar = build_voice_command_grammar(aliases)

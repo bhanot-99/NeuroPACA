@@ -96,12 +96,19 @@ def _offered_templates(grammar: str) -> list[str]:
 
 
 _WORD_ALIAS_ENUM_RE = re.compile(r'"\\?"(w[1-9][0-9]*)\\?"')
+_TARGET_UTTERANCE_RE = re.compile(r'Utterance: "([^"]*)"')
 
 
 def _fake_voice_command(prompt: str, grammar: str) -> str:
     """Deterministic voice-command response for `FakeInferenceBackend` (A6.2)."""
     aliases = _WORD_ALIAS_ENUM_RE.findall(grammar)
-    p_lower = prompt.lower()
+    # The system instructions and every few-shot example also say "open" (and
+    # the other action names) — build_voice_command_prompt's mechanical rules
+    # literally list them. Matching the whole prompt would always resolve to
+    # "open" first. The real target is the last `Utterance: "..."` line the
+    # prompt builder writes, after the [TARGET] marker.
+    utterances = _TARGET_UTTERANCE_RE.findall(prompt)
+    p_lower = (utterances[-1] if utterances else prompt).lower()
     for act in ("open", "close", "search", "increase", "decrease"):
         if act in p_lower:
             if aliases:

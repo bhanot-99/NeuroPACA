@@ -9,14 +9,17 @@ ignoring anything whose category is not `action_request`.
 
 When a command is extracted:
 - For `open`: resolves target against installed applications (Tier 2).
-  - 1 match: publishes `ACTION_PROPOSAL` for `open_app` (SAFE tier).
+  - 1 match: publishes `ACTION_PROPOSAL` for `open_app` (dangerous tier — it
+    runs a process, so L7 still pauses for a human confirmation).
   - 0 or 2+ matches: publishes `notification` proposal detailing ambiguity.
-- For `increase`/`decrease`: publishes `adjust_volume` or `adjust_brightness` (SAFE tier).
+- For `increase`/`decrease`: publishes `adjust_volume` or `adjust_brightness`
+  (dangerous tier, same reason).
 - For `close` or other actions: safely dropped and surfaced via notification.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -79,7 +82,10 @@ class VoiceCommandParser(BaseModule):
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.VOICE_INTENT_CLASSIFIED, self.on_intent_classified)
         if self._app_registry is None:
-            self._app_registry = list_installed_apps()
+            # Globs XDG app directories and reads every .desktop file — blocking
+            # I/O, offloaded per this codebase's convention (D-7 B3) so it
+            # cannot stall the event dispatch loop during daemon startup.
+            self._app_registry = await asyncio.to_thread(list_installed_apps)
 
     async def start(self) -> None:
         self.is_running = True
