@@ -265,9 +265,12 @@ class MailPlugin:
         elif to_addrs:
             recip_name, recip_addr = normalize_email_address(to_addrs[0])
 
-        is_sent = direction in ("outbound", "sent") or (
-            self.config.mail_user_address
-            and sender_clean_addr == self.config.mail_user_address.strip().lower()
+        is_sent = bool(
+            direction in ("outbound", "sent")
+            or (
+                self.config.mail_user_address
+                and sender_clean_addr == self.config.mail_user_address.strip().lower()
+            )
         )
 
         # ── Two-way filter (Rules 1 & 2) ──────────────────────────────────
@@ -639,33 +642,29 @@ class MailPlugin:
                 if p.name.startswith("."):
                     continue
                 try:
-                    with open(p, "r", encoding="utf-8") as fh:
-                        for line in fh:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                r = json.loads(line)
-                                is_sent = (
-                                    r.get("direction", "").lower() in ("outbound", "sent")
-                                    or (
-                                        self.config.mail_user_address
-                                        and (r.get("sender_address") or "").strip().lower()
-                                        == self.config.mail_user_address.strip().lower()
-                                    )
-                                )
-                                if is_sent:
-                                    mid = (r.get("message_id") or "").strip("<>")
-                                    if mid and mid not in self._sent_message_ids:
-                                        self._sent_message_ids.add(mid)
-                                        new_found = True
-                            except Exception:
-                                continue
+                    lines = p.read_text(encoding="utf-8").splitlines()
                 except Exception:
                     continue
+                for raw_line in lines:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                        is_sent = r.get("direction", "").lower() in ("outbound", "sent") or (
+                            self.config.mail_user_address
+                            and (r.get("sender_address") or "").strip().lower()
+                            == self.config.mail_user_address.strip().lower()
+                        )
+                        if is_sent:
+                            mid = (r.get("message_id") or "").strip("<>")
+                            if mid and mid not in self._sent_message_ids:
+                                self._sent_message_ids.add(mid)
+                                new_found = True
+                    except Exception:
+                        continue
             if new_found:
                 await self._save_sent_ids()
-
 
     async def _save_sent_ids(self) -> None:
         if not self._spool_dir.exists():
