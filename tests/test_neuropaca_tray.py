@@ -168,4 +168,39 @@ def test_default_health_dump_path_falls_back_to_the_repo_data_dir(monkeypatch) -
     assert tray.default_health_dump_path() == tray.REPO / "data" / "health.json"
 
 
+# ----------------------------------------------------------- A6.3 push-to-talk
+
+
+def test_default_voice_ptt_trigger_path_honours_the_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("NEUROPACA_VOICE_PTT_TRIGGER", "/tmp/custom-trigger.json")
+    assert tray.default_voice_ptt_trigger_path() == Path("/tmp/custom-trigger.json")
+
+
+def test_default_voice_ptt_trigger_path_falls_back_to_the_repo_data_dir(monkeypatch) -> None:
+    monkeypatch.delenv("NEUROPACA_VOICE_PTT_TRIGGER", raising=False)
+    assert tray.default_voice_ptt_trigger_path() == tray.REPO / "data" / "voice_ptt_trigger.json"
+
+
+def test_write_ptt_trigger_is_readable_back_with_the_given_seq(tmp_path: Path) -> None:
+    path = tmp_path / "trigger.json"
+    tray.write_ptt_trigger(path, 3)
+    assert json.loads(path.read_text("utf-8"))["seq"] == 3
+
+
+def test_write_ptt_trigger_leaves_no_tmp_file_behind(tmp_path: Path) -> None:
+    path = tmp_path / "trigger.json"
+    tray.write_ptt_trigger(path, 1)
+    assert not path.with_suffix(".json.tmp").exists()
+
+
+def test_find_module_locates_voice_activation_when_present() -> None:
+    health = {"ok": True, "modules": [{"name": "voice_activation", "ok": True, "detail": ""}]}
+    assert tray._find_module(health, "voice_activation") is not None
+
+
+def test_find_module_is_none_when_voice_speech_is_disabled() -> None:
+    health = _health(state="idle")
+    assert tray._find_module(health, "voice_activation") is None
+
+
 # gen-ref: b50d3aca

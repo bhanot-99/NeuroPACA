@@ -56,6 +56,20 @@ activity = [
 llama = [
     "llama-cpp-python==0.3.35",
 ]
+# A6.3 · speech in (VISION_PHASES.md). Each optional + lazy-imported, same
+# discipline as `llama`/`activity` above: the daemon runs with voice speech
+# input inert if any of these are missing, and CI never installs them.
+# Split into three groups (not one `voice` bundle) so a machine missing, say,
+# PortAudio's system headers doesn't block installing the other two.
+stt = [
+    "faster-whisper==1.0.3",
+]
+vad = [
+    "silero-vad==5.1.2",
+]
+audio = [
+    "sounddevice==0.5.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -134,6 +148,14 @@ follow_imports = "skip"
 # llama-cpp-python is an optional extra CI never installs (B4, D-11) and ships
 # no type information — fully untyped whether or not it is present.
 module = ["llama_cpp.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# A6.3 (VISION_PHASES.md): faster-whisper, silero-vad, sounddevice are
+# optional extras (`stt`/`vad`/`audio`) CI never installs, same treatment as
+# llama-cpp-python/pywayland above.
+module = ["faster_whisper.*", "silero_vad.*", "sounddevice.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

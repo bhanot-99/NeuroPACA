@@ -100,6 +100,16 @@ class EventType(StrEnum):
     # can react to classified commands without duplicating classification work.
     # Payload: `{entity_id, text, category}`.
     VOICE_INTENT_CLASSIFIED = auto()
+    # A6.3 · speech in (VISION_PHASES.md). `interface/activation.py` publishes
+    # these on push-to-talk press/release (hotkey or tray trigger-file,
+    # whichever fired) so `sensing/voice_capture.py`'s `VoiceCaptureModule`
+    # can start/stop the mic without activation importing it directly
+    # (rules.md §0: "no module imports another module"). Payload: `{}` for
+    # both — one capture session runs at a time, so no session id is needed
+    # yet; `VoiceCaptureModule` itself refuses a stray STOPPED with no
+    # in-flight session, and a stray STARTED while one is already running.
+    VOICE_PTT_STARTED = auto()
+    VOICE_PTT_STOPPED = auto()
 
 
 class PresenceState(StrEnum):

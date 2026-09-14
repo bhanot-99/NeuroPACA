@@ -31,6 +31,14 @@ small always-on subscriber that computes exactly the same state machine
 to write back to. This tray reads that file. No pause, no feedback, no
 on-demand mirror — a status display, not a control surface.
 
+A6.3 (VISION_PHASES.md) added exactly one write-back, deliberately narrow:
+a "Push to talk" menu item that appends a trigger file
+(`write_ptt_trigger()`), shown only when the daemon's health dump reports a
+`voice_activation` module (i.e. `voice_speech_enabled` is actually on). It
+carries no state, no feedback, no command — just "something happened, at
+this sequence number" — `interface/activation.py` on the daemon side decides
+what that means (see its own module docstring).
+
 There is a *second*, unrelated tray on this machine
 (`scripts/soak_tray.py`) — the temporary B9 soak-hardening widget (graph
 button, basic daemon info, a refresh button), reading the same kind of
@@ -126,6 +134,30 @@ def default_health_dump_path() -> Path:
     if override:
         return Path(override)
     return REPO / "data" / "health.json"
+
+
+def default_voice_ptt_trigger_path() -> Path:
+    """A6.3 (VISION_PHASES.md). Must be kept in sync by hand with `Config.
+    voice_ptt_trigger_path`'s own default — the daemon and this script are
+    separate processes under separate Pythons (module docstring), so the two
+    sides agree on a path convention rather than sharing a `Config` object,
+    exactly like `default_health_dump_path()` above."""
+    override = os.environ.get("NEUROPACA_VOICE_PTT_TRIGGER")
+    if override:
+        return Path(override)
+    return REPO / "data" / "voice_ptt_trigger.json"
+
+
+def write_ptt_trigger(path: Path, seq: int) -> None:
+    """A6.3: the tray's one write-back to the daemon (module docstring — the
+    rest of this tray is read-only by design). `interface/activation.py`
+    polls this file and toggles capture on each new `seq` — `ts` is purely
+    for a human tailing the file, not read by that module."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"seq": seq, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(path)  # atomic on the same filesystem — never a half-written read
 
 
 def read_health(path: Path) -> dict[str, Any] | None:
@@ -315,6 +347,9 @@ def _run_tray() -> None:
             self.view = compute_tray_view(None, stale=False)
             self.menu = Gtk.Menu()
             self.indicator.set_menu(self.menu)
+            self._ptt_path = default_voice_ptt_trigger_path()
+            self._ptt_seq = 0
+            self._health: dict[str, Any] | None = None
             self.refresh()
             GLib.timeout_add_seconds(POLL_SECONDS, self._on_timer)
 
@@ -324,6 +359,7 @@ def _run_tray() -> None:
 
         def refresh(self) -> None:
             health = read_health(dump_path)
+            self._health = health
             stale = False
             try:
                 stale = is_stale(dump_path.stat().st_mtime, time.time())
@@ -344,6 +380,16 @@ def _run_tray() -> None:
             self.refresh()
             return GLib.SOURCE_REMOVE
 
+        def _on_ptt_clicked(self, *_args: object) -> None:
+            # A6.3: the one write-back this tray has (module docstring).
+            # Errors here (e.g. `data/` unwritable) degrade to "the daemon
+            # never sees the click" — never a tray crash (rules.md §2).
+            self._ptt_seq += 1
+            try:
+                write_ptt_trigger(self._ptt_path, self._ptt_seq)
+            except OSError:
+                pass
+
         def _populate_menu(self) -> None:
             for child in self.menu.get_children():
                 self.menu.remove(child)
@@ -363,6 +409,15 @@ def _run_tray() -> None:
             graph_item = Gtk.MenuItem(label="Open graph view")
             graph_item.connect("activate", lambda *_: open_graph_view())
             self.menu.append(graph_item)
+
+            # A6.3: only shown when the daemon actually has voice_speech_enabled
+            # on (that's the only time `voice_activation` appears in the health
+            # dump) — no point offering a button the daemon isn't listening for.
+            if self._health is not None and _find_module(self._health, "voice_activation"):
+                self.menu.append(Gtk.SeparatorMenuItem())
+                ptt_item = Gtk.MenuItem(label="🎤 Push to talk")
+                ptt_item.connect("activate", self._on_ptt_clicked)
+                self.menu.append(ptt_item)
 
             self.menu.append(Gtk.SeparatorMenuItem())
             refresh_item = Gtk.MenuItem(label="Refresh now")
