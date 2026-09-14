@@ -35,11 +35,6 @@ _log = logging.getLogger(__name__)
 # turns it into `None` (discard), so a missing backend degrades silently to
 # "L4 generates nothing" rather than crashing (D-11).
 _GRACEFUL_ABSTAIN = '{"cited_node_id": null, "insight_category": "routine"}'
-# A6.1 · the voice-intent schema's own well-formed default (distinct field
-# name from the insight schema above — `parse_voice_intent` accepts a null
-# `cited_node_id` as a real answer, so this is a valid, uninformative
-# classification, not an abstain the caller discards).
-_VOICE_INTENT_DEFAULT = '{"cited_node_id": null, "voice_intent": "other"}'
 
 _ALIAS_ENUM_RE = re.compile(r'"\\?"(n[1-9][0-9]*)\\?"')
 _PROMPT_FACT_RE = re.compile(r"\[(n[1-9][0-9]*)\]\s+(.+?)\s+·")
@@ -95,31 +90,6 @@ def _offered_templates(grammar: str) -> list[str]:
     return _TEMPLATE_KEY_RE.findall(m.group(1)) if m else []
 
 
-_WORD_ALIAS_ENUM_RE = re.compile(r'"\\?"(w[1-9][0-9]*)\\?"')
-_TARGET_UTTERANCE_RE = re.compile(r'Utterance: "([^"]*)"')
-
-
-def _fake_voice_command(prompt: str, grammar: str) -> str:
-    """Deterministic voice-command response for `FakeInferenceBackend` (A6.2)."""
-    aliases = _WORD_ALIAS_ENUM_RE.findall(grammar)
-    # The system instructions and every few-shot example also say "open" (and
-    # the other action names) — build_voice_command_prompt's mechanical rules
-    # literally list them. Matching the whole prompt would always resolve to
-    # "open" first. The real target is the last `Utterance: "..."` line the
-    # prompt builder writes, after the [TARGET] marker.
-    utterances = _TARGET_UTTERANCE_RE.findall(prompt)
-    p_lower = (utterances[-1] if utterances else prompt).lower()
-    for act in ("open", "close", "search", "increase", "decrease"):
-        if act in p_lower:
-            if aliases:
-                target = aliases[-1]
-                return (
-                    f'{{"action": "{act}", "target_start": "{target}", "target_end": "{target}"}}'
-                )
-            return f'{{"action": "{act}", "target_start": null, "target_end": null}}'
-    return '{"action": null, "target_start": null, "target_end": null}'
-
-
 @runtime_checkable
 class InferenceBackend(Protocol):
     """What `BitNetRuntime` drives. One inference at a time is enforced above
@@ -170,13 +140,7 @@ class FakeInferenceBackend:
     ) -> str:
         self.calls.append((prompt, max_tokens, temperature, grammar))
         if grammar is not None:
-            # Deterministic, and shaped for whichever grammar is in play. Order
-            # matters: the voice-intent and insight schemas both contain the
-            # substring "cited_node_id", so the more specific check runs first.
-            if "voice_intent" in grammar:  # A6.1 extractive voice-intent schema
-                return _VOICE_INTENT_DEFAULT
-            if "target_start" in grammar:  # A6.2 span-pointer voice command schema
-                return _fake_voice_command(prompt, grammar)
+            # Deterministic, and shaped for whichever grammar is in play.
             if "cited_node_id" in grammar:  # D-11 extractive insight schema (L4)
                 return '{"cited_node_id": "n1", "insight_category": "anomaly"}'
             if "query_template" in grammar:  # D-13 proactive idle-thought schema (L6)
