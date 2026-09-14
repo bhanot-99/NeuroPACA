@@ -108,6 +108,11 @@ pressure_decay_interval_seconds = 10
 
 # L7 · action. LIVE (dry-run off, user decision 2026-09-11), safe tier only —
 # notifications reach the desktop (V-12). neuropaca.toml keeps dry-run on.
+# Still safe tier only as of A6.1-A6.3 (2026-09-14): voice's "dangerous"-tier
+# hands (open_app / adjust_volume / adjust_brightness) stay unreachable here
+# too — action/confirm.py's confirmation handshake has no real answerer
+# since the L9 CLI/socket was removed, and VISION_PHASES.md gates these
+# three actions behind A6.6 on purpose. See neuropaca.toml's own note.
 action_dry_run = false
 action_enabled_tiers = ["safe"]
 action_confirmation_timeout_seconds = 60
@@ -115,3 +120,16 @@ quarantine_ttl_hours = 168
 
 api_call_enabled = false
 api_allowlist = []
+
+# A6.1-A6.3 (VISION_PHASES.md A6) · voice, live here too (2026-09-14) — this
+# IS the config neuropacad.service actually runs under (see the drop-in at
+# ~/.config/systemd/user/neuropacad.service.d/override.conf). "both"
+# activation runs the tray push-to-talk toggle and the "hey jarvis"
+# wake-word tap at once; interface/activation.py's module docstring covers
+# how the two trigger sources share the one microphone. Everything else
+# (STT model size, VAD, timeouts, wake-word threshold/window) stays at its
+# shipped default (core/config.py).
+voice_enabled = true
+voice_commands_enabled = true
+voice_speech_enabled = true
+voice_activation_mode = "both"

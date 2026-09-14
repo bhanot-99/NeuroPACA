@@ -25,7 +25,7 @@ _VALID_BACKENDS = frozenset({"llama", "fake"})
 # A6.3 (VISION_PHASES.md). Which trigger `interface/activation.py` listens
 # on for push-to-talk. See `voice_activation_mode`'s own comment for why
 # "tray" is the default.
-_VALID_ACTIVATION_MODES = frozenset({"hotkey", "tray", "wake_word"})
+_VALID_ACTIVATION_MODES = frozenset({"hotkey", "tray", "wake_word", "both"})
 # B7 (D-14). The L7 action tiers. Mirrored by `action.base.ActionTier` — the enum
 # lives in the layer that owns the behaviour, but `Config` cannot import L7 (that
 # would invert the layering), so the closed set of *names* is spelled here, the
@@ -403,6 +403,10 @@ class Config:
     # real first-run cost worth expecting, not being surprised by.
     voice_stt_model_size: str = "medium"
     voice_stt_language: str = "en"
+    # "both" (user decision 2026-09-14) runs the tray toggle and the wake-word
+    # tap at once — click to talk, or just say the phrase — see
+    # interface/activation.py's module docstring for how the two trigger
+    # sources are kept from fighting over the one microphone.
     voice_activation_mode: str = "tray"
     # Same shared-file convention as `health_dump_path`/`neuropaca_tray.py`'s
     # `default_health_dump_path()`: the tray runs as a separate process under

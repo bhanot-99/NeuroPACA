@@ -48,6 +48,18 @@ downstream path (VISION_PHASES.md A6.3's own test requirement):
   continuous tap once the command capture finishes. This is a fixed-window
   v1, not true trailing-silence end-of-utterance detection — an honest
   scope call, not an oversight (module's own inline notes explain why).
+
+- **`"both"`.** User decision 2026-09-14: run the tray toggle and the
+  wake-word tap at the same time, so either one can start a session. The two
+  sources publish the exact same `VOICE_PTT_STARTED`/`_STOPPED` events, and
+  `VoiceCaptureModule.on_ptt_started` already no-ops a second START while a
+  session is active, so a stray click during a wake-word-triggered session
+  (or vice versa) cannot double-start a capture. What it *can* do is fight
+  over the microphone — one `sounddevice` stream for the continuous tap, a
+  separate one `VoiceCaptureModule` opens for the actual capture — so
+  whichever source starts a session first pauses the wake-word tap
+  (`_pause_wake_word_tap`), and `on_session_ended` resumes it once the
+  session is over, regardless of which source started it.
 """
 
 from __future__ import annotations
@@ -164,10 +176,12 @@ class VoiceActivationModule(BaseModule):
         self._listening_for_command = False
         self._wake_triggers = 0
         self._wake_word_timeout_task: asyncio.Task[None] | None = None
+        self._wake_word_tap_active = False
 
     async def initialize(self) -> None:
         self.event_bus.subscribe(EventType.VOICE_PTT_SESSION_ENDED, self.on_session_ended)
-        if self.config.voice_activation_mode == "hotkey":
+        mode = self.config.voice_activation_mode
+        if mode == "hotkey":
             self._hotkey_available = await asyncio.to_thread(probe_global_shortcuts_portal)
             if not self._hotkey_available:
                 _log.warning(
@@ -176,15 +190,16 @@ class VoiceActivationModule(BaseModule):
                     "Switch voice_activation_mode to 'tray', or see "
                     "spikes/a6_3_portal/README.md."
                 )
-        elif self.config.voice_activation_mode == "wake_word" and self._wake_word is not None:
+        if mode in ("wake_word", "both") and self._wake_word is not None:
             if not self._wake_word.is_loaded:
                 await asyncio.to_thread(self._wake_word.load)
 
     async def start(self) -> None:
         self.is_running = True
-        if self.config.voice_activation_mode == "tray":
+        mode = self.config.voice_activation_mode
+        if mode in ("tray", "both"):
             self._task = asyncio.create_task(self._poll_trigger_file())
-        elif self.config.voice_activation_mode == "wake_word":
+        if mode in ("wake_word", "both"):
             self._start_wake_word_listening()
 
     async def stop(self) -> None:
@@ -202,8 +217,7 @@ class VoiceActivationModule(BaseModule):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._wake_word_timeout_task
             self._wake_word_timeout_task = None
-        if self._wake_word_audio is not None:
-            self._wake_word_audio.stop()
+        self._pause_wake_word_tap()
 
     async def on_session_ended(self, event: Event) -> None:
         self._toggle_active = False
@@ -212,21 +226,28 @@ class VoiceActivationModule(BaseModule):
             if self._wake_word_timeout_task is not None:
                 self._wake_word_timeout_task.cancel()
                 self._wake_word_timeout_task = None
-            if self.config.voice_activation_mode == "wake_word" and self.is_running:
-                self._start_wake_word_listening()  # resume the always-on tap
+        # Resume the always-on tap for EITHER trigger source that started the
+        # session that just ended — a tray-triggered session pauses the tap
+        # too (see _handle_trigger), so this must not be gated on
+        # `_listening_for_command` alone or "both" mode would never resume
+        # listening after a tray-started session. No-op if already listening.
+        if self.is_running and self.config.voice_activation_mode in ("wake_word", "both"):
+            self._start_wake_word_listening()
 
     def health(self) -> ModuleHealth:
         mode = self.config.voice_activation_mode
+        parts: list[str] = []
         if mode == "hotkey":
-            detail = f"hotkey: {'available' if self._hotkey_available else 'unavailable'}"
-        elif mode == "wake_word":
+            parts.append(f"hotkey: {'available' if self._hotkey_available else 'unavailable'}")
+        if mode in ("wake_word", "both"):
             loaded = self._wake_word is not None and self._wake_word.is_loaded
-            detail = (
+            parts.append(
                 f"wake_word: {'loaded' if loaded else 'unavailable'} "
                 f"({self.config.voice_wake_word_phrase!r}) · {self._wake_triggers} triggers"
             )
-        else:
-            detail = f"tray trigger file: {self.config.voice_ptt_trigger_path}"
+        if mode in ("tray", "both"):
+            parts.append(f"tray trigger file: {self.config.voice_ptt_trigger_path}")
+        detail = " · ".join(parts) if parts else "no trigger source configured"
         return ModuleHealth(
             name=self.name,
             ok=self.is_running,
@@ -241,6 +262,8 @@ class VoiceActivationModule(BaseModule):
         if not self._wake_word.is_loaded:
             _log.warning("A6.3: wake-word model not loaded — listening will never fire")
             return
+        if self._wake_word_tap_active:
+            return  # already listening — starting again would open a second stream
         loop = asyncio.get_running_loop()
 
         def _on_frame(frame: bytes) -> None:
@@ -253,6 +276,18 @@ class VoiceActivationModule(BaseModule):
                 loop.call_soon_threadsafe(self._on_wake_word_detected)
 
         self._wake_word_audio.start(_on_frame)
+        self._wake_word_tap_active = True
+
+    def _pause_wake_word_tap(self) -> None:
+        """Stop the always-on tap so it never competes with the mic stream
+        `VoiceCaptureModule` opens for the actual capture (one consumer at a
+        time). Called whenever ANY trigger source starts a session — not just
+        a wake-word detection — so "both" mode's tray path doesn't fight the
+        tap for the microphone. Idempotent: safe to call when already paused.
+        """
+        if self._wake_word_audio is not None and self._wake_word_tap_active:
+            self._wake_word_audio.stop()
+        self._wake_word_tap_active = False
 
     def _on_wake_word_detected(self) -> None:
         if self._listening_for_command:
@@ -260,8 +295,7 @@ class VoiceActivationModule(BaseModule):
         self._listening_for_command = True
         self._wake_triggers += 1
         self._last_at = datetime.now(UTC)
-        if self._wake_word_audio is not None:
-            self._wake_word_audio.stop()  # one mic consumer at a time
+        self._pause_wake_word_tap()
         self.event_bus.publish(
             Event(event_type=EventType.VOICE_PTT_STARTED, source=self.name, payload={})
         )
@@ -308,6 +342,8 @@ class VoiceActivationModule(BaseModule):
         # could disagree about whose turn it is after either one restarts;
         # local toggle state, keyed off "did seq change", sidesteps that.
         self._toggle_active = not self._toggle_active
+        if self._toggle_active:
+            self._pause_wake_word_tap()  # "both" mode: don't fight over the mic
         event_type = (
             EventType.VOICE_PTT_STARTED if self._toggle_active else EventType.VOICE_PTT_STOPPED
         )

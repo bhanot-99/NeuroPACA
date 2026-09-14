@@ -323,6 +323,98 @@ def test_health_reports_wake_word_status() -> None:
     assert "hey_jarvis" in health.detail
 
 
+# ------------------------------------------------------------- "both" mode
+
+
+def _both_module(
+    bus: EventBus, *, threshold: float = 0.5
+) -> tuple[VoiceActivationModule, FakeWakeWordDetector, FakeWakeWordAudioSource]:
+    cfg = Config(
+        inference_backend="fake", voice_activation_mode="both", voice_wake_word_threshold=threshold
+    )
+    detector = FakeWakeWordDetector()
+    audio = FakeWakeWordAudioSource()
+    module = VoiceActivationModule(
+        bus, cfg, wake_word_detector=detector, wake_word_audio_source=audio
+    )
+    return module, detector, audio
+
+
+async def test_both_mode_starts_tray_polling_and_the_wake_word_tap() -> None:
+    bus = EventBus()
+    await bus.start()
+    module, _detector, audio = _both_module(bus)
+    await module.initialize()
+    await module.start()
+    try:
+        assert module._task is not None  # tray poll loop running
+        assert audio.start_count == 1  # wake-word tap also running
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_both_mode_wake_word_still_triggers_a_session() -> None:
+    bus = EventBus()
+    await bus.start()
+    module, detector, audio = _both_module(bus)
+    detector.next_score = 0.9
+    await module.initialize()
+    await module.start()
+
+    started: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STARTED, started.append)
+
+    try:
+        module._on_wake_word_detected()
+        await bus.join()
+        assert len(started) == 1
+        assert audio.stop_count == 1  # tap paused for the capture
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_both_mode_a_tray_click_pauses_the_tap_and_session_end_resumes_it() -> None:
+    """A6.3: "both" mode's real risk — the tap and VoiceCaptureModule's own
+    mic stream must never be open at once. A tray click (not a wake-word
+    detection) must still pause the tap, and the tap must resume once the
+    session ends, even though `_listening_for_command` was never set."""
+    bus = EventBus()
+    await bus.start()
+    module, _detector, audio = _both_module(bus)
+    await module.initialize()
+    await module.start()
+
+    started: list[Event] = []
+    bus.subscribe(EventType.VOICE_PTT_STARTED, started.append)
+
+    try:
+        assert audio.start_count == 1  # tap running from start()
+
+        module._handle_trigger({"seq": 1})  # tray click starts a session
+        await bus.join()
+        assert len(started) == 1
+        assert audio.stop_count == 1  # tap paused, even though wake-word never fired
+
+        bus.publish(Event(event_type=EventType.VOICE_PTT_SESSION_ENDED, source="test", payload={}))
+        await bus.join()
+        assert audio.start_count == 2  # tap resumed after the tray-started session ended
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+def test_health_reports_both_tray_and_wake_word_in_both_mode() -> None:
+    bus = EventBus()
+    module, detector, _audio = _both_module(bus)
+    detector.load()
+    module.is_running = True
+    health = module.health()
+    assert "wake_word" in health.detail
+    assert "tray trigger file" in health.detail
+
+
 def test_build_modules_wires_the_wake_word_backends(tmp_path) -> None:
     from neuropaca.core.bitnet_runtime import BitNetRuntime
     from neuropaca.core.graph_memory import GraphMemory
@@ -341,6 +433,35 @@ def test_build_modules_wires_the_wake_word_backends(tmp_path) -> None:
             voice_enabled=True,
             voice_speech_enabled=True,
             voice_activation_mode="wake_word",
+            voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        )
+        modules = build_modules(cfg, bus, gm, runtime)
+        activation = next(m for m in modules if m.name == "voice_activation")
+        assert isinstance(activation, VoiceActivationModule)
+        assert isinstance(activation._wake_word, OpenWakeWordDetector)
+        assert isinstance(activation._wake_word_audio, SoundDeviceWakeWordSource)
+    finally:
+        GraphMemory._reset_for_tests()
+
+
+def test_build_modules_wires_the_wake_word_backends_for_both_mode(tmp_path) -> None:
+    from neuropaca.core.bitnet_runtime import BitNetRuntime
+    from neuropaca.core.graph_memory import GraphMemory
+    from neuropaca.core.inference import FakeInferenceBackend
+    from neuropaca.orchestration.modules import build_modules
+    from neuropaca.sensing.wake_word import OpenWakeWordDetector, SoundDeviceWakeWordSource
+
+    bus = EventBus()
+    gm = GraphMemory.get_instance(persistence_path=str(tmp_path / "graph.json"))
+    backend = FakeInferenceBackend()
+    runtime = BitNetRuntime(backend, backend)
+
+    try:
+        cfg = Config(
+            inference_backend="fake",
+            voice_enabled=True,
+            voice_speech_enabled=True,
+            voice_activation_mode="both",
             voice_utterances_path=str(tmp_path / "utterances.jsonl"),
         )
         modules = build_modules(cfg, bus, gm, runtime)

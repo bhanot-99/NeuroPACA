@@ -248,10 +248,10 @@ def build_modules(
                 ),
             )
         )
-        # "wake_word" is the only mode needing extra dependencies (an always-
-        # on tap + a detector model) — "tray"/"hotkey" need nothing beyond
-        # config, so those two args stay None otherwise.
-        if config.voice_activation_mode == "wake_word":
+        # "wake_word" and "both" are the only modes needing extra dependencies
+        # (an always-on tap + a detector model) — "tray"/"hotkey" need nothing
+        # beyond config, so those two args stay None otherwise.
+        if config.voice_activation_mode in ("wake_word", "both"):
             from neuropaca.sensing.wake_word import OpenWakeWordDetector, SoundDeviceWakeWordSource
 
             modules.append(
