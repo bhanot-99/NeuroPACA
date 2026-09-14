@@ -63,6 +63,13 @@ llama = [
 # PortAudio's system headers doesn't block installing the other two.
 stt = [
     "faster-whisper==1.0.3",
+    # faster-whisper's `utils.py` imports `requests` directly, but its own
+    # wheel metadata doesn't declare it as a dependency — a newer
+    # `huggingface-hub` no longer pulls it in transitively either, so pip
+    # silently resolves without it and `import faster_whisper` breaks at
+    # runtime. Found by actually installing this extra and running it
+    # (2026-09-14), not assumed — pinned here so the gap doesn't reopen.
+    "requests==2.34.2",
 ]
 vad = [
     "silero-vad==5.1.2",

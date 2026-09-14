@@ -6,7 +6,18 @@ graceful degradation — CI never installs `silero-vad`)."""
 
 from __future__ import annotations
 
+import pytest
+
 from neuropaca.sensing.vad import FakeVadGate, SileroVadGate, VadGate
+
+
+def _skip_if_silero_vad_installed() -> None:
+    try:
+        import silero_vad  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        pytest.skip("silero-vad is installed — this test covers the absent/unloaded case")
 
 
 def test_fake_vad_gate_passes_speech_through_unchanged() -> None:
@@ -30,6 +41,7 @@ def test_fake_vad_gate_satisfies_the_protocol() -> None:
 
 
 def test_silero_vad_gate_degrades_cleanly_without_the_package() -> None:
+    _skip_if_silero_vad_installed()
     gate = SileroVadGate()
     gate.load()
     assert gate.is_loaded is False
@@ -42,6 +54,7 @@ def test_silero_vad_gate_fails_open_when_not_loaded() -> None:
     docstring) — an unloaded model must pass the buffer through, never
     reject it, or a missing optional dependency would silently break
     capture entirely."""
+    _skip_if_silero_vad_installed()
     gate = SileroVadGate()
     gate.load()
     pcm = b"\x01\x02\x03\x04"
@@ -49,10 +62,13 @@ def test_silero_vad_gate_fails_open_when_not_loaded() -> None:
 
 
 def test_silero_vad_gate_load_is_idempotent() -> None:
+    # Dependency-agnostic on purpose: a second load() must be a no-op either
+    # way — self-disabled twice, or already loaded twice.
     gate = SileroVadGate()
     gate.load()
+    first = gate.is_loaded
     gate.load()
-    assert gate.is_loaded is False
+    assert gate.is_loaded is first
 
 
 # gen-ref: 453acdc6
