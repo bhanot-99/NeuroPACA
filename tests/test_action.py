@@ -177,36 +177,52 @@ async def test_a_sandboxed_command_inherits_no_environment(tmp_path) -> None:
         assert leaked not in outcome.stdout
 
 
-async def test_gui_true_reports_a_fast_failure_and_only_leaks_the_allowlist(tmp_path) -> None:
+async def test_gui_true_reports_a_fast_failure(tmp_path) -> None:
     """A command that exits with an error inside the 150ms launch-check
     window must still be reported as failed, not silently treated as a
-    successfully detached app — and `gui=True` (A6.2's `OpenAppAction`,
-    added when live-testing a real voice-triggered app launch: a GUI app
-    needs DISPLAY/WAYLAND_DISPLAY/etc. to show a window, which the default
-    `env={}` strips entirely) still must not leak anything outside its fixed
-    allowlist. The success path never captures stdout/stderr at all (a GUI
-    app's output isn't used for anything), so the failure path is the only
-    place both properties are observable together."""
+    successfully detached app. `stdout`/`stderr` are not asserted here —
+    `gui=True` never captures them (see `Sandbox.run`'s own docstring for
+    why: a real live launch died later from a `SIGPIPE` on an unread pipe,
+    found 2026-09-14)."""
+    sandbox = Sandbox([tmp_path])
+    outcome = await sandbox.run(
+        [sys.executable, "-c", "import sys;sys.exit(7)"], timeout_seconds=10, gui=True
+    )
+    assert outcome.ok is False
+    assert outcome.returncode == 7
+    assert outcome.stdout == ""
+    assert outcome.stderr == ""
+
+
+async def test_gui_true_only_passes_the_allowlisted_env_vars(tmp_path) -> None:
+    """`gui=True` (A6.2's `OpenAppAction`, added when live-testing a real
+    voice-triggered app launch: a GUI app needs DISPLAY/WAYLAND_DISPLAY/etc.
+    to show a window, which the default `env={}` strips entirely) still must
+    not leak anything outside its fixed allowlist. Written to a file, not
+    stdout — `gui=True` never captures stdout/stderr (see `Sandbox.run`'s
+    docstring), so a file is the only way to observe this."""
     import os
 
+    dump_path = tmp_path / "env_dump.txt"
     os.environ["NEUROPACA_TEST_SECRET"] = "do-not-leak"
     try:
         sandbox = Sandbox([tmp_path])
-        outcome = await sandbox.run(
-            [sys.executable, "-c", "import os,sys;print(sorted(os.environ));sys.exit(7)"],
-            timeout_seconds=10,
-            gui=True,
+        dump_code = (
+            f"import os,pathlib;"
+            f"pathlib.Path({str(dump_path)!r}).write_text(repr(sorted(os.environ)))"
         )
+        outcome = await sandbox.run([sys.executable, "-c", dump_code], timeout_seconds=10, gui=True)
+        await asyncio.sleep(0.2)  # let the short-lived child actually finish writing
     finally:
         del os.environ["NEUROPACA_TEST_SECRET"]
 
-    assert outcome.ok is False
-    assert outcome.returncode == 7
-    assert "NEUROPACA_TEST_SECRET" not in outcome.stdout
+    assert outcome.ok is True
+    dumped = dump_path.read_text()
+    assert "NEUROPACA_TEST_SECRET" not in dumped
     # HOME/PATH are the allowlist's own entries — they SHOULD appear here,
-    # the opposite assertion from the non-gui test above.
-    assert "HOME" in outcome.stdout
-    assert "PATH" in outcome.stdout
+    # the opposite assertion from the no-gui environment test above.
+    assert "HOME" in dumped
+    assert "PATH" in dumped
 
 
 async def test_gui_true_reports_success_for_a_process_still_running(tmp_path) -> None:

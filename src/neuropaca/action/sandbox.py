@@ -144,9 +144,24 @@ class Sandbox:
         window — the default `env={}` strips those along with everything
         else. Also skips waiting for the process to exit: after a short
         launch-check window, a still-running process is reported as a
-        successful, detached launch (no `stdout`/`stderr` captured for it —
-        nothing reads a GUI app's output), and `timeout_seconds` never kills
-        it the way it does the non-gui path."""
+        successful, detached launch, and `timeout_seconds` never kills it
+        the way it does the non-gui path.
+
+        `stdout`/`stderr` are `DEVNULL`, not `PIPE`, for the *entire*
+        `gui=True` call, including the launch-check window — found live
+        (2026-09-14): a real `google-chrome-stable` launch survived the
+        launch-check window, was reported as a successful detached launch,
+        and then died minutes later with no error captured. Root cause: a
+        `PIPE` nobody ever reads from fills its kernel buffer and/or gets
+        closed once this method's local `proc` goes out of scope, and a
+        detached GUI app that writes to a stdout/stderr whose read end just
+        closed gets `SIGPIPE` — killed, well after this method already
+        reported success. `DEVNULL` has no reader to starve and no pipe to
+        close, so nothing can back up or break later. The tradeoff: a fast
+        failure inside the launch-check window is still caught (the
+        `returncode`), but its `stdout`/`stderr` text is not — acceptable,
+        since the alternative (a `PIPE` that later kills a working app) is
+        strictly worse for the common, successful case this exists for."""
         resolved = self.validate_argv(argv)
         workdir = str(cwd) if cwd is not None else None
         _log.info("L7 sandbox exec %s (gui=%s)", resolved[0], gui)
@@ -170,8 +185,8 @@ class Sandbox:
         proc = await asyncio.create_subprocess_exec(
             *resolved,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL if gui else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL if gui else asyncio.subprocess.PIPE,
             env=env,
             cwd=workdir,
             start_new_session=True,
@@ -179,14 +194,12 @@ class Sandbox:
         if gui:
             try:
                 await asyncio.wait_for(proc.wait(), 0.15)
-                if proc.returncode != 0:
-                    out, err = await proc.communicate()
-                    return CommandOutcome(
-                        argv=resolved,
-                        returncode=proc.returncode if proc.returncode is not None else -1,
-                        stdout=out.decode("utf-8", "replace")[:_MAX_CAPTURE],
-                        stderr=err.decode("utf-8", "replace")[:_MAX_CAPTURE],
-                    )
+                return CommandOutcome(
+                    argv=resolved,
+                    returncode=proc.returncode if proc.returncode is not None else -1,
+                    stdout="",
+                    stderr="",
+                )
             except TimeoutError:
                 # App is running detached and healthy after initial launch window
                 pass
