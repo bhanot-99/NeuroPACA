@@ -435,6 +435,21 @@ def parse_proactive(
 # classify everything else — two enum fields, nothing free-generated:
 #
 #   {"cited_node_id": "n1" | null, "voice_intent": "action_request" | ...}
+#
+# §21.28's accuracy spike (60%, RESEARCH_DOSSIER.md) measured two systematic
+# failures traced to one root cause: the original prompt showed exactly one
+# worked example, and that one example both (a) demonstrated only the
+# "reminder" category and (b) always abstained (cited null) — so the model
+# had literally never seen a successful citation modeled, and defaulted
+# toward copying the one shape it *had* seen whenever uncertain.
+#
+# DELIBERATE EXCEPTION to `rules.md §4.1`'s documented "one synthetic
+# few-shot example" convention: this grammar uses six, spanning every
+# category at least once and split evenly between citing and abstaining —
+# because the single-example version measurably biased both the category and
+# the abstain decision (§21.28), not because more examples are free. Do not
+# "fix" this back down to one without re-running that same 20-utterance
+# check first.
 # ============================================================================
 
 _VOICE_INTENT_GRAMMAR_TEMPLATE = (
@@ -446,14 +461,48 @@ _VOICE_INTENT_GRAMMAR_TEMPLATE = (
     "ws ::= [ \\t\\n]*\n"
 )
 
+# Fixed, illustrative — its own [n1]..[n5] identities are independent of
+# whatever real candidates a given call's [AVAILABLE_CANDIDATES] holds, the
+# same relationship L4/L6's own few-shot facts have to their real ones.
+# No `· APP · score X.X` suffix (unlike L4's context block): a small model
+# routing on name-matching alone doesn't need type/score noise diluting the
+# match between the utterance and the candidate name.
+_VOICE_INTENT_SYSTEM = (
+    "You are an extractive routing engine for a local neuromorphic agent. "
+    "Your primary job is to classify the user's utterance into a specific "
+    "intent category and cite the single most relevant system node from the "
+    "provided candidates.\n\n"
+    "MECHANICAL INSTRUCTIONS:\n"
+    "1. You must classify the utterance into exactly one of these intents: "
+    "action_request, question, reminder, observation, other.\n"
+    "2. If the user explicitly names, requests, or describes one of the "
+    'known candidates, you MUST output its exact bracketed token (e.g., "n1").\n'
+    '3. You may only output "null" if the utterance absolutely does not match '
+    "any available candidate or refers to a generic task.\n"
+    "4. Do not invent new tokens, categories, or text. Rely solely on the "
+    "provided list.\n"
+)
+
 _VOICE_INTENT_FEW_SHOT = (
-    "Facts:\n"
-    "  [n1] spotify · APP · score 6.2\n"
-    "  [n2] domain:voice · CONCEPT · score 3.0\n"
-    'Utterance: "remind me to email Maya back"\n'
-    "Pick the one fact this is most likely about, and classify what kind of "
-    "utterance it is. If it isn't clearly about any fact, cite null.\n"
+    "[AVAILABLE_CANDIDATES]\n"
+    "[n1] Google Chrome\n"
+    "[n2] Calendar\n"
+    "[n3] Terminal\n"
+    "[n4] Browser\n"
+    "[n5] Twitter\n\n"
+    "[EXAMPLES]\n"
+    'Utterance: "open google chrome right now"\n'
+    'Answer: {"cited_node_id": "n1", "voice_intent": "action_request"}\n\n'
+    'Utterance: "what is my next meeting"\n'
+    'Answer: {"cited_node_id": "n2", "voice_intent": "question"}\n\n'
+    'Utterance: "the terminal is completely frozen"\n'
+    'Answer: {"cited_node_id": "n3", "voice_intent": "observation"}\n\n'
+    'Utterance: "remind me to call Maya"\n'
     'Answer: {"cited_node_id": null, "voice_intent": "reminder"}\n\n'
+    'Utterance: "scroll down on that webpage"\n'
+    'Answer: {"cited_node_id": "n4", "voice_intent": "action_request"}\n\n'
+    'Utterance: "why is the internet so slow today"\n'
+    'Answer: {"cited_node_id": null, "voice_intent": "question"}\n\n'
 )
 
 # Two enum fields + one alias — the same tiny cap as L4/L6's schemas.
@@ -476,16 +525,19 @@ def build_voice_intent_grammar(aliases: Sequence[str]) -> str:
 
 
 def build_voice_intent_prompt(text: str, aliased: Sequence[tuple[str, Node]]) -> str:
-    """One synthetic few-shot, then the distilled top-K graph facts, then the
-    utterance itself last (`problems.md` 1.13's ordering, same as L4/L6)."""
+    """The system/mechanical-rules block, six fixed worked examples spanning
+    every category and split evenly cite/abstain, then this call's *real*
+    candidates, then the utterance itself last (`problems.md` 1.13's
+    ordering, same as L4/L6)."""
+    candidates = "\n".join(f"[{alias}] {node.label}" for alias, node in aliased)
     return (
-        _VOICE_INTENT_FEW_SHOT
-        + "Facts:\n"
-        + _context_block(aliased)
+        _VOICE_INTENT_SYSTEM
         + "\n"
+        + _VOICE_INTENT_FEW_SHOT
+        + "[AVAILABLE_CANDIDATES]\n"
+        + candidates
+        + "\n\n[TARGET]\n"
         + f'Utterance: "{text}"\n'
-        + "Pick the one fact this is most likely about, and classify what kind of "
-        + "utterance it is. If it isn't clearly about any fact, cite null.\n"
         + "Answer: "
     )
 
