@@ -31,7 +31,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
-from uuid import uuid4
 
 from neuropaca.core.base_module import BaseModule
 from neuropaca.core.clock import Clock, SystemClock
