@@ -178,6 +178,74 @@ async def test_a_stray_stop_with_no_active_session_is_ignored(tmp_path: Path) ->
         await bus.stop()
 
 
+async def test_a_session_that_never_gets_stopped_is_force_finished_by_the_timeout(
+    tmp_path: Path,
+) -> None:
+    """Regression: `voice_ptt_max_seconds` used to be validated but never
+    enforced — a lost `_STOPPED` left the mic capturing (and the buffer
+    growing) forever."""
+    bus = EventBus()
+    await bus.start()
+    utterances_path = tmp_path / "utterances.jsonl"
+    cfg = Config(
+        inference_backend="fake",
+        voice_utterances_path=str(utterances_path),
+        voice_ptt_max_seconds=0.01,
+    )
+    audio = FakeAudioSource(pcm=b"\x01\x02\x03\x04")
+    module = VoiceCaptureModule(
+        bus, cfg, audio, FakeVadGate(), FakeSttBackend(transcript="timed out")
+    )
+    await module.initialize()
+    await module.start()
+
+    try:
+        bus.publish(Event(event_type=EventType.VOICE_PTT_STARTED, source="test", payload={}))
+        await bus.join()
+        assert audio.started is True
+
+        # No VOICE_PTT_STOPPED ever arrives — wait for the internal timeout
+        # task itself rather than a real-time sleep (deterministic, no flake).
+        timeout_task = module._timeout_task
+        assert timeout_task is not None
+        await timeout_task
+
+        assert audio.stopped is True
+        assert module._timed_out == 1
+        assert module._session_active is False
+        assert _read_last_utterance(utterances_path) == "timed out"
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
+async def test_a_normal_stop_before_the_timeout_cancels_it(tmp_path: Path) -> None:
+    bus = EventBus()
+    await bus.start()
+    cfg = Config(
+        inference_backend="fake",
+        voice_utterances_path=str(tmp_path / "utterances.jsonl"),
+        voice_ptt_max_seconds=30.0,  # long enough that it would never fire in this test
+    )
+    module = VoiceCaptureModule(
+        bus, cfg, FakeAudioSource(pcm=b"\x00"), FakeVadGate(), FakeSttBackend(transcript="hi")
+    )
+    await module.initialize()
+    await module.start()
+
+    try:
+        bus.publish(Event(event_type=EventType.VOICE_PTT_STARTED, source="test", payload={}))
+        await bus.join()
+        bus.publish(Event(event_type=EventType.VOICE_PTT_STOPPED, source="test", payload={}))
+        await bus.join()
+
+        assert module._timed_out == 0
+        assert module._timeout_task is None
+    finally:
+        await module.stop()
+        await bus.stop()
+
+
 def test_health_reports_ok_while_running() -> None:
     bus = EventBus()
     cfg = Config(inference_backend="fake")

@@ -19,11 +19,19 @@ text — this just changes where the text comes from").
 One capture session at a time: a stray `_STARTED` while one is already
 running, or a stray `_STOPPED` with none active, is logged and ignored, never
 raised (rules.md §2 — a bus handler never raises).
+
+`config.voice_ptt_max_seconds` bounds every session: a lost or never-sent
+`_STOPPED` (a dropped tray click, a desynced toggle after a daemon or tray
+restart) would otherwise leave the microphone capturing forever — an
+unbounded buffer and an open mic with no hard stop. The timeout still
+transcribes whatever was captured up to that point, same as a normal stop;
+it only forces the *cutoff*, not a discard.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -134,7 +142,9 @@ class VoiceCaptureModule(BaseModule):
         self._vad = vad_gate
         self._stt = stt_backend
         self._session_active = False
+        self._timeout_task: asyncio.Task[None] | None = None
         self._sessions = 0
+        self._timed_out = 0
         self._rejected_silence = 0
         self._transcribed = 0
         self._empty_transcripts = 0
@@ -162,13 +172,19 @@ class VoiceCaptureModule(BaseModule):
         self.is_running = False
         self.event_bus.unsubscribe(EventType.VOICE_PTT_STARTED, self.on_ptt_started)
         self.event_bus.unsubscribe(EventType.VOICE_PTT_STOPPED, self.on_ptt_stopped)
+        if self._timeout_task is not None:
+            self._timeout_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._timeout_task
+            self._timeout_task = None
 
     def health(self) -> ModuleHealth:
         return ModuleHealth(
             name=self.name,
             ok=self.is_running,
             detail=(
-                f"{self._sessions} sessions · {self._transcribed} transcribed · "
+                f"{self._sessions} sessions ({self._timed_out} timed out) · "
+                f"{self._transcribed} transcribed · "
                 f"{self._rejected_silence} rejected (silence) · "
                 f"{self._empty_transcripts} empty transcripts · {self._errors} errors"
             ),
@@ -184,6 +200,7 @@ class VoiceCaptureModule(BaseModule):
             self._session_active = True
             self._sessions += 1
             await asyncio.to_thread(self._audio.start)
+            self._timeout_task = asyncio.create_task(self._enforce_max_duration())
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._session_active = False
             self._fail("on_ptt_started", exc)
@@ -193,34 +210,65 @@ class VoiceCaptureModule(BaseModule):
             if not self._session_active:
                 _log.warning("A6.3: VOICE_PTT_STOPPED with no active session")
                 return
-            self._session_active = False
-            pcm = await asyncio.to_thread(self._audio.stop)
-            self._last_at = datetime.now(UTC)
-            if not pcm:
-                return
-
-            if self.config.voice_vad_enabled:
-                maybe_trimmed = await asyncio.to_thread(self._vad.trim, pcm, SAMPLE_RATE_HZ)
-                if maybe_trimmed is None:
-                    self._rejected_silence += 1
-                    return
-                trimmed = maybe_trimmed
-            else:
-                trimmed = pcm
-
-            text = await asyncio.to_thread(self._stt.transcribe, trimmed, SAMPLE_RATE_HZ)
-            if not text.strip():
-                self._empty_transcripts += 1
-                return
-
-            from plugins.voice.voice_plugin import append_utterance
-
-            await asyncio.to_thread(
-                append_utterance, self.config.voice_utterances_path, text.strip()
-            )
-            self._transcribed += 1
+            await self._finish_session()
         except Exception as exc:  # a handler never raises (rules.md §2)
             self._fail("on_ptt_stopped", exc)
+
+    async def _enforce_max_duration(self) -> None:
+        """The hard cap `config.voice_ptt_max_seconds` documents (module
+        docstring) — a lost `_STOPPED` must not leave the mic open forever."""
+        try:
+            await asyncio.sleep(self.config.voice_ptt_max_seconds)
+        except asyncio.CancelledError:
+            raise
+        if not self._session_active:
+            return  # finished normally already; this task just never got cancelled in time
+        self._timed_out += 1
+        _log.warning(
+            "A6.3: session exceeded voice_ptt_max_seconds (%.1fs) — forcing stop",
+            self.config.voice_ptt_max_seconds,
+        )
+        try:
+            await self._finish_session()
+        except Exception as exc:  # a background task never dies silently (rules.md §2)
+            self._fail("_enforce_max_duration", exc)
+
+    async def _finish_session(self) -> None:
+        """The one path that ends a session, whether triggered by a real
+        `_STOPPED` event or by `_enforce_max_duration`'s timeout — both need
+        the exact same capture -> VAD -> STT -> file pipeline afterward."""
+        self._session_active = False
+        # Guard against cancelling ourselves: when `_enforce_max_duration`
+        # calls this, it *is* `self._timeout_task` — cancelling it here would
+        # raise CancelledError into the very next `await` below, aborting the
+        # timeout path before it could stop the mic or transcribe anything.
+        if self._timeout_task is not None and self._timeout_task is not asyncio.current_task():
+            self._timeout_task.cancel()
+        self._timeout_task = None
+
+        pcm = await asyncio.to_thread(self._audio.stop)
+        self._last_at = datetime.now(UTC)
+        if not pcm:
+            return
+
+        if self.config.voice_vad_enabled:
+            maybe_trimmed = await asyncio.to_thread(self._vad.trim, pcm, SAMPLE_RATE_HZ)
+            if maybe_trimmed is None:
+                self._rejected_silence += 1
+                return
+            trimmed = maybe_trimmed
+        else:
+            trimmed = pcm
+
+        text = await asyncio.to_thread(self._stt.transcribe, trimmed, SAMPLE_RATE_HZ)
+        if not text.strip():
+            self._empty_transcripts += 1
+            return
+
+        from plugins.voice.voice_plugin import append_utterance
+
+        await asyncio.to_thread(append_utterance, self.config.voice_utterances_path, text.strip())
+        self._transcribed += 1
 
     def _fail(self, where: str, exc: Exception) -> None:
         self._errors += 1
