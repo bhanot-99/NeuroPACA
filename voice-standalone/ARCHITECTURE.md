@@ -526,6 +526,81 @@ between Layer 1 and the LLM cascade. On a hit, opens the actual Wikipedia
 article (not a Google search) alongside the spoken answer — `actions.py`'s
 `answer_question` now takes an optional `url` for this.
 
+## Daemon startup hang — process isolation + safe spawning (2026-09-16) — FIXED
+
+**English switched to Piper** (`en_IN-spicor`, real Indian-English voice
+with more variety concerns than MeloTTS could offer, direct feedback) —
+replacing it surfaced a genuine, serious infrastructure bug the previous
+engine never happened to trigger: the daemon (both as a direct process
+and as the real systemd service) hung intermittently and
+non-deterministically during startup — sometimes reaching "Ready" in
+seconds, sometimes stuck 14+ real minutes at 0% CPU, sometimes 60s+
+burning real CPU with no error. Reproduced repeatedly against the real,
+unmodified entry point; simplified reproductions misleadingly kept
+succeeding (a real trap — several fix attempts looked confirmed-working
+until re-tested against the actual `daemon.py`/systemd service).
+
+**Two distinct, real root causes, both found and fixed, not guessed:**
+
+1. **torch bundles its own private `libgomp.so.1`**, separate from the
+   system's. With onnxruntime (openwakeword) and torch (Kokoro) both
+   loaded in one process, constructing Kokoro's engine reliably hung —
+   isolated by timing each startup stage separately until the exact
+   failure point (a torch `nn.LSTM` layer construction) was pinpointed.
+   Fixed in the new `_process_guard.py`: preloads one canonical libgomp
+   via `LD_PRELOAD` before either library can load its own copy, by
+   re-execing the process once at the very top of `daemon.py`/`main.py`
+   (`execve` keeps the same PID, safe under systemd's process tracking —
+   `LD_PRELOAD` can only be set before a process starts, not from
+   already-running Python code).
+2. **Python's `subprocess` module creates children via `fork()+exec()`
+   on POSIX.** `fork()` in a multi-threaded process is a well-documented
+   hazard: it only duplicates the calling thread, so if another thread
+   (onnxruntime's or numpy's own internal thread pools) held a lock at
+   that exact instant, the child inherits it permanently locked — the
+   thread that would release it doesn't exist in the child. This hit
+   **both** `tts.py`'s own subprocess spawns **and** `daemon.py`'s plain
+   `subprocess.run(["notify-send", ...])` call — the latter was the
+   real, previously-camouflaged cause of the daemon hanging on its own
+   *first* "Ready" notification, found only after the TTS-specific
+   fixes were already in place and the real service kept hanging anyway.
+
+**The actual fix, verified against the real service, not assumed:**
+`tts.py` now runs **all synthesis in an isolated subprocess** (itself,
+invoked as a script via `python3 tts.py --speak-worker <lang> <text>` /
+`--warm-worker`) rather than in `daemon.py`'s/`main.py`'s own process at
+all — architectural isolation instead of chasing every library pairing
+one at a time. Both that spawn and `_process_guard.py`'s new
+`safe_run()` (used for `notify-send`) go through `os.posix_spawn`
+(never forks) **with a hard timeout** (25s for TTS, 10s for
+`notify-send`), so neither can block the daemon forever even if some
+as-yet-unidentified cause resurfaces — a stuck call becomes "this one
+thing didn't happen" (caught and logged by both call sites), not "the
+daemon never reaches Ready."
+
+**Real cost of this fix, stated honestly:** each `speak()` call now pays
+its own process-spawn + cold-load time (Piper ~1.1s, Kokoro a few
+seconds) rather than reusing a warm in-process model — the "Let me
+check" interim phrase already exists specifically to cover exactly this
+kind of multi-second latency, and a daemon that reliably reaches "Ready"
+matters more than shaving a second off each spoken reply.
+
+**Verification:** 3 consecutive clean restarts of the real systemd
+service, each reaching "Ready" and speaking it aloud —
+`systemctl --user restart voice-daemon` three times in a row, watched
+each one settle from multiple subprocesses back to a single healthy
+main process. `smoke_test_skills.py`: 176/176.
+
+**Known, accepted scope limit, not silently ignored:** `actions.py`'s
+many other `subprocess.run` calls (volume, brightness, opening apps,
+etc.) were not converted to the same safe-spawn pattern. They run one at
+a time, well after startup, with real idle time between them — a much
+lower-risk window than the tight startup sequence this fix needed to
+guarantee. A real residual risk, not zero, but converting all of
+`actions.py` was out of scope for what this fix needed to guarantee
+(the daemon reliably starting) given the time already spent isolating
+the two root causes above.
+
 ## Explicitly deferred / not part of this doc
 
 - Safety tier *activation* — Step 6 built the mechanism (tiers, confirm-loop,
