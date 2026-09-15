@@ -700,12 +700,22 @@ article (not a Google search) alongside the spoken answer — `actions.py`'s
    its spoken confirmation (the very first `speak()` call of the process)
    silently lagged up to ~20s behind it, during which the mic hadn't even
    opened yet — any command spoken in that window was dropped with no
-   feedback. Fixed in `daemon.py`'s `main()`: the English engine now warms
-   in a background thread concurrently with the other slow startup loads
-   (wake-word model, semantic matcher), joined before the "Ready" message
-   fires, so the cold-load cost is hidden rather than sitting on the
-   critical path of the first real interaction. Still fast enough to stay
-   the default English voice (`config.TTS_ENGLISH_VOICE = "melo"`) — the
+   feedback. `daemon.py`'s `main()` already warmed the English engine in a
+   background thread before "Ready" fires — but the fix was only half
+   real until 2026-09-16: `tts.warm_up_english()` was calling `_get_melo()`
+   (constructs the model) without ever calling `tts_to_file()`, so the
+   BERT frontend — the actual expensive part — still lazy-loaded on
+   whatever the first *real* spoken response happened to be, same bug,
+   just moved one function call later. Confirmed live: even after calling
+   the old `warm_up_english()` first, a fresh process's first `speak()`
+   still took ~36s end to end. Fixed properly by having `warm_up_english()`
+   run one real, silent (no `aplay` call — nothing should audibly play
+   just because the daemon started) `tts_to_file()` call, forcing the
+   BERT frontend to load during startup instead of during someone's first
+   real question. Reproduced the fix working: post-fix, the first real
+   `speak()` after warm-up dropped from ~36s to **1.54s**. Still fast
+   enough to stay the default English voice
+   (`config.TTS_ENGLISH_VOICE = "melo"`) — the
    fix is in when the cost is paid, not the cost itself.
 
    `device="auto"` picking CUDA was flagged as worth reconsidering given

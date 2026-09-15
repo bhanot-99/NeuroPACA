@@ -84,17 +84,32 @@ def _get_melo():
 
 
 def warm_up_english() -> None:
-    """Force-loads the configured English engine's model weights now,
-    instead of on the first real speak() call. Reproduced live: the first
-    MeloTTS call pays a ~20s cold-load penalty (vs. ~0.3s once warm) — on
-    the critical path, that meant the daemon's very first spoken
-    confirmation after every restart lagged ~20s behind its own desktop
-    notification, and the main loop couldn't even listen for the next
-    wake-word while it was loading. Call this once during startup, ideally
-    in a background thread that runs alongside the other slow model loads
-    (semantic matcher, wake-word) so the cost is hidden, not additive."""
+    """Force-loads the configured English engine now, instead of on the
+    first real speak() call. For melo specifically this means running a
+    real (silent, discarded) tts_to_file() call, not just constructing the
+    model — found live (2026-09-16) that constructing alone was NOT
+    enough: MeloTTS lazy-loads a separate BERT text-frontend on the first
+    *actual* synthesis call, not at construction, so the original
+    construct-only version of this function left that ~20s cost still
+    sitting on the first real spoken response even after "warming up."
+    Reproduced directly: a fresh process's first tts.speak() call, even
+    after calling this function beforehand, still took ~36s end to end
+    (~20s of that the frontend load, the rest real playback time) — this
+    fix forces that load here instead, silently (no aplay call — nothing
+    should audibly play just because the daemon started up). Call this
+    once during startup, ideally in a background thread that runs
+    alongside the other slow model loads (semantic matcher, wake-word) so
+    the cost is hidden, not additive."""
     if getattr(config, "TTS_ENGLISH_VOICE", "melo") == "melo":
-        _get_melo()
+        model = _get_melo()
+        speaker_ids = model.hps.data.spk2id
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            path = tmp.name
+        try:
+            model.tts_to_file("Ready.", speaker_ids["EN_INDIA"], path, speed=0.95)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
     else:
         _get_kokoro("af_heart")
 
