@@ -2,13 +2,16 @@ import contextlib
 import io
 import os
 import tempfile
+import time
 
 import actions
+import config
 import llm_intent
 import skills  # noqa: F401 — skills/ package (replaces flat skills.py)
 import stt
 from audio_capture import record_until_enter
-from skills import _session_state, semantic_match
+from confirm_loop import confirm_and_run
+from skills import _audit, _session_state, _tiers, semantic_match
 
 
 def main() -> None:
@@ -80,6 +83,40 @@ def main() -> None:
                 print("[asleep] (ignoring — say 'wake up' to resume)")
                 continue
 
+            tier = _tiers.tier_of(name)
+
+            if tier == "DANGEROUS" and config.SAFETY_TIERS_ENABLED:
+                gen = confirm_and_run(name, args)
+                pause = next(gen)
+                print(f"[{tier}] {pause['preview']}")
+                for warning in pause["warnings"]:
+                    print(f"  ⚠ machine-scan: {warning}")
+                if pause["editable"]:
+                    edit = input("Press Enter to run as-is, type a replacement, or 'n' to cancel: ")
+                    sent = "" if edit.strip().lower() == "n" else (edit if edit else None)
+                else:
+                    confirm = input("Run this? [Y/n]: ")
+                    sent = "" if confirm.strip().lower() == "n" else None
+                try:
+                    gen.send(sent)
+                    result = None
+                except StopIteration as done:
+                    result = done.value
+                if result and result["cancelled"]:
+                    print("[cancelled]")
+                    _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="cancelled")
+                    continue
+                output = result["output"] if result else ""
+                if output:
+                    print(output, end="")
+                    _session_state.set_last_response(output)
+                _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
+                continue
+
+            if tier == "REVIEW" and config.SAFETY_TIERS_ENABLED:
+                print(f"[{tier}] about to run: {name}({args})")
+                time.sleep(2)
+
             # Capture what the executor prints so "repeat that" (J07) works
             # without rewriting every existing executor to return a string
             # instead of printing — captured text is still shown live, just
@@ -91,6 +128,7 @@ def main() -> None:
             if output:
                 print(output, end="")
                 _session_state.set_last_response(output)
+            _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
         except KeyboardInterrupt:
             break
         except Exception as exc:

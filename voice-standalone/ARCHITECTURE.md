@@ -312,12 +312,32 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
 
 ## Explicitly deferred / not part of this doc
 
-- Safety tier *activation* (the section above is the mechanism; turning it on
-  is a separate future decision).
+- Safety tier *activation* — Step 6 built the mechanism (tiers, confirm-loop,
+  machine-scan, audit log); `config.SAFETY_TIERS_ENABLED` stays off by
+  default. Turning it on, tier by tier or all at once, is still entirely
+  your call, exactly as always specified.
+- Editable preview from the tray specifically — `daemon.py`'s DANGEROUS
+  confirm is confirm-or-cancel-by-click only, not text editing (no text
+  input exists on a tray icon). Full editing lives in `main.py`'s terminal
+  mode today. A real fix would need a GTK dialog or similar wired to the
+  tray — not attempted here, and worth flagging rather than pretending the
+  tray path is equivalent.
 - Local-only model swap (replacing Gemini with something fully on-device, like
   your friend's build) — a separate decision, not assumed here either way.
 - Any NeuroPaca integration — out of scope by design until this proves itself
   standalone.
+- Categories I (fun/personality) and K (network/connectivity) — skipped
+  entirely per your explicit direction during Step 4, not built, not
+  scheduled.
+- The full 16-item Category G catalog (alarms, timers, notes, clipboard,
+  meal list) — only a 2-skill test to-do was built; the rest needs its own
+  persistence/scheduling design, deliberately out of scope for that pass.
+- Every ⚙️-tagged skill across every category (Spotify, calendar, email,
+  Wolfram Alpha, weather, news, Telegram, VPN, etc.) — no external accounts
+  were set up during this build; see open question 4 below.
+- Extending Layer 1 (semantic match) to the ~55 skills added in Step 4 — they
+  resolve via Layer 0 grammar only; paraphrases that miss their regex fall
+  straight to the LLM instead of a fast local match, unlike the original 50.
 
 ## Open questions
 
@@ -329,11 +349,19 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
 2. ~~Which local embedding model to use for Layer 1~~ — RESOLVED (Step 2):
    `fastembed` + `BAAI/bge-small-en-v1.5`, benchmarked live against
    `sentence-transformers`/all-MiniLM (see Layer 1's "Honest cost" note above).
-3. Where does the "known list" come from for each E-category file skill
-   (bookmarks, contacts, folders) — apps and C2 sites are already solved.
+3. ~~Where does the "known list" come from~~ — PARTIALLY RESOLVED (Step 4):
+   apps, C2 sites, and common named folders (downloads/documents/desktop/
+   pictures/music/videos/home, via `skills/_paths.py`) are solved. Bookmarks
+   and contacts remain genuinely open — no skill needs them yet, so this is
+   moot until one does.
 4. Which ⚙️-tagged skills are worth the account/API setup at all versus cut —
    e.g. is Telegram integration something you'll actually use, or dead weight
-   carried over from Mycroft/OVOS precedent that doesn't fit you?
+   carried over from Mycroft/OVOS precedent that doesn't fit you? Still fully
+   open — no ⚙️ accounts were set up during Steps 1-6.
+5. (New, from Step 6) Exact tier assignments for anything beyond the 11
+   already-reasoned 🔒 skills plus the 2 added REVIEW items are a judgment
+   call, not exhaustively re-audited across all 105 skills — worth a second
+   look before ever setting `SAFETY_TIERS_ENABLED=true` for real.
 
 ## Build steps
 
@@ -663,9 +691,99 @@ trigger (starting capture); only the "detect the hotword" half is new.
   openwakeword's own bundled VAD was confirmed to accept the same chunk
   size the wake-word model already uses).
 
-**Step 6 — Safety tiers (only once daily-used and stable)**
-- Tag every skill with its static tier (🔒 ones in the catalog are the
-  DANGEROUS candidates already flagged).
-- Build the confirm-loop generator, the editable preview, the machine-scan
-  tripwire, and the Audit Log module.
-- Turn tiers on one at a time — timing is entirely your call.
+**Step 6 — Safety tiers** — DONE (mechanism built; activation stays off by
+default, exactly as the doc always specified — this closes the mechanism,
+not the "only once daily-used and stable" activation decision, which
+remains entirely your call)
+
+- `skills/_tiers.py` — the static tier registry. DANGEROUS is exactly the 11
+  skills already carrying an individually-reasoned 🔒 comment from Steps
+  1-4 (`shutdown`, `restart`, `force_quit`, `rename_file`, `move_file`,
+  `delete_file`, `empty_trash`, `kill_process`, `install_updates`,
+  `restart_service`, `run_terminal`) — this registry collects those
+  existing, specific judgment calls rather than re-deriving them. Two
+  REVIEW additions, each independently justified: `clear_app_cache`
+  (deletes real data, though regenerable) and `extract_archive` (can
+  silently overwrite files at the destination). Everything else — the
+  large majority — is SAFE by default.
+- `skills/_machine_scan.py` — the pattern tripwire (`rm -rf`, `dd`, `mkfs`,
+  a raw write to `/dev/sd*`, piping a download into a shell, `sudo`/
+  `pkexec`, `kill -9`, a fork-bomb pattern, recursive `chmod 777`).
+- `skills/_audit.py` — always-on, regardless of `SAFETY_TIERS_ENABLED`.
+  Same principle Step 1's correction layer established: this is
+  observability, not a gate, so it doesn't wait on the activation
+  decision. One JSON line per resolved action (heard text, skill, args,
+  tier, outcome) to `~/.local/share/voice-standalone/audit.jsonl`.
+- `confirm_loop.py` — the generator: pauses with a preview + machine-scan
+  warnings before running anything DANGEROUS, resumes with either the
+  original args, an edited value, or a cancel. `main.py` (terminal mode)
+  gets the full spec — a real editable preview via `input()`. `daemon.py`
+  (the tray path) gets a documented, deliberately lighter variant: no text
+  editing is possible from a tray icon, so it notifies with the preview
+  and warnings and waits up to 10 seconds for a second tray click as
+  confirm, auto-cancelling on timeout. Editing a misheard filename from
+  the tray specifically isn't built yet — that's a real gap, not an
+  oversight; `main.py`'s terminal mode is where full editing lives today.
+- `config.SAFETY_TIERS_ENABLED` — the activation switch, off by default
+  (`SAFETY_TIERS_ENABLED=true` env var to turn it on). Flipping it is the
+  only thing that changes DANGEROUS/REVIEW behavior; the audit log runs
+  either way.
+- **Found and fixed a real bug while testing the confirm-loop itself:**
+  `run_terminal` used `subprocess.run(command, shell=True)` with no output
+  capture, so the child process inherited the parent's real stdout file
+  descriptor directly — invisible to `contextlib.redirect_stdout`, which
+  only intercepts Python-level `sys.stdout` writes. This silently broke
+  two things at once: the confirm-loop's own "real stdout/stderr feeds
+  back into the next reasoning step" requirement (it fed back nothing for
+  the one skill this mechanism matters most for), and `repeat_last_response`
+  (J07) for any terminal command, quietly, since Step 4 — an existing
+  feature that had never actually worked for this specific skill until
+  this fix added `capture_output=True`.
+- Verified directly (not just "it compiles"): tier lookups for a spread of
+  skills, machine-scan against both a dangerous and a clean command, and
+  all three `confirm_and_run` outcomes (cancel, run-as-is, edit-then-run)
+  executed for real and checked the actual returned output — which is what
+  caught the `run_terminal` bug above in the first place.
+
+## Build status — 2026-09-15
+
+All six planned steps are done. This is where the project actually stands,
+not an aspirational summary:
+
+- **Step 1** — Layer 0 skills engine, 48-skill target (50 registered
+  functions), categories A/B/C1-unmarked. DONE.
+- **Step 2** — Layer 1 local semantic match (`fastembed`/bge-small),
+  tuned against real test cases. DONE.
+- **Step 3** — generalized correction layer, reused by app resolution.
+  DONE.
+- **Step 4** — categories D, E, F, a minimal G, J, L (~55 more skills,
+  105 total). CLOSED by explicit scope decision — I and K skipped, the
+  full G catalog not built, Layer 1 not extended to these new skills.
+- **Step 5** — wake word (`hey jarvis`) + VAD-based turn detection,
+  built into `daemon.py`. DONE. Also where the tray icon + always-on
+  `systemd --user` services were built (ahead of where this doc
+  originally planned them), replacing terminal push-to-talk as the
+  real, daily way to run this — installed, enabled, and live on this
+  machine right now.
+- **Step 6** — safety tier mechanism (registry, machine-scan,
+  confirm-loop, always-on audit log). DONE. Activation
+  (`SAFETY_TIERS_ENABLED`) stays off by default — that switch is still
+  yours to flip, whenever, tier by tier or all at once.
+
+**What "done" does not mean:** every ⚙️-tagged skill across every
+category is still unbuilt (no external accounts were set up), Layer 1
+doesn't cover Step 4's ~55 newer skills, categories I and K don't
+exist, the tray can't edit a misheard command the way the terminal can,
+and tier activation has never actually been turned on and lived with —
+only built and unit-verified. The open questions section above is the
+honest list of what's still unresolved; it isn't empty because the
+build is finished, it's short because most of what was open got
+resolved by actually building and testing, one step at a time, instead
+of guessing upfront.
+
+**What running this daily actually looks like right now:** the tray icon
+and `voice-daemon`/`voice-tray` systemd services, started automatically
+at login. Click the tray to talk, or say "hey jarvis." `main.py` remains
+for manual/dev testing only. Nothing is gated behind a confirmation
+prompt yet — every skill runs immediately on a confident match, SAFE and
+DANGEROUS alike — until `SAFETY_TIERS_ENABLED` is turned on.

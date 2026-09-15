@@ -38,11 +38,13 @@ from openwakeword.model import Model
 from openwakeword.vad import VAD
 
 import actions
+import config
 import llm_intent
 import skills
 import stt
 from config import SAMPLE_RATE
-from skills import _session_state, semantic_match
+from confirm_loop import confirm_and_run
+from skills import _audit, _session_state, _tiers, semantic_match
 
 FIFO_PATH = os.path.expanduser("~/.local/share/voice-standalone/toggle.fifo")
 
@@ -126,12 +128,47 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
             _notify("Voice Assistant", "(asleep — say 'wake up' to resume)")
             return
 
+        tier = _tiers.tier_of(name)
+
+        if tier == "DANGEROUS" and config.SAFETY_TIERS_ENABLED:
+            gen = confirm_and_run(name, args)
+            pause = next(gen)
+            warning_text = ("\n⚠ " + "; ".join(pause["warnings"])) if pause["warnings"] else ""
+            _notify(
+                f"Confirm: {pause['preview']}",
+                f"Click the tray within 10s to run it.{warning_text}\n"
+                "(No text editing from the tray yet — main.py's terminal mode "
+                "supports editing the command before confirming.)",
+            )
+            confirmed = _manual_toggle_event.wait(timeout=10)
+            if confirmed:
+                _manual_toggle_event.clear()
+            try:
+                gen.send(None if confirmed else "")
+                result = None
+            except StopIteration as done:
+                result = done.value
+            if result and result["cancelled"]:
+                _notify("Voice Assistant", "Cancelled (no confirmation within 10s).")
+                _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="cancelled")
+                return
+            output = (result["output"].strip() if result else "") or f"Ran: {name}"
+            _session_state.set_last_response(output)
+            _notify(f"Heard: {text}", output)
+            _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
+            return
+
+        if tier == "REVIEW" and config.SAFETY_TIERS_ENABLED:
+            _notify(f"About to run: {name}", str(args))
+            time.sleep(2)
+
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             actions.DISPATCH[name](args)
         output = buffer.getvalue().strip() or f"Ran: {name}"
         _session_state.set_last_response(output)
         _notify(f"Heard: {text}", output)
+        _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
     except Exception as exc:
         _notify("Voice Assistant — error", f"Could not complete that command: {exc}")
 

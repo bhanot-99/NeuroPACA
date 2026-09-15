@@ -1525,8 +1525,22 @@ def web_search(query: str, site: str = "google") -> None:
 # ── Legacy: run_terminal ────────────────────────────────────────────────────
 
 def run_terminal(command: str) -> None:
-    """Run a shell command.  🔒 DANGEROUS — no confirm loop yet (Step 6)."""
-    subprocess.run(command, shell=True, check=False)
+    """Run a shell command.  🔒 DANGEROUS — routed through the Step 6
+    confirm-loop once config.SAFETY_TIERS_ENABLED is on.
+
+    Found via testing the confirm-loop itself: capture_output=True is
+    required here, not optional. Without it, the child process inherits the
+    parent's real stdout file descriptor directly — invisible to
+    contextlib.redirect_stdout, which only intercepts Python-level
+    sys.stdout writes. That silently broke two things: the confirm-loop's
+    "real stdout/stderr feeds back into the next reasoning step" spec (it
+    fed back nothing), and repeat_last_response (J07) for any terminal
+    command, since Step 4 — an existing feature, quietly non-functional for
+    this one skill specifically, until this fix.
+    """
+    result = subprocess.run(command, shell=True, check=False, capture_output=True, text=True)
+    output = (result.stdout or "") + (result.stderr or "")
+    print(output, end="" if output.endswith("\n") or not output else "\n")
 
 
 # ===========================================================================
