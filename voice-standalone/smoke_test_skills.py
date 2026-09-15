@@ -129,7 +129,9 @@ expect_match("shutdown the system", "shutdown")
 expect_match("restart the computer", "restart")
 expect_match("reboot", "restart")
 expect_match("restart my laptop", "restart")
-expect_no_match("restart the apache service", "service restart — should not match A12")
+# Step 4 added F14 restart_service — this correctly matches THAT skill now,
+# not "no match." The important property (A12 not stealing it) still holds.
+expect_match("restart the apache service", "restart_service", "service restart — must be F14, not A12")
 
 # A13 logout
 expect_match("log out", "logout")
@@ -362,8 +364,8 @@ expect_no_match("hello how are you", "greeting")
 expect_no_match("tell me a joke", "not in scope yet")
 expect_no_match("play some music", "not in scope for C1")
 
-# Restart should not grab "restart the nginx service"
-expect_no_match("restart the nginx service", "should not match A12 restart")
+# Step 4 added F14 restart_service — must be THAT skill, not A12 restart.
+expect_match("restart the nginx service", "restart_service", "should not match A12 restart")
 
 # Volume 150 should be rejected (out of range), not stolen by calculator
 expect_no_match("set volume to 150", "out of range")

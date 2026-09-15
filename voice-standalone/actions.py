@@ -22,10 +22,13 @@ import datetime
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import urllib.parse
 import urllib.request
+
+from skills._paths import find_file, resolve_folder
 
 
 # ===========================================================================
@@ -826,6 +829,400 @@ def today_in_history() -> None:
     print(f"[history] Opening historical events for {now.strftime('%B %d')}.")
 
 
+# ===========================================================================
+# ─── Category E — Files & filesystem ────────────────────────────────────────
+# ===========================================================================
+
+# ── E01  find_file ──────────────────────────────────────────────────────────
+
+def find_file_skill(name: str) -> None:
+    path = find_file(name)
+    if path:
+        print(f"[find_file] Found: {path}")
+    else:
+        print(f"[find_file] Could not find a file named '{name}' in common folders.")
+
+
+# ── E02  open_file ──────────────────────────────────────────────────────────
+
+def open_file(name: str) -> None:
+    path = find_file(name)
+    if path is None:
+        print(f"[open_file] Could not find a file named '{name}'.")
+        return
+    subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ── E03  open_folder ─────────────────────────────────────────────────────────
+
+def open_folder(folder: str) -> None:
+    path = resolve_folder(folder)
+    if path is None:
+        print(f"[open_folder] Could not find a folder named '{folder}'.")
+        return
+    subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ── E04  list_files ──────────────────────────────────────────────────────────
+
+def list_files(folder: str) -> None:
+    path = resolve_folder(folder)
+    if path is None:
+        print(f"[list_files] Could not find a folder named '{folder}'.")
+        return
+    entries = sorted(os.listdir(path))
+    print(f"[list_files] {path}: {', '.join(entries) if entries else '(empty)'}")
+
+
+# ── E05  create_folder ───────────────────────────────────────────────────────
+
+def create_folder(name: str) -> None:
+    path = os.path.expanduser(os.path.join("~", name)) if "/" not in name else os.path.expanduser(name)
+    try:
+        os.makedirs(path, exist_ok=False)
+        print(f"[create_folder] Created: {path}")
+    except FileExistsError:
+        print(f"[create_folder] Already exists: {path}")
+    except OSError as exc:
+        print(f"[create_folder] Could not create '{path}': {exc}")
+
+
+# ── E06  rename_file  🔒 ─────────────────────────────────────────────────────
+# 🔒 DANGEROUS — overwrites dest if it exists. No confirm loop yet (Step 6).
+
+def rename_file(source: str, dest: str) -> None:
+    src_path = find_file(source) or os.path.expanduser(source)
+    if not os.path.exists(src_path):
+        print(f"[rename_file] Could not find '{source}'.")
+        return
+    dest_path = os.path.join(os.path.dirname(src_path), dest) if "/" not in dest else os.path.expanduser(dest)
+    try:
+        os.rename(src_path, dest_path)
+        print(f"[rename_file] Renamed to: {dest_path}")
+    except OSError as exc:
+        print(f"[rename_file] Could not rename: {exc}")
+
+
+# ── E07  copy_file ───────────────────────────────────────────────────────────
+
+def copy_file(source: str, dest: str) -> None:
+    src_path = find_file(source) or os.path.expanduser(source)
+    if not os.path.exists(src_path):
+        print(f"[copy_file] Could not find '{source}'.")
+        return
+    dest_folder = resolve_folder(dest)
+    dest_path = os.path.join(dest_folder, os.path.basename(src_path)) if dest_folder else os.path.expanduser(dest)
+    try:
+        shutil.copy2(src_path, dest_path)
+        print(f"[copy_file] Copied to: {dest_path}")
+    except OSError as exc:
+        print(f"[copy_file] Could not copy: {exc}")
+
+
+# ── E08  move_file  🔒 ───────────────────────────────────────────────────────
+# 🔒 DANGEROUS — original is gone if this fails partway. No confirm loop yet.
+
+def move_file(source: str, dest: str) -> None:
+    src_path = find_file(source) or os.path.expanduser(source)
+    if not os.path.exists(src_path):
+        print(f"[move_file] Could not find '{source}'.")
+        return
+    dest_folder = resolve_folder(dest)
+    dest_path = dest_folder if dest_folder else os.path.expanduser(dest)
+    try:
+        shutil.move(src_path, dest_path)
+        print(f"[move_file] Moved to: {dest_path}")
+    except OSError as exc:
+        print(f"[move_file] Could not move: {exc}")
+
+
+# ── E09  delete_file  🔒 ─────────────────────────────────────────────────────
+# 🔒 DANGEROUS — permanent, no confirm loop yet (Step 6). Uses gio trash
+# (moves to the XDG trash, recoverable) rather than an irreversible unlink —
+# a deliberately safer default even ahead of the real tier system.
+
+def delete_file(name: str) -> None:
+    path = find_file(name)
+    if path is None:
+        print(f"[delete_file] Could not find a file named '{name}'.")
+        return
+    result = subprocess.run(["gio", "trash", path], capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"[delete_file] Moved to trash: {path}")
+    else:
+        print(f"[delete_file] Could not delete '{path}': {result.stderr.strip()}")
+
+
+# ── E10  compress_archive ────────────────────────────────────────────────────
+
+def compress_archive(name: str) -> None:
+    path = find_file(name) or (resolve_folder(name) if not os.path.isfile(os.path.expanduser(name)) else None)
+    if path is None:
+        path = os.path.expanduser(name)
+    if not os.path.exists(path):
+        print(f"[compress_archive] Could not find '{name}'.")
+        return
+    archive_base = path.rstrip("/")
+    try:
+        archive_path = shutil.make_archive(archive_base, "zip", root_dir=os.path.dirname(path) or ".",
+                                            base_dir=os.path.basename(path))
+        print(f"[compress_archive] Created: {archive_path}")
+    except OSError as exc:
+        print(f"[compress_archive] Could not compress '{path}': {exc}")
+
+
+# ── E11  extract_archive ─────────────────────────────────────────────────────
+
+def extract_archive(name: str) -> None:
+    path = find_file(name)
+    if path is None:
+        print(f"[extract_archive] Could not find an archive named '{name}'.")
+        return
+    dest_dir = os.path.splitext(path)[0]
+    try:
+        shutil.unpack_archive(path, dest_dir)
+        print(f"[extract_archive] Extracted to: {dest_dir}")
+    except (shutil.ReadError, OSError, ValueError) as exc:
+        print(f"[extract_archive] Could not extract '{path}': {exc}")
+
+
+# ── E12  check_disk_space ────────────────────────────────────────────────────
+
+def check_disk_space() -> None:
+    total, used, free = shutil.disk_usage(os.path.expanduser("~"))
+    gb = 1024 ** 3
+    print(f"[disk_space] {free / gb:.1f} GB free of {total / gb:.1f} GB total "
+          f"({used / gb:.1f} GB used)")
+
+
+# ── E13  empty_trash  🔒 ─────────────────────────────────────────────────────
+# 🔒 DANGEROUS — permanent, no confirm loop yet (Step 6).
+
+def empty_trash() -> None:
+    result = subprocess.run(["gio", "trash", "--empty"], capture_output=True, text=True)
+    if result.returncode == 0:
+        print("[empty_trash] Trash emptied.")
+    else:
+        print(f"[empty_trash] Could not empty trash: {result.stderr.strip()}")
+
+
+# ── E14  open_recent_downloads ───────────────────────────────────────────────
+
+def open_recent_downloads() -> None:
+    path = os.path.expanduser("~/Downloads")
+    if not os.path.isdir(path):
+        print("[open_recent_downloads] No Downloads folder found.")
+        return
+    subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ── E15  search_file_contents ────────────────────────────────────────────────
+
+def search_file_contents(term: str) -> None:
+    search_dirs = [os.path.expanduser(d) for d in
+                   ("~/Documents", "~/Downloads", "~/Desktop") if os.path.isdir(os.path.expanduser(d))]
+    if not search_dirs:
+        print("[search_file_contents] No searchable folders found.")
+        return
+    result = subprocess.run(
+        ["grep", "-r", "-l", "-i", "--", term, *search_dirs],
+        capture_output=True, text=True
+    )
+    matches = [line for line in result.stdout.splitlines() if line]
+    if matches:
+        print(f"[search_file_contents] Found in: {', '.join(matches[:10])}")
+    else:
+        print(f"[search_file_contents] No files containing '{term}' found.")
+
+
+# ── E16  open_file_manager_at ────────────────────────────────────────────────
+
+def open_file_manager_at(folder: str) -> None:
+    path = resolve_folder(folder)
+    if path is None:
+        print(f"[open_file_manager_at] Could not find a folder named '{folder}'.")
+        return
+    subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ===========================================================================
+# ─── Category F — Terminal & dev tools ──────────────────────────────────────
+# ===========================================================================
+
+# ── F02  git_status ──────────────────────────────────────────────────────────
+
+def git_status() -> None:
+    """Run git status in the current working directory."""
+    result = subprocess.run(["git", "status"], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("[git_status] Not a git repository (or git isn't available here).")
+        return
+    print(f"[git_status]\n{result.stdout}")
+
+
+# ── F03  check_processes ─────────────────────────────────────────────────────
+
+def check_processes() -> None:
+    """Show the top 10 processes by CPU usage."""
+    result = subprocess.run(
+        ["ps", "aux", "--sort=-%cpu"], capture_output=True, text=True
+    )
+    lines = result.stdout.splitlines()
+    print("[check_processes]\n" + "\n".join(lines[:11]))
+
+
+# ── F04  kill_process  🔒 ────────────────────────────────────────────────────
+# 🔒 DANGEROUS — no confirm loop yet (Step 6). Uses -f (match against the
+# full command line, not the truncated 15-char /proc/comm name) — the same
+# fix Step 3 needed elsewhere for exactly this class of bug. Unlike B08
+# force_quit (GUI apps via the installed-app resolver), this is meant for
+# scripts/daemons a developer names directly, so the broader -f match is
+# the expected, useful behavior here rather than a risk to guard against.
+
+def kill_process(name: str) -> None:
+    result = subprocess.run(["pkill", "-f", "-i", name], capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"[kill_process] Killed process matching '{name}'")
+    else:
+        print(f"[kill_process] No running process found matching '{name}'")
+
+
+# ── F05  check_port ──────────────────────────────────────────────────────────
+
+def check_port(port: int) -> None:
+    result = subprocess.run(["lsof", "-i", f":{port}"], capture_output=True, text=True)
+    if result.stdout.strip():
+        print(f"[check_port] Port {port}:\n{result.stdout}")
+    else:
+        print(f"[check_port] Nothing is using port {port}.")
+
+
+# ── F06  ping_host ───────────────────────────────────────────────────────────
+
+def ping_host(host: str) -> None:
+    """Ping with a bounded count and per-packet timeout — must not hang the
+    voice loop waiting on an unreachable host."""
+    result = subprocess.run(
+        ["ping", "-c", "4", "-W", "2", host], capture_output=True, text=True
+    )
+    print(f"[ping_host]\n{result.stdout or result.stderr}")
+
+
+# ── F07  check_cpu ───────────────────────────────────────────────────────────
+
+def check_cpu() -> None:
+    """Compute instantaneous CPU usage from two /proc/stat samples 200ms
+    apart — the standard technique; a single sample only gives a cumulative
+    total since boot, not a current percentage."""
+    def _read_cpu_times() -> tuple[int, int]:
+        with open("/proc/stat") as f:
+            fields = [int(x) for x in f.readline().split()[1:]]
+        idle = fields[3]
+        total = sum(fields)
+        return idle, total
+
+    idle1, total1 = _read_cpu_times()
+    import time as _time
+    _time.sleep(0.2)
+    idle2, total2 = _read_cpu_times()
+
+    idle_delta = idle2 - idle1
+    total_delta = total2 - total1
+    usage_percent = 100.0 * (1 - idle_delta / total_delta) if total_delta else 0.0
+    print(f"[check_cpu] CPU usage: {usage_percent:.1f}%")
+
+
+# ── F08  check_memory ────────────────────────────────────────────────────────
+
+def check_memory() -> None:
+    result = subprocess.run(["free", "-h"], capture_output=True, text=True)
+    print(f"[check_memory]\n{result.stdout}")
+
+
+# ── F09  check_system_load ───────────────────────────────────────────────────
+
+def check_system_load() -> None:
+    with open("/proc/loadavg") as f:
+        one, five, fifteen = f.read().split()[:3]
+    print(f"[check_system_load] Load average — 1min: {one}, 5min: {five}, 15min: {fifteen}")
+
+
+# ── F10  open_terminal_at ─────────────────────────────────────────────────────
+
+def open_terminal_at(folder: str) -> None:
+    path = resolve_folder(folder)
+    if path is None:
+        print(f"[open_terminal_at] Could not find a folder named '{folder}'.")
+        return
+    subprocess.Popen(
+        ["cosmic-term", "--working-directory", path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+
+# ── F11  check_package_version ───────────────────────────────────────────────
+
+def check_package_version(package: str) -> None:
+    result = subprocess.run(["dpkg", "-s", package], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[check_package_version] '{package}' is not installed via apt/dpkg.")
+        return
+    for line in result.stdout.splitlines():
+        if line.startswith("Version:"):
+            print(f"[check_package_version] {package}: {line.removeprefix('Version:').strip()}")
+            return
+    print(f"[check_package_version] Could not find version info for '{package}'.")
+
+
+# ── F12  check_for_updates ───────────────────────────────────────────────────
+
+def check_for_updates() -> None:
+    """Read-only — safe to run without elevated privileges."""
+    subprocess.run(["apt", "update"], capture_output=True, text=True)
+    result = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True)
+    lines = [line for line in result.stdout.splitlines() if line and "Listing..." not in line]
+    if lines:
+        print(f"[check_for_updates] {len(lines)} package(s) can be updated:\n" + "\n".join(lines[:15]))
+    else:
+        print("[check_for_updates] Everything is up to date.")
+
+
+# ── F13  install_updates  🔒 ─────────────────────────────────────────────────
+# 🔒 DANGEROUS — no confirm loop yet (Step 6). Uses pkexec, not raw sudo:
+# pkexec always requires an interactive OS-level graphical authentication
+# dialog, which means a voice command can NEVER silently escalate privileges
+# even before the real tier system exists — the physical user must type a
+# password in a real dialog. Raw sudo would either hang the whole voice loop
+# waiting on a terminal password prompt that doesn't exist in this context,
+# or execute silently if passwordless sudo happened to be configured, which
+# would be a real problem for a voice-triggered action.
+
+def install_updates() -> None:
+    print("[install_updates] Requesting authentication — check for a password dialog.")
+    result = subprocess.run(
+        ["pkexec", "apt", "upgrade", "-y"], capture_output=True, text=True, timeout=600
+    )
+    if result.returncode == 0:
+        print("[install_updates] Updates installed.")
+    else:
+        print(f"[install_updates] Did not complete: {result.stderr.strip() or 'cancelled or failed'}")
+
+
+# ── F14  restart_service  🔒 ─────────────────────────────────────────────────
+# 🔒 DANGEROUS — no confirm loop yet (Step 6). Same pkexec reasoning as
+# install_updates above.
+
+def restart_service(service: str) -> None:
+    print("[restart_service] Requesting authentication — check for a password dialog.")
+    result = subprocess.run(
+        ["pkexec", "systemctl", "restart", service], capture_output=True, text=True, timeout=30
+    )
+    if result.returncode == 0:
+        print(f"[restart_service] Restarted: {service}")
+    else:
+        print(f"[restart_service] Could not restart '{service}': {result.stderr.strip() or 'cancelled or failed'}")
+
+
 # ── Legacy: web_search ──────────────────────────────────────────────────────
 # Kept for backwards compatibility with llm_intent.py which may return this
 # skill name.  Routes to google_search or youtube_search.
@@ -902,6 +1299,37 @@ DISPATCH: dict[str, object] = {
     "my_ip_address":        lambda args: my_ip_address(**args),
     "speed_test":           lambda args: speed_test(**args),
     "today_in_history":     lambda args: today_in_history(**args),
+    # ── Category E ────────────────────────────────────────────────────────
+    "find_file":            lambda args: find_file_skill(**args),
+    "open_file":            lambda args: open_file(**args),
+    "open_folder":          lambda args: open_folder(**args),
+    "list_files":           lambda args: list_files(**args),
+    "create_folder":        lambda args: create_folder(**args),
+    "rename_file":          lambda args: rename_file(**args),
+    "copy_file":            lambda args: copy_file(**args),
+    "move_file":            lambda args: move_file(**args),
+    "delete_file":          lambda args: delete_file(**args),
+    "compress_archive":     lambda args: compress_archive(**args),
+    "extract_archive":      lambda args: extract_archive(**args),
+    "check_disk_space":     lambda args: check_disk_space(**args),
+    "empty_trash":          lambda args: empty_trash(**args),
+    "open_recent_downloads": lambda args: open_recent_downloads(**args),
+    "search_file_contents": lambda args: search_file_contents(**args),
+    "open_file_manager_at": lambda args: open_file_manager_at(**args),
+    # ── Category F ────────────────────────────────────────────────────────
+    "git_status":           lambda args: git_status(**args),
+    "check_processes":      lambda args: check_processes(**args),
+    "kill_process":         lambda args: kill_process(**args),
+    "check_port":           lambda args: check_port(**args),
+    "ping_host":            lambda args: ping_host(**args),
+    "check_cpu":            lambda args: check_cpu(**args),
+    "check_memory":         lambda args: check_memory(**args),
+    "check_system_load":    lambda args: check_system_load(**args),
+    "open_terminal_at":     lambda args: open_terminal_at(**args),
+    "check_package_version": lambda args: check_package_version(**args),
+    "check_for_updates":    lambda args: check_for_updates(**args),
+    "install_updates":      lambda args: install_updates(**args),
+    "restart_service":      lambda args: restart_service(**args),
     # ── Legacy (Phase 0, for llm_intent.py compatibility) ─────────────────
     "web_search":           lambda args: web_search(**args),
     "run_terminal":         lambda args: run_terminal(**args),

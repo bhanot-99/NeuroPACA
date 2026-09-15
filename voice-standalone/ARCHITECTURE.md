@@ -461,13 +461,68 @@ external APIs and move to Step 4 instead, to keep this step truly account-free.)
   50/58 Layer 1, all 6 COSMIC apps, plus the specific adversarial phrases
   each bug was found with) before considering Step 3 closed.
 
-**Step 4 — Scale toward the full 181, wave by wave**
+**Step 4 — Scale toward the full 181, wave by wave** — IN PROGRESS
 - Add the rest of the unmarked (buildable-now) skills: D, E, F, G, I, J, K, L.
 - Set up each ⚙️-tagged external API/account one at a time, adding its skill
   only once the account exists — cut any that aren't actually worth it
   (open question #4) instead of building them out of obligation.
 - Re-check the Layer 1 thresholds as skill count grows — more skills means
   more chances for two of them to look similar in vector space.
+
+**Wave 1 (E + F) — DONE.** 16 Files skills + 13 new dev-tool skills (F02-F14;
+`run_terminal` already existed from Phase 0). `skills/_paths.py` added as
+shared spoken-folder-name resolution (downloads/documents/desktop/etc. → real
+XDG paths) plus a common-directories file finder, used by both categories.
+
+Placed E and F *before* C1 in `skills/__init__.py`'s scan order — verified
+empirically, not assumed, that C1's broad `google_search` fallback ("search
+for .+") would otherwise steal E's "search my files for X" and similar
+dev-tool phrasing before it ever reached the more specific skill.
+
+Notable design/safety decisions made while building:
+- `delete_file`/`empty_trash` use `gio trash`, not a raw unlink — moves to
+  the recoverable XDG trash even ahead of the real Step 6 confirm-loop, a
+  deliberately safer default for a 🔒-tagged skill that's live before tiers
+  exist.
+- `kill_process` (F04) uses `pkill -f`, unlike B08's `force_quit` — this one
+  is meant for scripts/daemons a developer names directly (e.g. "kill
+  pytest"), where matching the full command line is the expected, useful
+  behavior, not a risk to guard against the way B08's GUI-app case was.
+- `install_updates`/`restart_service` (🔒) use `pkexec`, never raw `sudo` —
+  pkexec always requires an interactive OS-level graphical password dialog,
+  so a voice command can never silently escalate privileges even before
+  Step 6's real tier system exists. Raw `sudo` would either hang the voice
+  loop on a nonexistent terminal prompt, or — worse — execute silently if
+  passwordless sudo happened to be configured.
+- `check_cpu` computes a real instantaneous percentage from two `/proc/stat`
+  samples 200ms apart (the standard technique) rather than reporting the
+  cumulative-since-boot total a single sample would give.
+- Live-tested every non-destructive executor for real (git status, cpu/
+  memory/load, package version, ping, process list/kill against a throwaway
+  process, and the full file lifecycle: create → rename → copy → compress →
+  extract → delete-to-trash, using disposable test artifacts, cleaned up
+  after). Did NOT live-test `install_updates`/`restart_service` (would
+  actually modify the system or restart a real service) or `empty_trash`
+  (irreversible, could delete things already in the user's trash) —
+  implemented and documented, not blindly assumed correct.
+- Found and fixed a genuine self-inflicted testing artifact along the way:
+  an inline `python -c "..."` test script that itself contained the literal
+  string "sleep 300" got killed by its own `pkill -f` call, since `-f`
+  matches the full command line — including the test harness's own source
+  text. Confirmed this can't happen in real usage (the actual assistant
+  process's command line is just `python3 main.py`, never containing
+  transcribed text) by rerunning as a proper script file instead.
+- One outdated test assumption found and fixed: two smoke-test cases from
+  Step 1 asserted "restart the nginx/apache service" should match nothing,
+  which was correct *before* `restart_service` existed — updated to expect
+  the new skill, not reverted.
+- One functional limitation found via live testing, documented rather than
+  silently left: `find_file()` resolves same-named files across multiple
+  folders by fixed search-directory priority (Downloads before Documents,
+  etc.) with no way to disambiguate when the same filename exists in more
+  than one — surfaced when testing `move_file`, which correctly refused to
+  overwrite rather than doing anything destructive, but the underlying
+  ambiguity remains a real, worth-knowing constraint.
 
 **Step 5 — Wake word + turn detection**
 - Add hotword detection inside the Capture module; push-to-talk stays as the
