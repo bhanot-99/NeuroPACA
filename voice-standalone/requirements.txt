@@ -4,3 +4,4 @@ numpy>=1.26
 soundfile>=0.12
 python-dotenv>=1.0
 fastembed>=0.3.0
+openwakeword>=0.6.0

@@ -623,12 +623,45 @@ wake-word detection is now `daemon.py`'s concern, not `main.py`'s — the
 FIFO-triggered start already replaces one half of what a wake-word would
 trigger (starting capture); only the "detect the hotword" half is new.
 
-**Step 5 — Wake word + turn detection**
-- Add hotword detection inside `daemon.py` (see above — this is now where
-  the Capture module's logic actually lives); push-to-talk (both `main.py`'s
-  dev mode and the tray's click-to-record) stays as the permanent manual
-  fallback.
-- Add the LiveKit-style turn-detection model for wake-word sessions only.
+**Step 5 — Wake word + turn detection** — DONE
+- Hotword: `openwakeword`'s bundled `hey_jarvis` model (same wake word the
+  old, since-removed A6.3 implementation used) — verified all model/VAD
+  files ship inside the pip package itself, no separate download step.
+- Turn detection: openwakeword's bundled Silero VAD wrapper (`openwakeword.
+  vad.VAD`), not a separate LiveKit model — same *spirit* the doc asks for
+  (reads whether you're still talking, not a flat timer), a genuinely
+  different, simpler mechanism than LiveKit's own semantic turn-detector.
+  Documented as that substitution, not silently passed off as the same thing.
+- `daemon.py` rewritten around one continuous `sd.InputStream` (not
+  opened/closed per command like `main.py`'s simpler push-to-talk) feeding
+  a small idle/recording state machine. Manual (tray FIFO) and wake-word
+  triggers are fully independent — manual sessions ignore VAD entirely and
+  stop on the second click, exactly as precise as before; wake-word
+  sessions stop automatically after ~1.2s of continuous non-speech
+  following detected speech, or a 4s timeout if nothing is ever said, or a
+  20s safety cap regardless.
+- Asleep (`session_state`) disables WAKE-WORD detection specifically —
+  `sleep_stop_listening` is named "stop *listening*" for a reason. The
+  tray's manual toggle keeps working regardless of asleep state; it's the
+  only way to say "wake up" while wake-word listening is paused.
+- Verified live: 12+ seconds of real ambient audio produced a max wake-word
+  score of 0.0 and a max VAD score of 0.27 (well below both activation
+  thresholds) — no false positives on room noise/silence. Full manual
+  toggle cycle re-verified end-to-end via D-Bus after the rewrite. Did NOT
+  verify true-positive wake-word detection live — that needs an actual
+  human saying "hey jarvis," which isn't something a command can do; that
+  part is yours to confirm.
+- **Found and fixed a real, unrelated, critical bug while testing:**
+  `gemini-2.5-flash` (this project's STT/intent model since Step 0) returned
+  a live 404 — "no longer available to new users." The API's own error
+  explicitly recommended `gemini-3.6-flash`, confirmed present in this key's
+  live model list with full `generateContent` support; switched both
+  `STT_MODEL` and `INTENT_MODEL` to it in `config.py`. This was blocking
+  every single voice interaction, wake-word-related or not.
+- Added `openwakeword` to `requirements.txt`; installed and then removed
+  `webrtcvad` (evaluated as a VAD option, turned out unneeded once
+  openwakeword's own bundled VAD was confirmed to accept the same chunk
+  size the wake-word model already uses).
 
 **Step 6 — Safety tiers (only once daily-used and stable)**
 - Tag every skill with its static tier (🔒 ones in the catalog are the
