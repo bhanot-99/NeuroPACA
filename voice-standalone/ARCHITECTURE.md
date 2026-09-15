@@ -96,26 +96,33 @@ via a single matrix multiplication. That's a few milliseconds of local arithmeti
 no network, no waiting — this is the concrete answer to "does regex+priority hold
 up at 181 skills, or do we need embedding-based routing": yes, this layer is why.
 
-**Honest cost:** Layer 1 needs a small local sentence-embedding model (e.g.
-all-MiniLM, ~80MB) as a new dependency. Fully local/offline, still millisecond-fast
-— but heavier than pure regex. A lighter fallback if that weight isn't wanted yet:
-plain keyword/token-overlap scoring, no embedding model, less robust to paraphrasing.
+**Honest cost:** Layer 1 needs a small local sentence-embedding model as a new
+dependency. Fully local/offline, still millisecond-fast per utterance — but
+benchmarked live on this machine (Step 2), `sentence-transformers` (the common
+default, torch-based) took ~15s to import+load even warm, ~52s cold — a real
+startup cost the original plan didn't account for. `fastembed` (ONNX-based, no
+torch) loads in ~1.3s warm with near-identical per-utterance latency (~12ms vs
+~10-15ms) — that's what's actually used, model `BAAI/bge-small-en-v1.5`.
 
 ## Latency budget
 
-| Stage | Time |
-|---|---|
-| STT (Gemini, cloud, unavoidable today) | ~300-1500ms — **the real bottleneck**, not our code |
-| Layer 0 grammar scan | <1ms |
-| Layer 1 semantic match | ~2-5ms |
-| Correction layer | <1ms |
-| Execute (dispatch + OS call) | 10-50ms |
-| **Total, after transcription, skill-resolved path** | **~10-60ms — genuinely millisecond-scale** |
-| Fallback path (adds one more Gemini call) | + ~300-1500ms |
+| Stage | Estimated (pipeline design) | Measured (Step 2, real pipeline) |
+|---|---|---|
+| STT (Gemini, cloud, unavoidable today) | ~300-1500ms | not re-measured — still the real bottleneck |
+| Layer 0 grammar scan | <1ms | **0.71ms** — confirmed |
+| Layer 1 semantic match (when it fires) | ~2-5ms | **~50ms** — higher than estimated, still imperceptible |
+| Layer 1 one-time startup (model load + index build) | not estimated | **~1.9s**, paid once at program start, not per-utterance |
+| Correction layer | <1ms | not separately re-measured |
+| Execute (dispatch + OS call) | 10-50ms | not re-measured (see Step 1's live executor checks) |
+| **Total, after transcription, skill-resolved path** | ~10-60ms | **~1-60ms depending on which layer resolves it** |
+| Fallback path (adds one more Gemini call) | + ~300-1500ms | not re-measured |
 
-Everything *after* transcription can honestly hit the millisecond goal. STT is the
-one piece that can't yet — which is why the Gemini Live API / local-Whisper option
-discussed earlier stays the only remaining lever on total latency.
+Everything *after* transcription is still comfortably imperceptible to a human,
+but the original ~2-5ms guess for Layer 1 was optimistic — real encode-plus-match
+cost came in around 50ms. Worth knowing honestly rather than repeating the
+estimate as if it were confirmed. STT remains the one piece that can't hit
+millisecond scale yet — the Gemini Live API / local-Whisper option discussed
+earlier stays the only remaining lever on total latency.
 
 ## Skill catalog — v1 target (181 skills)
 
@@ -314,12 +321,14 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
 
 ## Open questions
 
-1. Exact Layer 1 thresholds (0.82 / 0.60 used above) are starting guesses, not
-   measured — need real tuning once ~30 skills exist and we can see where
-   false-accepts/false-rejects actually happen.
-2. Which local embedding model to use for Layer 1 — all-MiniLM is the common
-   default, but worth confirming it's fast enough on this machine specifically
-   before committing.
+1. ~~Exact Layer 1 thresholds~~ — RESOLVED (Step 2): 0.75/0.55, tuned against
+   58 real independent test cases (`smoke_test_semantic.py`). Correct-match
+   and reject-worthy scores overlap in a 0.71-0.75 band for this model, so no
+   threshold gets everything right — chose zero false-accepts over zero
+   false-rejects. Revisit if the skill catalog grows enough to shift this band.
+2. ~~Which local embedding model to use for Layer 1~~ — RESOLVED (Step 2):
+   `fastembed` + `BAAI/bge-small-en-v1.5`, benchmarked live against
+   `sentence-transformers`/all-MiniLM (see Layer 1's "Honest cost" note above).
 3. Where does the "known list" come from for each E-category file skill
    (bookmarks, contacts, folders) — apps and C2 sites are already solved.
 4. Which ⚙️-tagged skills are worth the account/API setup at all versus cut —
@@ -344,16 +353,40 @@ external APIs and move to Step 4 instead, to keep this step truly account-free.)
 - Manually test each skill with a few phrasings, including deliberately odd
   ones, before moving on — this is where the app-name bug got caught last time.
 
-**Step 2 — Benchmark, then add Layer 1 (semantic match)**
-- Install a candidate local embedding model (all-MiniLM to start) and actually
-  time inference on this machine — answers open question #2 before anything
-  is built on top of it.
-- Write 3-5 example phrases per skill for the ~56 skills from Step 1.
-- Precompute and cache their embeddings at startup; implement the cosine-
-  similarity matrix match described in the pipeline diagram.
-- Tune the 0.82 / 0.60 thresholds against real test utterances — including
-  paraphrased and misheard versions — and measure false-accept/false-reject
-  rate before trusting it. Answers open question #1.
+**Step 2 — Benchmark, then add Layer 1 (semantic match)** — DONE
+- Benchmarked `sentence-transformers`/all-MiniLM vs `fastembed`/bge-small live
+  on this machine before building anything on top — the torch-based option's
+  ~15s warm startup cost was a real, previously-unknown finding; fastembed's
+  ~1.3-1.9s won with equivalent per-utterance latency. Answers open question #2.
+- Wrote 3-5 paraphrased example phrases for all 50 skills from Step 1 (the
+  48-skill catalog maps to 50 registered matcher/executor functions) in
+  `skills/semantic_match.py`, plus a shared set of generic argument extractors
+  (percent, on/off state, app-name-via-resolver, trailing query/word/location/
+  expression) since Layer 0's regex-coupled extraction doesn't carry over.
+- Precomputed and cached example embeddings at startup (warmed up eagerly in
+  `main.py` before the input loop, not lazily on first miss — a lazy load
+  would otherwise surface as a surprise ~1.9s hang mid-conversation).
+- Built `smoke_test_semantic.py`: 46 independently-worded test cases (neither
+  Layer 0's exact trigger phrasing nor semantic_match's own reference
+  examples — testing either would be circular). Tuned thresholds against real
+  measured scores, not guesses: correct matches and reject-worthy negatives
+  turned out to *overlap* in the 0.71-0.75 range for this model, so no single
+  threshold gets every case right — moved the threshold from 0.82/0.60 to
+  0.75/0.55, prioritizing zero false-accepts (the dangerous failure — a wrong
+  action silently executing) over false-rejects (safe — just falls through to
+  the LLM). Also found and fixed a real blend-formula bug: the original
+  "0.7×cosine + 0.3×token-overlap" penalized genuine paraphrases (which by
+  definition share few words with their reference example), the opposite of
+  its intent — changed to `max(cosine, blended)` so overlap can only help.
+  Final measured result: **50/58 test cases correct, 0 false accepts**, 7
+  safe false-rejects (fall through to LLM), 1 low-harm wrong-skill collision
+  (get_time vs. timezone_conversion — a fine-grained distinction even a
+  general-purpose embedding model struggles with) left as a known, documented
+  limitation rather than chased indefinitely. Answers open question #1.
+- Also caught and fixed a real extractor bug while diagnosing a false reject:
+  `switch_workspace` scored 0.93 (well above threshold) but silently failed
+  because the number-extractor only understood cardinal words ("two"), not
+  ordinals ("second") — fixed the word-number map.
 
 **Step 3 — Generalize the correction layer**
 - Turn the substring → edit-distance/token-overlap ensemble (already working

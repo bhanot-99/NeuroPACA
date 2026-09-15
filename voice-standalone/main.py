@@ -6,9 +6,16 @@ import llm_intent
 import skills  # noqa: F401 — skills/ package (replaces flat skills.py)
 import stt
 from audio_capture import record_until_enter
+from skills import semantic_match
 
 
 def main() -> None:
+    # Warm up Layer 1 once, upfront — otherwise the ~1.3s embedding-model
+    # load would hit as a surprise mid-conversation, the first time Layer 0
+    # misses a match, instead of a known, one-time startup cost.
+    print("Loading local semantic matcher...")
+    semantic_match._ensure_index_built()
+
     print("Voice commander (push-to-talk). Ctrl+C to quit.")
     while True:
         try:
@@ -42,13 +49,17 @@ def main() -> None:
         try:
             name, args = skills.match_skill(text)
             if name is not None:
-                print(f"[skill] {name}({args})")
+                print(f"[layer0] {name}({args})")
             else:
-                name, args = llm_intent.resolve_intent(text)
-                if name is None:
-                    print("No matching action.")
-                    continue
-                print(f"[llm] {name}({args})")
+                name, args = semantic_match.match(text)
+                if name is not None:
+                    print(f"[layer1] {name}({args})")
+                else:
+                    name, args = llm_intent.resolve_intent(text)
+                    if name is None:
+                        print("No matching action.")
+                        continue
+                    print(f"[llm] {name}({args})")
 
             actions.DISPATCH[name](args)
         except KeyboardInterrupt:
