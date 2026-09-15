@@ -24,6 +24,7 @@ section near the end, deliberately not entangled with the pipeline design.
 | Local semantic matching via vector similarity instead of LLM-per-utterance | Padatious's own approach (a small trained matcher, not a full LLM call) generalized with off-the-shelf sentence embeddings |
 | English + Hindi TTS with real, verified Hindi voices | Kokoro-82M (`hexgrad/Kokoro-82M`, Apache-2.0) — re-verified directly against its own `VOICES.md`, not trusted from the old A6 feature's memory |
 | Punjabi TTS, where mainstream/Western options have none | AI4Bharat's IndicF5 (MIT) — an IIT Madras research group building open Indic-language speech models specifically |
+| Indian-accented English (not just Hindi) | MeloTTS (MyShell.ai, MIT) — verified directly from its own README, a real dedicated `EN_INDIA` speaker; Google Cloud TTS's Chirp3-HD (30 real en-IN voices) as the cloud fallback if it disappoints |
 | Streaming/low-latency TTS, <100ms time-to-first-audio | RealtimeTTS (KoljaB) — has a built-in Kokoro engine; no equivalent exists yet for IndicF5 |
 | Concrete techniques for humanizing speech (not just model choice) | ElevenLabs' own engineering blog on sounding less robotic, converged with multiple independent TTS guides |
 
@@ -332,7 +333,31 @@ carried forward blindly:**
   that claim was actually re-verified directly against Kokoro's own
   `VOICES.md` rather than trusted from memory — confirmed real: four Hindi
   voices (`hf_alpha`, `hf_beta` — female; `hm_omega`, `hm_psi` — male)
-  alongside its English voices.
+  alongside its English voices. Kokoro's English, though, is only American
+  and British — checked directly, no Indian-English accent exists among its
+  9 language/accent groups (American/British English, Spanish, French,
+  Hindi, Italian, Japanese, Brazilian Portuguese, Mandarin).
+- **Indian-accented English (added by request, checked directly rather
+  than assumed): MeloTTS** (MyShell.ai, MIT license,
+  `github.com/myshell-ai/MeloTTS`), NOT Kokoro. Verified straight from the
+  project's own README: a real, dedicated Indian-English speaker,
+  `EN_INDIA`, alongside American/British/Australian/Default — not a
+  side-effect of the Hindi voices above, an actual English accent option.
+  Genuinely self-hostable (MIT, ships `setup.py`/`Dockerfile`, not
+  API-only), built on VITS/Bert-VITS2. Claimed real-time-capable on CPU,
+  but no precise real-time-factor number was found published, and no
+  confirmed built-in RealtimeTTS streaming engine exists for it (unlike
+  Kokoro) — same "verify speed directly, don't assume streaming" situation
+  as IndicF5 below, not a solved problem yet. Given this project's Indian
+  usage context, `EN_INDIA` is the more natural default "English" voice
+  than Kokoro's American/British options — worth making the actual default
+  once benchmarked, not just an alternate option bolted on the side.
+- **Cloud alternative for Indian English, if MeloTTS disappoints:** Google
+  Cloud TTS's Chirp3-HD tier — verified directly against Google's own
+  voice-list docs — has 30 real Indian-English (`en-IN`) voices, their
+  newest and most natural TTS technology. Same cloud cost/privacy/quota
+  tradeoff as every other cloud option in this doc; not the first choice,
+  but a real fallback if the local option's quality genuinely disappoints.
 - **Punjabi: AI4Bharat's IndicF5** (MIT license, self-hostable,
   `github.com/AI4Bharat/IndicF5`), NOT Kokoro. This is the one honest gap
   worth stating plainly: no mainstream/Western TTS project — Kokoro, Piper,
@@ -410,16 +435,24 @@ every prior step used, not a one-shot integration):
    timing, live-test with real ears.
 2. Add Kokoro's Hindi voices — same engine, mostly a config addition once
    step 1 works.
-3. Add IndicF5 for Punjabi as a separate, non-streaming integration —
+3. Benchmark MeloTTS's `EN_INDIA` voice live on this machine — real speed
+   (no published RTF exists) and real quality by ear. If it holds up,
+   switch the *default* English voice to it rather than keeping it as a
+   side option, since it fits this project's actual usage context better
+   than American/British English. No confirmed streaming engine exists for
+   it, so this stage also decides whether English gets slower once this
+   switch happens, or whether a custom RealtimeTTS adapter is worth
+   building for it.
+4. Add IndicF5 for Punjabi as a separate, non-streaming integration —
    benchmark its actual speed on this machine first; if it's too slow for
    a live assistant, that's a real finding to report, not something to
    force through.
-4. A humanizing-tuning pass applying the SSML/prosody techniques above —
+5. A humanizing-tuning pass applying the SSML/prosody techniques above —
    inherently subjective, needs your ears to judge "does this actually
    sound human," not something a test suite can verify the way skill
    matching can.
 
-Open questions this plan doesn't resolve yet are numbered 6-8 in the "Open
+Open questions this plan doesn't resolve yet are numbered 6-9 in the "Open
 questions" section below, alongside the rest of the project's.
 
 ## Explicitly deferred / not part of this doc
@@ -492,6 +525,11 @@ questions" section below, alongside the rest of the project's.
 8. (New, from Step 7 planning) Fixed default output language vs.
    auto-detecting and matching the input's language — a real design choice
    Step 7's plan explicitly leaves open rather than deciding by default.
+9. (New, from Step 7 planning) MeloTTS's `EN_INDIA` voice — same unverified
+   situation as IndicF5: no published real-time-factor number, no confirmed
+   RealtimeTTS streaming engine. Whether it's fast enough to be the default
+   English voice (not just a nice-sounding one) needs live benchmarking,
+   not assumed from its README claim of CPU real-time capability.
 
 ## Build steps
 
@@ -875,13 +913,15 @@ remains entirely your call)
   executed for real and checked the actual returned output — which is what
   caught the `run_terminal` bug above in the first place.
 
-**Step 7 — Spoken output (TTS), human-toned, English/Hindi/Punjabi** —
-PLANNED, not started. Full design above in "Voice output (TTS) — Step 7
-design." Kokoro (English + Hindi, streaming via RealtimeTTS) + AI4Bharat's
-IndicF5 (Punjabi, no streaming engine yet) + concrete humanizing techniques
-(SSML pauses/prosody, pitch variance) on top of either. Hinglish explicitly
-out of scope. Four-stage build (Kokoro English → Kokoro Hindi → IndicF5
-Punjabi, benchmarked live before trusting it → a humanizing-tuning pass).
+**Step 7 — Spoken output (TTS), human-toned, English (incl. Indian accent)/
+Hindi/Punjabi** — PLANNED, not started. Full design above in "Voice output
+(TTS) — Step 7 design." Kokoro (Hindi, streaming via RealtimeTTS) +
+MeloTTS's `EN_INDIA` voice (Indian-accented English, candidate default) +
+AI4Bharat's IndicF5 (Punjabi) — the latter two with no confirmed streaming
+engine yet — plus concrete humanizing techniques (SSML pauses/prosody,
+pitch variance) on top of any of them. Hinglish explicitly out of scope.
+Five-stage build (Kokoro English → Kokoro Hindi → MeloTTS Indian-English,
+benchmarked live → IndicF5 Punjabi, benchmarked live → a humanizing pass).
 
 ## Build status — 2026-09-15
 
@@ -924,11 +964,13 @@ notification, no spurious second one afterward.
   confirm-loop, always-on audit log). DONE. Activation
   (`SAFETY_TIERS_ENABLED`) stays off by default — that switch is still
   yours to flip, whenever, tier by tier or all at once.
-- **Step 7** — spoken output (TTS), human-toned, English/Hindi/Punjabi.
-  PLANNED — design researched and written up, nothing built yet. Kokoro
-  (English + Hindi, streaming) + AI4Bharat's IndicF5 (Punjabi, the one
-  real gap mainstream options don't cover) + concrete humanizing
-  techniques on top. Hinglish explicitly excluded, by your direction.
+- **Step 7** — spoken output (TTS), human-toned, English (incl. Indian
+  accent)/Hindi/Punjabi. PLANNED — design researched and written up,
+  nothing built yet. Kokoro (Hindi, streaming) + MeloTTS's `EN_INDIA`
+  (Indian-accented English, candidate default) + AI4Bharat's IndicF5
+  (Punjabi, the one real gap mainstream options don't cover) + concrete
+  humanizing techniques on top. Hinglish explicitly excluded, by your
+  direction.
 
 **What "done" does not mean:** every ⚙️-tagged skill across every
 category is still unbuilt (no external accounts were set up), Layer 1
