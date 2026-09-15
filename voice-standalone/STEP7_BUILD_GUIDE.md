@@ -1,13 +1,19 @@
-# Step 7 Build Guide — Giving the Assistant a Voice
+# Step 7 Build Guide — Giving the Assistant a Voice (SUPERSEDED, historical)
 
-**Status: Step 7 is done and merged (English + Hindi). The Punjabi stage
-below (Stage 4) was built and benchmarked exactly as written here, then
-removed before merge — a full-pipeline benchmark measured 96s per phrase,
-confirming this guide's own "too slow for real-time live dialogue" finding
-rather than changing it. Left in place as a historical record, not a
-current build target — see `ARCHITECTURE.md`'s "Punjabi — built,
-benchmarked, removed" section for the full writeup. `tts.py` no longer
-contains any of Stage 4's code.**
+**Status: this whole guide is historical, not a current build target.**
+Step 7 is done — but the actual shipped engine is Piper (`en_IN-spicor`)
+for English, not MeloTTS or Kokoro as this guide builds below. Of the
+four stages here: **Stage 1 (Kokoro English) and Stage 3 (MeloTTS) were
+both tried and replaced by Piper** (only one voice each, no way to tune
+or swap it when it didn't sound right); **Stage 4 (Punjabi/IndicF5) was
+built, benchmarked, and removed entirely** (96s/phrase full-pipeline
+latency); only **Stage 2 (Kokoro Hindi) is still exactly what's live
+today.** `tts.py` no longer contains MeloTTS, Kokoro's English path, or
+Punjabi/IndicF5 code at all. For the real, current setup instructions and
+full history of what changed and why, see `ARCHITECTURE.md`'s Step 7
+section — this file is kept only as a record of the path that was
+actually walked, not rewritten to pretend Piper was the plan from the
+start.
 
 This is a hands-on, do-it-yourself guide to building Step 7 of
 `voice-standalone`: making the assistant actually **speak**, in a natural

@@ -51,7 +51,10 @@ LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "true").lower() ==
 # The audit log stays on regardless — it's observability, not a gate.
 SAFETY_TIERS_ENABLED = os.environ.get("SAFETY_TIERS_ENABLED", "false").lower() == "true"
 
-# Step 7 TTS voices: "melo" (Indian-accented English via MeloTTS, ~0.15-0.20s per sentence)
-# or "kokoro" (American English via RealtimeTTS Kokoro, streaming).
-TTS_ENGLISH_VOICE = os.environ.get("TTS_ENGLISH_VOICE", "melo").lower()
+# Step 7 TTS — no config switch needed here anymore: tts.py hardcodes
+# Piper (en_IN-spicor, a real Indian-English voice) for English and Kokoro
+# (hf_alpha) for Hindi. Not a runtime option because there isn't a real
+# choice to make — MeloTTS and Kokoro's English path were both tried and
+# dropped (see tts.py's module docstring and ARCHITECTURE.md's Step 7
+# section for why), so this file has nothing left to configure for TTS.
 

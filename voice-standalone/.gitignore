@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.wav
 
-# Vendored MeloTTS clone (installs the `melo` package into .venv) — a full
-# nested git repo, not our code; not meant to be committed as-is.
-melo_tts_src/
+# Piper voice model — a 63.5MB binary weight file, downloaded not
+# committed. See ARCHITECTURE.md's Step 7 setup section for the source
+# and the exact download step.
+piper_voices/

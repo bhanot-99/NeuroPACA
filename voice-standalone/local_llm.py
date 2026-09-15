@@ -3,8 +3,8 @@ Local LLM fallback for llm_intent.py's cascade — Qwen2.5-1.5B-Instruct via
 Ollama (already running as a systemd service on this machine, already had
 this exact model pulled). CPU-only on purpose: benchmarked directly
 (2026-09-15/16) — Ollama defaults to 100% GPU offload, which shares the
-same 4GB card MeloTTS/Kokoro already use; loading this model alone pushed
-VRAM usage to ~2GB, real contention risk against TTS. Forced CPU
+same 4GB card Kokoro already uses; loading this model alone pushed VRAM
+usage to ~2GB, real contention risk against TTS. Forced CPU
 (`num_gpu: 0`) still answers in 400ms-2.5s, easily fast enough for a path
 that only runs when Layer 0/1 AND Gemini have all already failed to
 resolve something.

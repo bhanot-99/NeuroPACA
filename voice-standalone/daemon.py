@@ -256,16 +256,16 @@ def main() -> None:
     _ensure_fifo()
 
     # Runs alongside the other slow model loads below rather than after —
-    # MeloTTS's cold load (~20s, reproduced live) would otherwise sit on the
-    # critical path of the very first spoken confirmation (even the "Ready"
-    # message itself), during which the main loop can't listen for the next
-    # wake-word either. Joined right before "Ready" so both TTS and the mic
-    # are actually ready by the time that message fires.
+    # even Piper's ~1.1s cold load would otherwise sit on the critical path
+    # of the very first spoken confirmation (the "Ready" message itself),
+    # during which the main loop can't listen for the next wake-word
+    # either. Joined right before "Ready" so both TTS and the mic are
+    # actually ready by the time that message fires.
     tts_warm_thread = None
     if tts is not None:
         def _warm_tts() -> None:
             try:
-                tts.warm_up_english()
+                tts.warm_up()
             except Exception as exc:
                 print(f"[warning] TTS warm-up failed: {exc}")
         tts_warm_thread = threading.Thread(target=_warm_tts, daemon=True)

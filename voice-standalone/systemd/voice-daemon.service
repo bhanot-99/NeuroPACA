@@ -46,11 +46,14 @@ StandardError=journal
 SyslogIdentifier=voice-daemon
 
 Nice=5
-# Raised 1G -> 2G -> 3G. Live measurement (2026-09-15) showed the daemon
-# sitting at ~2047MiB against the 2G cap during ordinary operation with
-# faster-whisper (base) + MeloTTS + fastembed + wake-word all resident —
-# ~688KB of headroom, one allocation away from an OOM-kill. 5.5G was free
-# system-wide at the time; 3G leaves real margin without over-provisioning.
+# Raised 1G -> 2G -> 3G (2026-09-15). That measurement was taken with
+# MeloTTS resident (~2047MiB against the 2G cap, ~688KB of headroom) —
+# MeloTTS was removed 2026-09-16 in favor of Piper, a much lighter 63.5MB
+# CPU-only model, so real usage is very likely lower now. Left at 3G
+# rather than guessed back down — not re-measured live with the current
+# stack (faster-whisper + Piper + Kokoro + fastembed + wake-word), and a
+# real measurement should replace this comment's assumption, not another
+# guess.
 MemoryMax=3G
 
 [Install]
