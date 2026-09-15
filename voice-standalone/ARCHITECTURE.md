@@ -750,6 +750,22 @@ remains entirely your call)
 All six planned steps are done. This is where the project actually stands,
 not an aspirational summary:
 
+**Post-Step-6 bug found from real daily use, not testing:** the first real
+user report — a spurious "Listening..." notification right after a
+correct action, with nothing real said afterward. Root cause: `daemon.py`'s
+`_process_command` (STT + skill resolution + execution) takes real
+wall-clock seconds, during which the `sd.InputStream` callback keeps
+stuffing fresh chunks into `audio_q` — nothing reads them while processing
+is busy. Returning straight to the idle loop afterward burned through that
+whole backlog in a tight, non-real-time burst against the wake-word model,
+including whatever played *during* processing (e.g. the video the command
+itself had just opened). Fixed by draining `audio_q` completely right
+after `_process_command` returns, before re-entering idle listening — idle
+now only ever scores live audio going forward. Verified live: one real
+round-trip (which hit a genuine Gemini API rate limit mid-test, giving a
+realistic multi-second processing delay) produced exactly one "Listening..."
+notification, no spurious second one afterward.
+
 - **Step 1** — Layer 0 skills engine, 48-skill target (50 registered
   functions), categories A/B/C1-unmarked. DONE.
 - **Step 2** — Layer 1 local semantic match (`fastembed`/bge-small),

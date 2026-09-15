@@ -265,6 +265,22 @@ def main() -> None:
             _save_wav(frames, wav_path)
             _process_command(wav_path, layer1_available)
 
+            # Found via a real user report: _process_command (STT + skill
+            # resolution + execution) takes real wall-clock seconds, during
+            # which the InputStream callback keeps stuffing fresh chunks
+            # into audio_q — nothing is reading them meanwhile. Returning
+            # straight to idle would burn through that whole backlog in a
+            # tight burst against the wake-word model, including whatever
+            # played *during* processing (e.g. the video the command itself
+            # just opened) — a spurious "Listening..." right after a correct
+            # action, with nothing real said. Drain it so idle only ever
+            # scores live audio going forward.
+            while not audio_q.empty():
+                try:
+                    audio_q.get_nowait()
+                except queue.Empty:
+                    break
+
 
 if __name__ == "__main__":
     main()
