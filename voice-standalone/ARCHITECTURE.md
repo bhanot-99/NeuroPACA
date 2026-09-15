@@ -498,6 +498,96 @@ across ElevenLabs' own engineering blog and multiple TTS guides):
    - Automatic script detection routes Devanagari (`hi`) and Latin (`en`)
      without requiring explicit caller configuration.
 
+## Layer-2 cascade + conversational answers (2026-09-16) — DONE
+
+**Problem this solves, stated plainly:** two real gaps, one root cause.
+(1) `config.LLM_FALLBACK_ENABLED` had been off by default since it was
+added — Gemini's free-tier quota (20 requests/day) turns "on" into "works
+for a few requests, then silently stops," which isn't a real fallback.
+(2) There was no conversational answering at all — "what is python" only
+ever opened a search page; nothing actually read or spoke an answer. Both
+trace back to the same thing: no local model was wired in as a safety net.
+
+**What shipped:** `llm_intent.py` is now a real cascade, not a single
+Gemini call:
+1. **Gemini** (`config.INTENT_MODEL = "gemini-flash-lite-latest"`) tries
+   first. One call does double duty — picks a tool if the utterance is a
+   command, or (verified directly, not assumed) returns a plain text part
+   instead of a function call when the utterance is a genuine question,
+   which becomes a real spoken answer via the new `answer_question` skill.
+2. On **any** Gemini failure — a 429, a deprecated/removed model (this
+   project already hit that once with `gemini-2.5-flash`), a network
+   error — caught broadly on purpose, not just the quota case — it falls
+   through to a fully **local** model instead of giving up.
+3. A 429 specifically also gets remembered via the new `quota_tracker.py`
+   (`~/.local/share/voice-standalone/gemini_quota.json`, one field:
+   exhausted-on-date) so the rest of that day's utterances skip straight
+   to local instead of re-paying a network round trip to fail again. No
+   guessed daily-request-count threshold — Google no longer publishes a
+   flat RPD number (checked directly against `ai.google.dev`'s
+   rate-limits page: it's account/tier-specific now, dashboard-only), so
+   this reacts to the real 429 signal instead of a stale assumed number.
+
+**Model choice — benchmarked, not assumed, same discipline as Step 7:**
+- Checked the live model list for this API key directly: `flash-lite` is
+  the smallest *text*-generation tier available ("Nano Banana" is
+  image-generation despite the name; the Gemma models on this key are
+  26B-31B, larger, not smaller — both easy things to assume wrong from
+  names alone).
+- Benchmarked `gemini-flash-lite-latest` against locally-available
+  **Qwen2.5-1.5B-Instruct** and **Qwen2.5-3B-Instruct** (a GGUF already
+  present on this machine from unrelated earlier work, served via Ollama —
+  already running as a systemd service here) on the same 5 intent cases +
+  3 open-ended questions:
+
+  | | Gemini-flash-lite | Qwen2.5-1.5B | Qwen2.5-3B |
+  |---|---|---|---|
+  | Intent accuracy | 5/5 | 5/5 | 4/5 (hallucinated an action instead of "none") |
+  | Intent latency (avg) | 800ms | 382ms (GPU) / 466-891ms (CPU) | 597ms (GPU) |
+  | QA latency (avg) | 931ms | 1156ms (GPU) | 1636ms (GPU) |
+  | QA phrasing | Most natural | Good, occasionally textbook-ish | Good, concise |
+
+  **3B was dropped entirely** — slower and less accurate than 1.5B with no
+  measured upside. **1.5B was chosen as the local fallback.**
+- Ollama defaults to 100% GPU offload — checked directly with
+  `nvidia-smi`/`ollama ps`: loading just the 1.5B model pushed VRAM usage
+  to ~2GB, real contention risk against the same 4GB card MeloTTS/Kokoro
+  already share. `local_llm.py` forces CPU-only (`num_gpu: 0`) for this
+  reason — still 400ms-2.5s per call, easily fast enough for a path that
+  only runs after Layer 0, Layer 1, *and* Gemini have all already failed.
+- The local classify+answer combo was tested as one JSON-constrained call
+  first, and found unreliable: the model correctly recognized "why is the
+  sky blue" needed an answer but then didn't write one inside the same
+  constrained response. Split into two separate calls (classify, then —
+  only if classified as a question — a second unconstrained call to
+  actually answer), each tested working on its own, which is what shipped.
+  Known, accepted tradeoff: local 7-way classification (5 tools +
+  answer_question + none) measured 4/5 in a quick check, lower than
+  Gemini's — acceptable since Gemini is still the primary path every time
+  quota allows it; local is the fallback-of-a-fallback, not the default.
+
+**New/changed files:** `local_llm.py` (Ollama client for Qwen2.5-1.5B),
+`quota_tracker.py` (the 429-remembering state file), `llm_intent.py`
+(rewritten as the cascade, same `resolve_intent(text) -> (name, args)`
+contract as before — zero changes needed in `daemon.py`/`main.py`), a new
+`answer_question` skill in `actions.py` (SAFE tier, default) that speaks
+the generated answer **and** still opens a Google search page for the
+same question — both, not one instead of the other, per the original ask.
+
+**Real external dependency now, not just a pip package:** this needs
+Ollama installed and running (`systemctl is-active ollama`) with
+`qwen2.5:1.5b-instruct-q4_K_M` pulled. Not managed by `requirements.txt`
+since it isn't a Python package — worth knowing before deploying this
+elsewhere, it won't "just work" from a fresh `pip install -r
+requirements.txt` alone.
+
+**Still off by default:** `LLM_FALLBACK_ENABLED` — the quota dead-end that
+originally justified leaving it off is fixed, but flipping it is still a
+real behavior change (an utterance Layer 0/1 can't resolve now always
+tries an LLM, cloud or local, instead of silently doing nothing), and
+that's explicitly your call to make, same framing as
+`SAFETY_TIERS_ENABLED`.
+
 ## Explicitly deferred / not part of this doc
 
 - Safety tier *activation* — Step 6 built the mechanism (tiers, confirm-loop,

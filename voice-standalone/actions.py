@@ -744,6 +744,19 @@ def duckduckgo_search(query: str) -> None:
     _open_url(f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}")
 
 
+# ── answer_question — Layer-2 cascade only (llm_intent.py) ─────────────────
+
+def answer_question(question: str, answer: str) -> None:
+    """Speaks a real conversational answer (generated upstream by the
+    Gemini/Qwen cascade in llm_intent.py — this executor doesn't generate
+    anything itself, just delivers what was already produced) AND still
+    opens a Google search page for the same question, so "what is python"
+    gets both a spoken answer and a page to read more on, not one instead
+    of the other."""
+    print(f"[answer] {answer}")
+    _open_url(f"https://www.google.com/search?q={urllib.parse.quote_plus(question)}")
+
+
 # ── C05  define_word ────────────────────────────────────────────────────────
 
 def define_word(word: str) -> None:
@@ -1620,6 +1633,7 @@ DISPATCH: dict[str, object] = {
     "open_launcher":        lambda args: open_launcher(**args),
     "reopen_last_closed":   lambda args: reopen_last_closed(**args),
     # ── Category C1 ───────────────────────────────────────────────────────
+    "answer_question":      lambda args: answer_question(**args),
     "google_search":        lambda args: google_search(**args),
     "youtube_search":       lambda args: youtube_search(**args),
     "wikipedia_search":     lambda args: wikipedia_search(**args),

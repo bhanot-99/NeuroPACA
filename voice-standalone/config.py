@@ -15,16 +15,30 @@ SAMPLE_RATE = 16000
 # STT now runs locally via faster-whisper (stt.py) — every command was
 # burning a Gemini call just to transcribe audio, which exhausted the
 # free-tier daily quota (20 requests/day) even for fully local skills like
-# set_brightness. INTENT_MODEL is used for the LLM fallback in llm_intent.py,
-# the last remaining Gemini path — gated by LLM_FALLBACK_ENABLED below.
-INTENT_MODEL = "gemini-3.6-flash"
+# set_brightness. INTENT_MODEL is used for the LLM fallback in llm_intent.py.
+# gemini-flash-lite-latest, not gemini-3.6-flash: checked the live model
+# list directly (2026-09-16) — flash-lite is the smallest text-generation
+# tier this API key has (Nano Banana is image generation despite the name;
+# the Gemma models on this key are 26B-31B, larger, not smaller), and it
+# benchmarked as accurate as full flash on real intent-resolution cases
+# while giving noticeably more natural/conversational answer phrasing.
+INTENT_MODEL = "gemini-flash-lite-latest"
 
-# Layer-2 LLM intent fallback (llm_intent.py) — off by default. Still hitting
-# the free-tier daily quota (20 requests/day) even after STT moved local, so
-# this is disabled until either the quota situation changes or fallback
-# moves to a local model too. When off, an utterance that layer0 (regex) and
-# layer1 (local semantic matcher) can't resolve is just reported as "no
-# matching action" instead of trying Gemini.
+# Layer-2 LLM intent fallback (llm_intent.py) — off by default. As of
+# 2026-09-16 llm_intent.py is a real cascade, not just a single Gemini call:
+# Gemini (flash-lite) first, and on ANY failure — quota 429, a deprecated
+# model, network — it falls through to a fully local Qwen2.5-1.5B model via
+# Ollama instead of giving up (benchmarked directly: 1.5B beat 3B on both
+# speed and accuracy, so that's what's used, not the larger model). A 429
+# specifically also gets remembered for the rest of the day (quota_tracker.py)
+# so later utterances skip straight to local instead of re-paying a network
+# round-trip to fail again. This removes the original reason this flag was
+# off (quota exhaustion used to be a dead end) — still defaulting to off
+# because flipping it is a real behavior change (unmatched utterances now
+# always try an LLM, cloud or local, instead of silently doing nothing) and
+# that's your call, same as SAFETY_TIERS_ENABLED below. When off, an
+# utterance that layer0 (regex) and layer1 (local semantic matcher) can't
+# resolve is just reported as "no matching action."
 LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "false").lower() == "true"
 
 # Step 6 safety tiers — off by default. ARCHITECTURE.md: "Activation — off
