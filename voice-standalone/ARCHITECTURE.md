@@ -317,6 +317,13 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
 
 ## Voice output (TTS) — Step 7 design, planned
 
+**A full, hands-on, stage-by-stage build guide (exact install commands,
+verified code, a test checklist per stage, and a bug-hunting loop to run
+until each stage is clean) lives in `STEP7_BUILD_GUIDE.md`, next to this
+file.** This section is the *design* — why these engines, what was
+verified, what tradeoffs were made. The build guide is the *how* — meant
+to be followed directly while actually building it.
+
 Currently this assistant only *listens* — feedback is desktop notifications
 and (in `main.py`'s dev mode) printed text. Real spoken output is the next
 step: not just "any TTS," but natural/human-toned, in English, Hindi, and
