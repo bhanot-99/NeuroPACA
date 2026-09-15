@@ -23,9 +23,9 @@ section near the end, deliberately not entangled with the pipeline design.
 | Skills as a scalable local layer (150+) | Your friend's local-model build — same shape as Mycroft/OVOS's Adapt+Padatious pipeline, independently arrived at |
 | Local semantic matching via vector similarity instead of LLM-per-utterance | Padatious's own approach (a small trained matcher, not a full LLM call) generalized with off-the-shelf sentence embeddings |
 | English + Hindi TTS with real, verified Hindi voices | Kokoro-82M (`hexgrad/Kokoro-82M`, Apache-2.0) — re-verified directly against its own `VOICES.md`, not trusted from the old A6 feature's memory |
-| Punjabi TTS, where mainstream/Western options have none | AI4Bharat's IndicF5 (MIT) — an IIT Madras research group building open Indic-language speech models specifically |
+| ~~Punjabi TTS~~ (built, benchmarked, removed — see Step 7) | AI4Bharat's IndicF5 (MIT) — an IIT Madras research group building open Indic-language speech models specifically; live full-pipeline latency measured 96s/phrase on CPU, unusable |
 | Indian-accented English (not just Hindi) | MeloTTS (MyShell.ai, MIT) — verified directly from its own README, a real dedicated `EN_INDIA` speaker; Google Cloud TTS's Chirp3-HD (30 real en-IN voices) as the cloud fallback if it disappoints |
-| Streaming/low-latency TTS, <100ms time-to-first-audio | RealtimeTTS (KoljaB) — has a built-in Kokoro engine; no equivalent exists yet for IndicF5 |
+| Streaming/low-latency TTS, <100ms time-to-first-audio | RealtimeTTS (KoljaB) — has a built-in Kokoro engine |
 | Concrete techniques for humanizing speech (not just model choice) | ElevenLabs' own engineering blog on sounding less robotic, converged with multiple independent TTS guides |
 
 ## Phase 0 — already scaffolded (done)
@@ -321,13 +321,17 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
 verified code, a test checklist per stage, and a bug-hunting loop to run
 until each stage is clean) lives in `STEP7_BUILD_GUIDE.md`, next to this
 file.** Step 7 is fully implemented in `tts.py`, wired into `daemon.py`
-and `main.py`, tested across English, Hindi, and Punjabi, and deployed live.
+and `main.py`, tested across English and Hindi, and deployed live.
+Punjabi (IndicF5) was also built and benchmarked, then **removed before
+merge**: a 30-input full-pipeline benchmark measured 96s per phrase on
+CPU — far past the isolated ~55s benchmark below and unusable for a live
+assistant. See "Punjabi — built, benchmarked, removed" further down.
 
 Currently this assistant only *listens* — feedback is desktop notifications
 and (in `main.py`'s dev mode) printed text. Real spoken output is the next
-step: not just "any TTS," but natural/human-toned, in English, Hindi, and
-Punjabi. Hinglish/code-switching is explicitly OUT of scope — you ruled it
-out directly, and it's independently one of the hardest open problems in
+step: not just "any TTS," but natural/human-toned, in English and Hindi.
+Hinglish/code-switching is explicitly OUT of scope — you ruled it out
+directly, and it's independently one of the hardest open problems in
 speech research (see the sources table's existing Hinglish citation) —
 right to not treat it as a given.
 
@@ -364,17 +368,30 @@ carried forward blindly:**
   newest and most natural TTS technology. Same cloud cost/privacy/quota
   tradeoff as every other cloud option in this doc; not the first choice,
   but a real fallback if the local option's quality genuinely disappoints.
-- **Punjabi: AI4Bharat's IndicF5** (MIT license, self-hostable,
-  `github.com/AI4Bharat/IndicF5`), NOT Kokoro. This is the one honest gap
-  worth stating plainly: no mainstream/Western TTS project — Kokoro, Piper,
-  Chatterbox, ElevenLabs — has real Punjabi support. IndicF5 does: verified
-  directly, one of 11 supported Indic languages, built on the F5-TTS
-  architecture, trained on 1,417 hours of real speech across real datasets
-  (Rasa, IndicTTS, LIMMITS, IndicVoices-R). Its authors describe it as
-  "near-human polyglot" — their own claim, not independently confirmed,
-  and no published latency/real-time-factor numbers exist for it. Speed on
-  this actual machine is unverified and needs direct benchmarking before
-  relying on it, same discipline every other model choice in this doc got.
+- **~~Punjabi: AI4Bharat's IndicF5~~ — built, benchmarked, removed before
+  merge.** (MIT license, self-hostable, `github.com/AI4Bharat/IndicF5`),
+  NOT Kokoro. This was the one honest gap worth stating plainly at the
+  time: no mainstream/Western TTS project — Kokoro, Piper, Chatterbox,
+  ElevenLabs — has real Punjabi support. IndicF5 does: verified directly,
+  one of 11 supported Indic languages, built on the F5-TTS architecture,
+  trained on 1,417 hours of real speech across real datasets (Rasa,
+  IndicTTS, LIMMITS, IndicVoices-R). Its authors describe it as
+  "near-human polyglot" — their own claim, not independently confirmed.
+  It was integrated, its reference-audio voice cloning worked, and it
+  benchmarked at ~14.4s (CUDA) / ~55s (CPU) per short phrase in isolation
+  — already flagged in that same benchmarking pass as too slow for live
+  conversational turns, so it shipped gated CPU-only, on-demand, optional.
+  A later full-pipeline test (30 real inputs through the actual daemon
+  code path, not an isolated benchmark) measured **96s** for one Punjabi
+  phrase with Melo/Kokoro/faster-whisper all also resident — worse than
+  the isolated number, and confirmation rather than new information: the
+  isolated benchmark had already ruled it out for live use. Removed
+  entirely rather than left in disabled — `tts.py` no longer imports
+  `transformers`/`torchaudio` for it, no reference audio ships, and
+  `detect_lang` no longer special-cases Gurmukhi script. If Punjabi output
+  is wanted again later, a cloud TTS with real Punjabi support (rather than
+  a 96s local voice-cloning model) is the more promising direction, not a
+  retry of this same approach.
 - **Considered, not chosen as primary:** Chatterbox (Resemble AI) — a cited
   blind-listening study had 65.3% of listeners prefer it over ElevenLabs
   (24.5%), genuinely impressive, but no Punjabi. F5-TTS and Orpheus 3B —
@@ -388,11 +405,7 @@ carried forward blindly:**
 **KokoroEngine** built in, <100ms claimed time-to-first-audio. This is what
 the English/Hindi path should run through — matches this whole project's
 latency-conscious design (the same "don't wait for the whole thing before
-reacting" instinct behind Layer 0/1 existing at all). **Punjabi via IndicF5
-has no RealtimeTTS engine** — a real architectural asymmetry to state
-honestly rather than paper over: English/Hindi speech will feel
-streaming-snappy, Punjabi speech will feel batch-slower (wait for full
-synthesis) unless a custom RealtimeTTS adapter gets built for IndicF5 later.
+reacting" instinct behind Layer 0/1 existing at all).
 
 **Humanizing techniques — concrete, not just "pick a good model"** (converged
 across ElevenLabs' own engineering blog and multiple TTS guides):
@@ -407,7 +420,7 @@ across ElevenLabs' own engineering blog and multiple TTS guides):
   work, per multiple independent sources ("90% of it," one put it).
 - A prerequisite, not a technique: the underlying model has to be neural,
   not concatenative — no amount of SSML tuning fixes a concatenative
-  engine's fundamental choppiness. Both Kokoro and IndicF5 are neural, so
+  engine's fundamental choppiness. Kokoro and MeloTTS are both neural, so
   this is already satisfied by the model choice above, not something to
   separately solve.
 
@@ -459,25 +472,31 @@ across ElevenLabs' own engineering blog and multiple TTS guides):
      English accent, it was promoted to the **default** English voice
      (`config.TTS_ENGLISH_VOICE = "melo"`). Kokoro streaming remains available
      via `TTS_ENGLISH_VOICE="kokoro"`.
-4. **IndicF5 Punjabi integration & benchmark (DONE):**
+4. **~~IndicF5 Punjabi integration & benchmark~~ (DONE, then REMOVED before
+   merge — see "Punjabi — built, benchmarked, removed" above):**
    - Installed `f5_tts` / `IndicF5` with reference audio
-     `tts_reference_audio/PAN_F_HAPPY_00001.wav` and transcript.
+     `PAN_F_HAPPY_00001.wav` and transcript.
    - Patched `torchaudio.load` with native `soundfile` reader to avoid torchcodec
      system library dependency.
    - **Measured benchmarks:** Model load: 12.23s; generation on CUDA: **14.36s**;
-     generation on multi-core CPU: **~55s**.
-   - **Live usability finding:** 14-55s latency is too slow for real-time live
-     voice dialogue. Wired into `tts.py` as an optional, lazy-loaded on-demand
-     voice (`TTS_ENABLE_PUNJABI=true` in `config.py`), isolated on CPU to avoid
-     CUDA VRAM contention with MeloTTS/Kokoro.
+     generation on multi-core CPU: **~55s**. A later full-pipeline benchmark
+     (30 real inputs through the actual daemon code path) measured **96s**
+     for one phrase with every other model also resident.
+   - **Live usability finding:** 14-96s latency is too slow for real-time live
+     voice dialogue. Initially wired into `tts.py` as an optional, lazy-loaded
+     on-demand voice isolated on CPU to avoid CUDA VRAM contention with
+     MeloTTS/Kokoro — then removed entirely once the full-pipeline number
+     confirmed the isolated benchmark's conclusion. `tts.py` no longer
+     imports `transformers`/`torchaudio` for it; no reference audio ships;
+     `config.TTS_ENABLE_PUNJABI` was removed.
 5. **Speech humanizing pass (DONE):**
    - Implemented `clean_for_speech` in `tts.py`: removes markdown syntax, code
      blocks, URLs (replaced with "link"), bold/italics markers, and bullet tags.
    - Truncates long responses (>250 chars) to concise spoken summaries at sentence
      boundaries.
    - Tuned speed multiplier to 0.95 for calm, natural cadence.
-   - Automatic script detection routes Devanagari (`hi`), Gurmukhi (`pa`),
-     and Latin (`en`) without requiring explicit caller configuration.
+   - Automatic script detection routes Devanagari (`hi`) and Latin (`en`)
+     without requiring explicit caller configuration.
 
 ## Explicitly deferred / not part of this doc
 
@@ -539,19 +558,25 @@ across ElevenLabs' own engineering blog and multiple TTS guides):
    already-reasoned 🔒 skills plus the 2 added REVIEW items are a judgment
    call, not exhaustively re-audited across all 105 skills — worth a second
    look before ever setting `SAFETY_TIERS_ENABLED=true` for real.
-6. ~~IndicF5's real-world latency on this machine~~ — RESOLVED (Step 7):
-   Benchmarked directly. CUDA: 14.36s; CPU: ~55s for a short phrase.
-   Determined too slow for interactive conversational turns in a live voice
-   assistant. Implemented as an optional, lazy-loaded on-demand module
-   (`TTS_ENABLE_PUNJABI=true`) isolated to CPU to prevent VRAM exhaustion.
-7. ~~Punjabi voice quality~~ — RESOLVED (Step 7): Tested with reference audio
-   sample `PAN_F_HAPPY_00001.wav` and transcript. Voice cloning accurately
-   synthesizes Punjabi text with recognizable prosody matched to the reference clip.
+6. ~~IndicF5's real-world latency on this machine~~ — RESOLVED (Step 7),
+   then the feature was REMOVED before merge. Benchmarked directly: CUDA
+   14.36s, CPU ~55s for a short phrase in isolation — already too slow for
+   interactive conversational turns. Shipped gated (on-demand, CPU-only)
+   initially; a later full-pipeline benchmark (30 real inputs through the
+   real daemon code path, all other models resident) measured 96s for one
+   phrase, confirming the isolated verdict rather than changing it. Removed
+   entirely rather than left in disabled — see "Punjabi — built,
+   benchmarked, removed" above for the full writeup and reasoning.
+7. ~~Punjabi voice quality~~ — was RESOLVED (Step 7: voice cloning against
+   the reference sample produced recognizable prosody), moot now that the
+   feature is removed — kept here as a record that quality was never the
+   blocker, latency was.
 8. ~~Fixed default output language vs. auto-detecting language~~ — RESOLVED
    (Step 7): Implemented script-based automatic detection in `tts.detect_lang`:
-   Devanagari characters trigger Hindi (`hi`), Gurmukhi characters trigger
-   Punjabi (`pa`), and Latin text defaults to Indian English (`en`). Explicit
-   language overrides can also be passed.
+   Devanagari characters trigger Hindi (`hi`), Latin text defaults to
+   Indian English (`en`). Explicit language overrides can also be passed.
+   (Originally also routed Gurmukhi to Punjabi; that branch was removed
+   along with the feature.)
 9. ~~MeloTTS `EN_INDIA` latency & default viability~~ — RESOLVED (Step 7),
    **numbers corrected 2026-09-15 after a real production bug traced back to
    this benchmark being wrong.** `device="auto"` resolves to CUDA on this
@@ -967,12 +992,15 @@ remains entirely your call)
   caught the `run_terminal` bug above in the first place.
 
 **Step 7 — Spoken output (TTS), human-toned, English (incl. Indian accent)/
-Hindi/Punjabi** — DONE. Implemented in `tts.py`, wired into `daemon.py` and
+Hindi** — DONE. Implemented in `tts.py`, wired into `daemon.py` and
 `main.py`, tested live. MeloTTS `EN_INDIA` voice (Indian-accented English,
 ~0.15-0.20s per sentence, promoted to default) + Kokoro `hf_alpha` (Hindi,
-streaming via RealtimeTTS) + AI4Bharat IndicF5 (Punjabi voice cloning via
-`PAN_F_HAPPY_00001.wav`, on-demand) + text cleaning (`clean_for_speech`)
-and 0.95 speed multiplier for human-like cadence.
+streaming via RealtimeTTS) + text cleaning (`clean_for_speech`) and 0.95
+speed multiplier for human-like cadence. Punjabi (AI4Bharat IndicF5, voice
+cloning) was also built and benchmarked, then removed before merge — a
+full-pipeline benchmark measured 96s/phrase, confirming the isolated
+benchmark's own "too slow for live use" verdict; see "Punjabi — built,
+benchmarked, removed" above.
 
 ## Build status — 2026-09-15
 
@@ -1015,12 +1043,13 @@ notification, no spurious second one afterward.
   (`SAFETY_TIERS_ENABLED`) stays off by default — that switch is still
   yours to flip, whenever, tier by tier or all at once.
 - **Step 7** — spoken output (TTS), human-toned, English (incl. Indian
-  accent)/Hindi/Punjabi. DONE. MeloTTS (default Indian English, ~0.15-0.20s
-  generation on CPU) + Kokoro (Hindi, streaming ~1.5s time-to-first-chunk)
-  + IndicF5 (Punjabi voice cloning, on-demand). Built with clean markdown
-  stripping, 0.95 speed multiplier for calm natural tone, and script-based
-  automatic language detection. Hinglish explicitly excluded, by your
-  direction.
+  accent)/Hindi. DONE. MeloTTS (default Indian English, ~0.15-0.20s
+  generation on CPU) + Kokoro (Hindi, streaming ~1.5s time-to-first-chunk).
+  Built with clean markdown stripping, 0.95 speed multiplier for calm
+  natural tone, and script-based automatic language detection. Hinglish
+  explicitly excluded, by your direction. Punjabi (IndicF5 voice cloning)
+  was also built and benchmarked, then removed before merge — full-pipeline
+  latency measured 96s/phrase, confirmed unusable for live use.
 
 **What "done" does not mean:** every ⚙️-tagged skill across every
 category is still unbuilt (no external accounts were set up), Layer 1

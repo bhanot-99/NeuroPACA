@@ -1,10 +1,19 @@
 # Step 7 Build Guide — Giving the Assistant a Voice
 
+**Status: Step 7 is done and merged (English + Hindi). The Punjabi stage
+below (Stage 4) was built and benchmarked exactly as written here, then
+removed before merge — a full-pipeline benchmark measured 96s per phrase,
+confirming this guide's own "too slow for real-time live dialogue" finding
+rather than changing it. Left in place as a historical record, not a
+current build target — see `ARCHITECTURE.md`'s "Punjabi — built,
+benchmarked, removed" section for the full writeup. `tts.py` no longer
+contains any of Stage 4's code.**
+
 This is a hands-on, do-it-yourself guide to building Step 7 of
 `voice-standalone`: making the assistant actually **speak**, in a natural
-human tone, in English (with an Indian accent as the eventual default),
-Hindi, and Punjabi. It assumes you have the repo checked out and Steps 1-6
-already working (they are — this guide only adds to what exists).
+human tone, in English (with an Indian accent as the eventual default) and
+Hindi. It assumes you have the repo checked out and Steps 1-6 already
+working (they are — this guide only adds to what exists).
 
 Every technical claim in here (package names, function signatures, install
 commands) was verified directly against the real project's own
@@ -337,7 +346,18 @@ Same as Stage 1.5 — restart the service, trigger a real command, listen.
 
 ---
 
-## 5. Stage 4 — Punjabi (IndicF5)
+## 5. Stage 4 — Punjabi (IndicF5) — REMOVED before merge, kept for history
+
+**This stage was built and benchmarked exactly as written below, then
+removed from `tts.py` before merging to main.** The isolated benchmark in
+5.2 already found it too slow (14-55s/phrase); a later full-pipeline test
+(30 real inputs through the actual daemon, with Melo/Kokoro/faster-whisper
+all resident) measured 96s for one phrase — confirmation, not new
+information. If you're building Step 7 fresh from this guide today, treat
+Stages 1-3 and 5 below as current and skip this one; there is no
+`speak_punjabi`, `_get_indicf5`, `tts_reference_audio/`, or
+`TTS_ENABLE_PUNJABI` in `tts.py`/`config.py` anymore. Left in place so the
+"why not Punjabi" reasoning isn't lost, not as something to build.
 
 **Important honest note before you start:** IndicF5 is a *voice cloning*
 style model — verified directly from its own documentation. It doesn't

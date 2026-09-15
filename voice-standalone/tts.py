@@ -4,7 +4,11 @@ Supports:
 - English: MeloTTS Indian-English voice ('EN_INDIA') by default (~0.15-0.20s per sentence),
   or Kokoro 'af_heart' (streaming) when configured via config.TTS_ENGLISH_VOICE = "kokoro".
 - Hindi: Kokoro 'hf_alpha' voice (streaming).
-- Punjabi: IndicF5 voice cloning model using local reference audio (~14.3s per phrase on CPU).
+
+Punjabi (IndicF5 voice cloning) was built and benchmarked, then removed
+before merge: live full-pipeline latency measured 96s per phrase on CPU —
+far past the documented isolated benchmark (~55s) and unusable for a live
+assistant. See ARCHITECTURE.md's Step 7 section for the full writeup.
 """
 
 import os
@@ -24,11 +28,6 @@ _kokoro_engine = None
 _kokoro_stream = None
 _kokoro_current_voice = None
 _melo_model = None
-_indicf5_model = None
-
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_PUNJABI_REF_AUDIO = os.path.join(_BASE_DIR, "tts_reference_audio", "PAN_F_HAPPY_00001.wav")
-_PUNJABI_REF_TEXT_FILE = os.path.join(_BASE_DIR, "tts_reference_audio", "PAN_F_HAPPY_00001.txt")
 
 
 def clean_for_speech(text: str) -> str:
@@ -100,42 +99,6 @@ def warm_up_english() -> None:
         _get_kokoro("af_heart")
 
 
-def _get_indicf5():
-    """Lazy loads IndicF5 for Punjabi voice generation."""
-    global _indicf5_model
-    if _indicf5_model is None:
-        import torch
-        import torchaudio
-        import soundfile as sf
-        from transformers.dynamic_module_utils import get_class_from_dynamic_module
-
-        # Ensure torchaudio uses soundfile directly without requiring torchcodec
-        def _safe_torchaudio_load(filepath, *args, **kwargs):
-            data, sr = sf.read(filepath, dtype="float32")
-            tensor = torch.from_numpy(data)
-            if tensor.ndim == 1:
-                tensor = tensor.unsqueeze(0)
-            else:
-                tensor = tensor.t()
-            return tensor, sr
-
-        torchaudio.load = _safe_torchaudio_load
-
-        repo_id = "raajain/IndicF5"
-        INF5Model = get_class_from_dynamic_module(f"{repo_id}--model.INF5Model", repo_id)
-        INF5Config = get_class_from_dynamic_module(f"{repo_id}--model.INF5Config", repo_id)
-        config_obj = INF5Config(name_or_path=repo_id)
-
-        # Force CPU device for IndicF5 to avoid CUDA OOM alongside Melo/Kokoro
-        orig_cuda_avail = torch.cuda.is_available
-        try:
-            torch.cuda.is_available = lambda: False
-            _indicf5_model = INF5Model(config_obj)
-        finally:
-            torch.cuda.is_available = orig_cuda_avail
-    return _indicf5_model
-
-
 def speak_indian_english(text: str) -> None:
     """Speaks English with Indian accent using MeloTTS."""
     text = clean_for_speech(text)
@@ -153,46 +116,16 @@ def speak_indian_english(text: str) -> None:
             os.unlink(path)
 
 
-def speak_punjabi(text: str) -> None:
-    """Speaks Punjabi using IndicF5 voice cloning with reference sample."""
-    text = clean_for_speech(text)
-    if not text:
-        return
-    if not os.path.exists(_PUNJABI_REF_AUDIO) or not os.path.exists(_PUNJABI_REF_TEXT_FILE):
-        return
-
-    import numpy as np
-    import soundfile as sf
-
-    with open(_PUNJABI_REF_TEXT_FILE, "r", encoding="utf-8") as f:
-        ref_text = f.read().strip()
-
-    model = _get_indicf5()
-    audio = model(text, ref_audio_path=_PUNJABI_REF_AUDIO, ref_text=ref_text)
-    audio = audio.astype(np.float32) / 32768.0 if audio.dtype == np.int16 else audio
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        path = tmp.name
-    try:
-        sf.write(path, np.array(audio, dtype=np.float32), samplerate=24000)
-        subprocess.run(["aplay", path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    finally:
-        if os.path.exists(path):
-            os.unlink(path)
-
-
 def detect_lang(text: str) -> str:
-    """Auto-detect language from script: Devanagari -> hi, Gurmukhi -> pa, default -> en."""
+    """Auto-detect language from script: Devanagari -> hi, default -> en."""
     for ch in text:
         if "\u0900" <= ch <= "\u097f":
             return "hi"
-        if "\u0a00" <= ch <= "\u0a7f":
-            return "pa"
     return "en"
 
 
 def speak(text: str, lang: str | None = None) -> None:
-    """Speak text out loud across English, Hindi, and Punjabi.
+    """Speak text out loud across English and Hindi.
     Blocks until speech finishes. Auto-detects language if not explicitly provided."""
     text = clean_for_speech(text)
     if not text:
@@ -204,11 +137,6 @@ def speak(text: str, lang: str | None = None) -> None:
             lang = detected
         else:
             lang = "en"
-
-    if lang == "pa":
-        if getattr(config, "TTS_ENABLE_PUNJABI", True):
-            speak_punjabi(text)
-        return
 
     if lang == "en" and getattr(config, "TTS_ENGLISH_VOICE", "melo") == "melo":
         speak_indian_english(text)

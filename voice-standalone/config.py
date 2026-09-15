@@ -39,7 +39,3 @@ SAFETY_TIERS_ENABLED = os.environ.get("SAFETY_TIERS_ENABLED", "false").lower() =
 # or "kokoro" (American English via RealtimeTTS Kokoro, streaming).
 TTS_ENGLISH_VOICE = os.environ.get("TTS_ENGLISH_VOICE", "melo").lower()
 
-# Punjabi output via IndicF5 (diffusion voice cloning model, ~14.3s per phrase on CPU).
-# Enabled by default; lazy-loaded only when Punjabi text is detected.
-TTS_ENABLE_PUNJABI = os.environ.get("TTS_ENABLE_PUNJABI", "true").lower() == "true"
-

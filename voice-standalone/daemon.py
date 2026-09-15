@@ -91,8 +91,6 @@ def _detect_lang(text: str) -> str:
     for ch in text:
         if "\u0900" <= ch <= "\u097f":
             return "hi"
-        if "\u0a00" <= ch <= "\u0a7f":
-            return "pa"
     return "en"
 
 
