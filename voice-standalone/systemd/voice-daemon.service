@@ -1,0 +1,52 @@
+# voice-standalone daemon — the always-on recording/processing loop.
+# systemd --user unit.
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" systemd/voice-daemon.service \
+#     > ~/.config/systemd/user/voice-daemon.service
+#   systemctl --user daemon-reload && systemctl --user enable --now voice-daemon
+#
+# graphical-session.target, not default.target: this needs the compositor's
+# session environment (WAYLAND_DISPLAY, PulseAudio/PipeWire, the D-Bus
+# session bus for notify-send) already imported, or there's no audio device
+# or notification server to talk to yet — same reasoning as NeuroPaca's own
+# neuropacad.service / neuropaca-tray.service.
+#
+# Runs voice-standalone/.venv/bin/python, NOT system python3 — this process
+# needs google-genai/fastembed/sounddevice/numpy, all installed only in the
+# project venv. (tray.py is the opposite: system python3, no venv deps —
+# see voice-tray.service.)
+#
+# PYTHONUNBUFFERED=1: found via live testing — stdout is fully block-buffered
+# once it's not attached to a terminal (nohup/systemd both trigger this),
+# so startup/status prints would sit invisible in a buffer indefinitely
+# instead of reaching the journal in real time.
+
+[Unit]
+Description=voice-standalone — always-on voice command daemon
+Documentation=file://__REPO__/ARCHITECTURE.md
+After=graphical-session.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__REPO__/.venv/bin/python __REPO__/daemon.py
+
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voice-daemon
+
+Nice=5
+MemoryMax=1G
+
+[Install]
+WantedBy=graphical-session.target

@@ -569,9 +569,65 @@ Notable design decisions:
   live-test `clear_app_cache` (would delete real cache directories a running
   app might need).
 
+**Tray + always-on daemon (built ahead of Step 5, at your request)** — DONE.
+Replaces `main.py`'s `input()`-gated push-to-talk as the real, user-facing
+way to run this day to day — `main.py` itself is kept only for manual/dev
+testing, per the standing "no terminal control surfaces" preference (see
+memory: NeuroPaca's own tray had an equivalent text/CLI control surface
+removed for the same reason).
+
+- `daemon.py` — the always-on loop (your `.venv`, since it needs Gemini/
+  fastembed/etc.). Click 1 (tray) starts recording, click 2 stops,
+  transcribes, resolves, executes — feedback via desktop notifications
+  (`notify-send`), since there's no terminal to read once this runs as a
+  background service.
+- `tray.py` — the tray icon, deliberately under SYSTEM python3, not the
+  project venv, matching NeuroPaca's own `scripts/neuropaca_tray.py`
+  precedent exactly: PyGObject/AyatanaAppIndicator3 are desktop-shell
+  bindings, not project runtime dependencies. Two independent processes,
+  not one process mixing GTK's main loop with the venv's audio/LLM
+  pipeline, talking over a simple FIFO (`~/.local/share/voice-standalone/
+  toggle.fifo`) — the tray writes a toggle in a background thread (so a
+  click never blocks the whole GTK UI if the daemon is mid-command), the
+  daemon reads it in a loop.
+- `audio_capture.py`'s recording core was split into `record_until_stopped
+  (path, stop_event)` — decoupled from *how* stop is signaled — with
+  `record_until_enter` now a thin wrapper over it for `main.py`'s dev-only
+  terminal mode.
+- Both installed as `systemd --user` services (`systemd/voice-daemon.service`,
+  `systemd/voice-tray.service`), enabled against `graphical-session.target`
+  (needs the compositor's session — Wayland display, D-Bus, audio — already
+  up, same reasoning as NeuroPaca's units) — they now start automatically
+  every login, no manual launch needed.
+- **Real platform constraint found via live testing, not assumed:**
+  AppIndicator/StatusNotifierItem is fundamentally menu-based on most
+  desktops — a bare click with no menu attached often does nothing. Built
+  as click → one-item menu ("Start Recording"/"Stop Recording," label
+  reflects state) → click that item, the closest reliable approximation of
+  a toggle this protocol actually supports, rather than claiming true
+  single-click and having it silently not work.
+- **Found via live testing:** stdout is fully block-buffered once not
+  attached to a terminal (both `nohup` and `systemd` trigger this) — a
+  background service's own startup prints would sit invisible in a buffer
+  indefinitely. Fixed with `PYTHONUNBUFFERED=1` in the daemon's service unit.
+- Verified end-to-end for real: started both services live, monitored
+  D-Bus directly for the actual `org.freedesktop.Notifications.Notify`
+  calls (not just "did the process not crash") across two full toggle
+  cycles on the real, permanently-enabled service instance.
+- Visual/click verification (does the icon actually render, does clicking
+  it feel right) needs the user's own eyes and mouse — not something
+  verifiable by running commands.
+
+This changes where Step 5's "Capture module" work below actually belongs:
+wake-word detection is now `daemon.py`'s concern, not `main.py`'s — the
+FIFO-triggered start already replaces one half of what a wake-word would
+trigger (starting capture); only the "detect the hotword" half is new.
+
 **Step 5 — Wake word + turn detection**
-- Add hotword detection inside the Capture module; push-to-talk stays as the
-  permanent manual fallback.
+- Add hotword detection inside `daemon.py` (see above — this is now where
+  the Capture module's logic actually lives); push-to-talk (both `main.py`'s
+  dev mode and the tray's click-to-record) stays as the permanent manual
+  fallback.
 - Add the LiveKit-style turn-detection model for wake-word sessions only.
 
 **Step 6 — Safety tiers (only once daily-used and stable)**

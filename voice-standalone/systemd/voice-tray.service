@@ -1,0 +1,44 @@
+# voice-standalone tray icon. systemd --user unit.
+#
+# Install:
+#   sed "s|__REPO__|$PWD|g" systemd/voice-tray.service \
+#     > ~/.config/systemd/user/voice-tray.service
+#   systemctl --user daemon-reload && systemctl --user enable --now voice-tray
+#
+# Runs SYSTEM python3, not __REPO__/.venv — PyGObject/AyatanaAppIndicator3
+# are desktop-shell bindings (apt: gir1.2-ayatanaappindicator3-0.1), and
+# this process has no other dependency on the project venv's packages.
+# Same reasoning as NeuroPaca's own scripts/systemd/neuropaca-tray.service.
+#
+# Not Requires=voice-daemon.service: the tray should stay up (so you can
+# see it and know the assistant is reachable) even if the daemon crashes,
+# and tray.py's own toggle-write already degrades gracefully (silently, for
+# now) when the daemon isn't there to read the FIFO.
+
+[Unit]
+Description=voice-standalone — tray icon
+Documentation=file://__REPO__/ARCHITECTURE.md
+After=graphical-session.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/python3 __REPO__/tray.py
+
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voice-tray
+
+Nice=10
+MemoryMax=256M
+
+[Install]
+WantedBy=graphical-session.target
