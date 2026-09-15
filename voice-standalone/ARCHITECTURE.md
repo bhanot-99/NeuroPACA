@@ -461,13 +461,21 @@ external APIs and move to Step 4 instead, to keep this step truly account-free.)
   50/58 Layer 1, all 6 COSMIC apps, plus the specific adversarial phrases
   each bug was found with) before considering Step 3 closed.
 
-**Step 4 — Scale toward the full 181, wave by wave** — IN PROGRESS
-- Add the rest of the unmarked (buildable-now) skills: D, E, F, G, I, J, K, L.
-- Set up each ⚙️-tagged external API/account one at a time, adding its skill
-  only once the account exists — cut any that aren't actually worth it
-  (open question #4) instead of building them out of obligation.
-- Re-check the Layer 1 thresholds as skill count grows — more skills means
-  more chances for two of them to look similar in vector space.
+**Step 4 — Scale toward the full 181, wave by wave** — CLOSED (by explicit
+scope decision, not full 181-skill completion)
+- Built: D (media), E (files), F (dev tools), a minimal G (test to-do only,
+  not the full 16-item catalog), J (assistant meta), L (maintenance).
+- Explicitly skipped per your call: I (fun/personality) and K (network/
+  connectivity) — not built, not planned for this pass.
+- ⚙️-tagged skills across every category (Spotify, calendar/email, Wolfram
+  Alpha/weather/news/etc.) remain deferred — no accounts were set up this
+  pass, consistent with "only add once the account exists."
+- Layer 1 (semantic match) was NOT extended to cover any of Wave 1/Wave 2's
+  ~55 new Layer-0 skills — they exist only in the deterministic grammar
+  layer for now. This is a known, real gap: paraphrases of these new skills
+  that don't match their Layer 0 regex will fall through to the LLM instead
+  of resolving locally, unlike the original 50 which have both layers. Worth
+  a dedicated future pass, not silently assumed to already be covered.
 
 **Wave 1 (E + F) — DONE.** 16 Files skills + 13 new dev-tool skills (F02-F14;
 `run_terminal` already existed from Phase 0). `skills/_paths.py` added as
@@ -523,6 +531,43 @@ Notable design/safety decisions made while building:
   than one — surfaced when testing `move_file`, which correctly refused to
   overwrite rather than doing anything destructive, but the underlying
   ambiguity remains a real, worth-knowing constraint.
+
+**Wave 2 (D + minimal G + J + L) — DONE. Step 4 closed; I and K explicitly
+skipped per your call.** 13 media skills, 2 test to-do skills (not the full
+16-item G catalog — no alarm/timer/note/clipboard persistence design was in
+scope for this pass), 5 assistant-meta skills, and 6 maintenance skills.
+`skills/_session_state.py` added — minimal in-memory state (asleep flag,
+last response) shared between `main.py` and the sleep/wake/repeat skills;
+`main.py` now gates *execution* (not matching) on the asleep flag, and
+wraps dispatch in a stdout-capturing buffer so "repeat that" works without
+rewriting every existing executor to return a string instead of printing.
+
+Notable design decisions:
+- `change_wallpaper` writes COSMIC's `CosmicBackground` config directly (same
+  approach as `toggle_dark_mode`), and — same finding as `toggle_dnd` in the
+  earlier bug hunt — does NOT send a reload signal: checked `cosmic-bg`'s
+  `/proc/<pid>/status` and it does not catch SIGHUP either, so signaling it
+  would kill it, not reload it. Documented as "saved; may need a session
+  restart to visibly apply," not silently assumed to work live.
+- `play_youtube_video` and `set_media_volume` were catalog entries this pass
+  did NOT build as separate skills — found via live regression testing that
+  both would be genuine duplicates: C1's `youtube_search` already lists
+  "play" as a trigger verb for "play X on YouTube," and A05's `set_volume`
+  pattern already matches "volume ... NUMBER" regardless of the word "media"
+  appearing first (and category A is scanned before D). Removed the
+  redundant code rather than leave two skills doing the identical thing.
+- Found and fixed a real matcher regression while testing: A23's
+  `battery_status` pattern included "health" as a trigger word from Step 1,
+  written before `battery_health` (L01, capacity/wear via `upower` — a
+  genuinely different thing from charge %) existed. Removed "health" from
+  A23's pattern so it correctly routes to L01 now.
+- Live-tested every executor that was safe to run for real, including
+  `take_photo` (a real webcam capture — verified the output was a genuine
+  1280x720 JPEG, not just "didn't crash"), `change_wallpaper` (both by name
+  and the random-pick path, restoring the original config after), and
+  `open_camera_app`/`browse_local_media` — all cleaned up after. Did not
+  live-test `clear_app_cache` (would delete real cache directories a running
+  app might need).
 
 **Step 5 — Wake word + turn detection**
 - Add hotword detection inside the Capture module; push-to-talk stays as the

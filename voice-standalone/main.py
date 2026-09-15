@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import tempfile
 
@@ -6,7 +8,7 @@ import llm_intent
 import skills  # noqa: F401 — skills/ package (replaces flat skills.py)
 import stt
 from audio_capture import record_until_enter
-from skills import semantic_match
+from skills import _session_state, semantic_match
 
 
 def main() -> None:
@@ -25,7 +27,7 @@ def main() -> None:
         print(f"[warning] Layer 1 (semantic match) unavailable this session: {exc}")
         print("[warning] Continuing with Layer 0 + LLM fallback only.")
 
-    print("Voice commander (push-to-talk). Ctrl+C to quit.")
+    print("Voice commander (push-to-talk) — ready. Ctrl+C to quit.")
     while True:
         try:
             input("\nPress Enter to start recording...")
@@ -71,7 +73,24 @@ def main() -> None:
                         continue
                     print(f"[llm] {name}({args})")
 
-            actions.DISPATCH[name](args)
+            # Asleep gates EXECUTION, not matching — we still always try to
+            # recognize "wake up" specifically; everything else is ignored
+            # while asleep rather than silently acting on it.
+            if _session_state.is_asleep() and name != "wake_back_up":
+                print("[asleep] (ignoring — say 'wake up' to resume)")
+                continue
+
+            # Capture what the executor prints so "repeat that" (J07) works
+            # without rewriting every existing executor to return a string
+            # instead of printing — captured text is still shown live, just
+            # via this buffer instead of print() writing straight to stdout.
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                actions.DISPATCH[name](args)
+            output = buffer.getvalue()
+            if output:
+                print(output, end="")
+                _session_state.set_last_response(output)
         except KeyboardInterrupt:
             break
         except Exception as exc:

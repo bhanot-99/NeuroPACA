@@ -410,8 +410,13 @@ def _match_toggle_night_light(text: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _match_battery_status(text: str) -> dict | None:
+    # "health" deliberately removed from this trigger list — Step 4 added a
+    # distinct battery_health skill (L01, capacity/wear via upower, a real,
+    # different thing from charge %); found via testing that this pattern's
+    # original "health" trigger (written in Step 1, before L01 existed)
+    # would otherwise always win since category A is scanned before L.
     if re.search(
-        r"\bbattery\s+(?:status|level|percentage|life|health|charge|remaining|info)\b"
+        r"\bbattery\s+(?:status|level|percentage|life|charge|remaining|info)\b"
         r"|\bhow\s+much\s+battery\b"
         r"|\bis\s+(?:my\s+)?(?:laptop\s+)?(?:battery\s+)?charging\b"
         r"|\bcheck\s+(?:my\s+)?battery\b",

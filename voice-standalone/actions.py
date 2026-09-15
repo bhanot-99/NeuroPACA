@@ -21,6 +21,7 @@ COSMIC / Wayland notes for Category B executors:
 import datetime
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -28,6 +29,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+from skills import _session_state
 from skills._paths import find_file, resolve_folder
 
 
@@ -1223,6 +1225,292 @@ def restart_service(service: str) -> None:
         print(f"[restart_service] Could not restart '{service}': {result.stderr.strip() or 'cancelled or failed'}")
 
 
+# ===========================================================================
+# ─── Category D — Media & entertainment playback ────────────────────────────
+# ===========================================================================
+
+def _playerctl(*args: str) -> None:
+    """playerctl controls whatever MPRIS-compatible player is currently
+    active (browser tab, Spotify, VLC, etc.) — confirmed installed."""
+    subprocess.run(["playerctl", *args], check=False,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def play_pause() -> None:
+    _playerctl("play-pause")
+
+
+def next_track() -> None:
+    _playerctl("next")
+
+
+def previous_track() -> None:
+    _playerctl("previous")
+
+
+def play_youtube_music(query: str) -> None:
+    _open_url(f"https://music.youtube.com/search?q={urllib.parse.quote_plus(query)}")
+
+
+def play_soundcloud(query: str) -> None:
+    _open_url(f"https://soundcloud.com/search?q={urllib.parse.quote_plus(query)}")
+
+
+def play_bandcamp(query: str) -> None:
+    _open_url(f"https://bandcamp.com/search?q={urllib.parse.quote_plus(query)}")
+
+
+def play_internet_radio(query: str | None = None) -> None:
+    """No single canonical 'internet radio' target — TuneIn is the same
+    aggregator the earlier OVOS research (ARCHITECTURE.md's sources table)
+    found used for exactly this."""
+    if query:
+        _open_url(f"https://tunein.com/search/?query={urllib.parse.quote_plus(query)}")
+    else:
+        _open_url("https://tunein.com/radio/")
+
+
+
+
+def take_photo() -> None:
+    out_path = os.path.expanduser(
+        f"~/Pictures/webcam_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    )
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-f", "v4l2", "-i", "/dev/video0", "-frames:v", "1", out_path],
+        capture_output=True, text=True, timeout=10
+    )
+    if result.returncode == 0 and os.path.exists(out_path):
+        print(f"[take_photo] Saved: {out_path}")
+    else:
+        print(f"[take_photo] Could not capture from webcam: {result.stderr.strip()[-200:]}")
+
+
+def open_camera_app() -> None:
+    open_app("org.gnome.Cheese")
+
+
+def change_wallpaper(name: str | None = None) -> None:
+    """Writes COSMIC's wallpaper config directly (the same approach as
+    toggle_dark_mode). NOT sending a reload signal — checked cosmic-bg's
+    /proc/<pid>/status: it does NOT catch SIGHUP (bit 0 of SigCgt is unset,
+    same class of finding as toggle_dnd's cosmic-notifications), so signaling
+    it would kill it, not reload it. Live-reload isn't confirmed; may need a
+    session restart or the cosmic-settings UI to visibly apply."""
+    if name:
+        path = find_file(name)
+        if path is None:
+            print(f"[change_wallpaper] Could not find an image named '{name}'.")
+            return
+    else:
+        pictures_dir = os.path.expanduser("~/Pictures")
+        images = [f for f in os.listdir(pictures_dir)
+                  if f.lower().endswith((".jpg", ".jpeg", ".png"))] if os.path.isdir(pictures_dir) else []
+        if not images:
+            print("[change_wallpaper] No images found in ~/Pictures to pick from.")
+            return
+        path = os.path.join(pictures_dir, random.choice(images))
+
+    config_path = os.path.expanduser("~/.config/cosmic/com.system76.CosmicBackground/v1/all")
+    try:
+        with open(config_path) as f:
+            content = f.read()
+        new_content = re.sub(r'source: Path\("[^"]*"\)', f'source: Path("{path}")', content)
+        with open(config_path, "w") as f:
+            f.write(new_content)
+        print(f"[change_wallpaper] Set to: {path} (saved; may need a session restart to visibly apply)")
+    except OSError as exc:
+        print(f"[change_wallpaper] Could not update wallpaper config: {exc}")
+
+
+def browse_local_media() -> None:
+    """Interpretation of an inherently vague catalog entry: opens the file
+    manager at ~/Music. Documented, not a silent guess."""
+    path = os.path.expanduser("~/Music")
+    if os.path.isdir(path):
+        subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        print("[browse_local_media] No ~/Music folder found.")
+
+
+# ===========================================================================
+# ─── Category G — Productivity (minimal test to-do only) ────────────────────
+# ===========================================================================
+
+_TODO_PATH = os.path.expanduser("~/.local/share/voice-standalone/todos.json")
+
+
+def _load_todos() -> list[str]:
+    if not os.path.exists(_TODO_PATH):
+        return []
+    try:
+        with open(_TODO_PATH) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_todos(todos: list[str]) -> None:
+    os.makedirs(os.path.dirname(_TODO_PATH), exist_ok=True)
+    with open(_TODO_PATH, "w") as f:
+        json.dump(todos, f)
+
+
+def add_todo(item: str) -> None:
+    todos = _load_todos()
+    todos.append(item)
+    _save_todos(todos)
+    print(f"[add_todo] Added: {item}")
+
+
+def list_todos() -> None:
+    todos = _load_todos()
+    if not todos:
+        print("[list_todos] Your to-do list is empty.")
+        return
+    print("[list_todos] " + "; ".join(f"{i + 1}. {t}" for i, t in enumerate(todos)))
+
+
+# ===========================================================================
+# ─── Category J — Assistant meta/fallback ───────────────────────────────────
+# ===========================================================================
+
+def sleep_stop_listening() -> None:
+    _session_state.go_to_sleep()
+    print("[sleep] Going quiet — say 'wake up' when you need me.")
+
+
+def wake_back_up() -> None:
+    _session_state.wake_up()
+    print("[wake] I'm listening again.")
+
+
+def report_version_status() -> None:
+    print("[status] voice-standalone, Step 4 build. Layer 0 + Layer 1 + LLM fallback all active.")
+
+
+def repeat_last_response() -> None:
+    last = _session_state.get_last_response()
+    if last:
+        print(f"[repeat] {last}")
+    else:
+        print("[repeat] I haven't said anything yet this session.")
+
+
+def cancel_action() -> None:
+    print("[cancel] Okay, cancelled.")
+
+
+# ===========================================================================
+# ─── Category L — System maintenance ────────────────────────────────────────
+# ===========================================================================
+
+def battery_health() -> None:
+    result = subprocess.run(
+        ["upower", "-i", "/org/freedesktop/UPower/devices/battery_BAT0"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print("[battery_health] No battery found (desktop machine, or different battery path).")
+        return
+    for line in result.stdout.splitlines():
+        if "capacity" in line.lower():
+            print(f"[battery_health] {line.strip()} (capacity relative to original design — battery wear indicator)")
+            return
+    print("[battery_health] Could not find capacity/health info in upower output.")
+
+
+def clear_app_cache() -> None:
+    cache_dir = os.path.expanduser("~/.cache")
+    if not os.path.isdir(cache_dir):
+        print("[clear_app_cache] No ~/.cache directory found.")
+        return
+    freed = 0
+    errors = 0
+    for entry in os.listdir(cache_dir):
+        path = os.path.join(cache_dir, entry)
+        try:
+            size = sum(
+                os.path.getsize(os.path.join(dirpath, f))
+                for dirpath, _, files in os.walk(path) for f in files
+            ) if os.path.isdir(path) else os.path.getsize(path)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            freed += size
+        except OSError:
+            errors += 1
+    print(f"[clear_app_cache] Freed {freed / (1024 ** 2):.1f} MB"
+          + (f" ({errors} item(s) skipped — in use or permission-denied)" if errors else ""))
+
+
+def check_uptime() -> None:
+    with open("/proc/uptime") as f:
+        seconds = float(f.read().split()[0])
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{int(days)}d")
+    if hours:
+        parts.append(f"{int(hours)}h")
+    parts.append(f"{int(minutes)}m")
+    print(f"[check_uptime] Up for {' '.join(parts)}")
+
+
+def list_startup_apps() -> None:
+    dirs = [os.path.expanduser("~/.config/autostart"), "/etc/xdg/autostart"]
+    names = []
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if fname.endswith(".desktop"):
+                names.append(os.path.splitext(fname)[0])
+    if names:
+        print(f"[list_startup_apps] {len(names)} startup entries: {', '.join(sorted(set(names))[:20])}")
+    else:
+        print("[list_startup_apps] No startup entries found.")
+
+
+def find_large_files() -> None:
+    """Top-level of $HOME only, files over 100MB — a full recursive crawl
+    of the whole home directory is slow and mostly noise; this is meant to
+    surface the obvious large offenders, not be exhaustive."""
+    threshold = 100 * 1024 * 1024
+    home = os.path.expanduser("~")
+    large = []
+    try:
+        for entry in os.listdir(home):
+            path = os.path.join(home, entry)
+            if os.path.isfile(path) and os.path.getsize(path) > threshold:
+                large.append((os.path.getsize(path), path))
+    except OSError:
+        pass
+    if not large:
+        print("[find_large_files] No files over 100MB found directly in your home folder.")
+        return
+    large.sort(reverse=True)
+    lines = [f"{size / (1024 ** 2):.0f}MB  {path}" for size, path in large[:10]]
+    print("[find_large_files]\n" + "\n".join(lines))
+
+
+def system_info_summary() -> None:
+    uname = subprocess.run(["uname", "-a"], capture_output=True, text=True).stdout.strip()
+    os_release = {}
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    os_release[k] = v.strip('"')
+    except OSError:
+        pass
+    print(f"[system_info] {os_release.get('PRETTY_NAME', 'Unknown OS')}\n{uname}")
+
+
 # ── Legacy: web_search ──────────────────────────────────────────────────────
 # Kept for backwards compatibility with llm_intent.py which may return this
 # skill name.  Routes to google_search or youtube_search.
@@ -1330,6 +1618,34 @@ DISPATCH: dict[str, object] = {
     "check_for_updates":    lambda args: check_for_updates(**args),
     "install_updates":      lambda args: install_updates(**args),
     "restart_service":      lambda args: restart_service(**args),
+    # ── Category D ────────────────────────────────────────────────────────
+    "play_pause":           lambda args: play_pause(**args),
+    "next_track":           lambda args: next_track(**args),
+    "previous_track":       lambda args: previous_track(**args),
+    "play_youtube_music":   lambda args: play_youtube_music(**args),
+    "play_soundcloud":      lambda args: play_soundcloud(**args),
+    "play_bandcamp":        lambda args: play_bandcamp(**args),
+    "play_internet_radio":  lambda args: play_internet_radio(**args),
+    "take_photo":           lambda args: take_photo(**args),
+    "open_camera_app":      lambda args: open_camera_app(**args),
+    "change_wallpaper":     lambda args: change_wallpaper(**args),
+    "browse_local_media":   lambda args: browse_local_media(**args),
+    # ── Category G (minimal) ──────────────────────────────────────────────
+    "add_todo":             lambda args: add_todo(**args),
+    "list_todos":           lambda args: list_todos(**args),
+    # ── Category J ────────────────────────────────────────────────────────
+    "sleep_stop_listening": lambda args: sleep_stop_listening(**args),
+    "wake_back_up":         lambda args: wake_back_up(**args),
+    "report_version_status": lambda args: report_version_status(**args),
+    "repeat_last_response": lambda args: repeat_last_response(**args),
+    "cancel_action":        lambda args: cancel_action(**args),
+    # ── Category L ────────────────────────────────────────────────────────
+    "battery_health":       lambda args: battery_health(**args),
+    "clear_app_cache":      lambda args: clear_app_cache(**args),
+    "check_uptime":         lambda args: check_uptime(**args),
+    "list_startup_apps":    lambda args: list_startup_apps(**args),
+    "find_large_files":     lambda args: find_large_files(**args),
+    "system_info_summary":  lambda args: system_info_summary(**args),
     # ── Legacy (Phase 0, for llm_intent.py compatibility) ─────────────────
     "web_search":           lambda args: web_search(**args),
     "run_terminal":         lambda args: run_terminal(**args),
