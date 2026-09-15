@@ -388,10 +388,36 @@ external APIs and move to Step 4 instead, to keep this step truly account-free.)
   because the number-extractor only understood cardinal words ("two"), not
   ordinals ("second") — fixed the word-number map.
 
-**Step 3 — Generalize the correction layer**
-- Turn the substring → edit-distance/token-overlap ensemble (already working
-  for `open_app`) into one reusable function.
-- Apply it to every skill whose argument names a real thing, not just apps.
+**Step 3 — Generalize the correction layer** — DONE
+- Built `skills/_correction.py`: `resolve_against_known()` implements the
+  documented ensemble exactly (substring match first, else 0.6×edit-distance-
+  ratio + 0.4×token-overlap, cutoff-gated, else None) as reusable, domain-
+  agnostic infrastructure — ready for Step 4's future site/file skills.
+- `_app_resolver.py` refactored into a thin wrapper supplying the installed-
+  apps candidate list; it previously used a plain `difflib.get_close_matches`
+  call (only the edit-distance-style signal, no token-overlap blend) — now
+  genuinely uses the documented ensemble.
+- Audited every argument across the 50 built skills for whether it names a
+  "real thing" worth correcting: only `app_name` qualifies right now (an
+  authoritative local list exists, and a wrong guess launches the wrong app).
+  `timezone_conversion`'s `location` was considered and deliberately
+  excluded — its executor already delegates to time.is's own lenient
+  place-name resolution; forcing our own stricter local correction against a
+  necessarily-incomplete list would reject valid inputs, a regression, not an
+  improvement. Documented all exclusions inline in `_correction.py` rather
+  than leaving them looking like an oversight.
+- **Live-testing bug found and fixed:** the refactor initially checked
+  substring containment in BOTH directions (spoken-in-name OR name-in-spoken).
+  The original, correct behavior only checked one direction. Checking both
+  broke a real case: "cosmic files" matched `org.gnome.Nautilus` (whose
+  display name is just "Files" — a coincidental substring of the longer,
+  more specific spoken phrase) instead of the intended `com.system76.
+  CosmicFiles`, because the substring pass returns on the first hit, not the
+  best-scoring one, and never even reached the ensemble scoring that ranked
+  CosmicFiles correctly at the top. Fixed to one-directional (spoken must be
+  contained in the candidate's full name — matches how people actually
+  abbreviate names, e.g. "code" for "Visual Studio Code," never the reverse).
+  Verified against all 6 installed COSMIC-prefixed apps post-fix.
 
 **Step 4 — Scale toward the full 181, wave by wave**
 - Add the rest of the unmarked (buildable-now) skills: D, E, F, G, I, J, K, L.

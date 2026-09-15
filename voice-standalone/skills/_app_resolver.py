@@ -1,18 +1,17 @@
 """
-Shared correction-layer helper: resolve a spoken app name to a real desktop ID.
+App-specific wrapper around the generalized correction layer (Step 3):
+resolve a spoken app name to a real desktop ID.
 
-Strategy (mirrors ARCHITECTURE.md's correction-layer design):
-  1. Substring match first (instant, zero false-negatives for unambiguous names).
-  2. Fuzzy match second, but only accept high-confidence hits (cutoff 0.75)
-     to avoid silently launching the wrong app when nothing close is installed.
-  3. Return None rather than guess — the caller decides what to do (fall through
-     to LLM, ask for clarification, etc.).
+The actual matching algorithm (substring first, then the edit-distance/
+token-overlap ensemble, threshold-gated) lives in skills/_correction.py —
+this module's only job is supplying the installed-apps candidate list.
 """
 
-import difflib
 import glob
 import os
 from functools import lru_cache
+
+from skills._correction import resolve_against_known
 
 
 @lru_cache(maxsize=1)
@@ -58,19 +57,12 @@ def resolve_app_name(spoken: str) -> str | None:
         return None
 
     apps = _installed_apps()
-
-    # Pass 1: substring containment — confident zero-ambiguity matches.
-    # "code" → "Visual Studio Code" ✓; "fire" → "Firefox" ✓
+    # Each app contributes two candidates so both its display name ("Visual
+    # Studio Code") and its raw desktop_id ("code") are checked — matches the
+    # original two-field behavior, now routed through the shared ensemble.
+    candidates: list[tuple[str, str]] = []
     for desktop_id, display_name in apps:
-        if spoken in display_name.lower() or spoken in desktop_id.lower():
-            return desktop_id
+        candidates.append((display_name.lower(), desktop_id))
+        candidates.append((desktop_id.lower(), desktop_id))
 
-    # Pass 2: fuzzy match against display names only, high cutoff.
-    # Handles transcription mishearings (e.g. "fire fox" → "Firefox").
-    # cutoff=0.75 means we need a close match; lower would produce false positives.
-    name_to_id = {display_name.lower(): desktop_id for desktop_id, display_name in apps}
-    close = difflib.get_close_matches(spoken, name_to_id.keys(), n=1, cutoff=0.75)
-    if close:
-        return name_to_id[close[0]]
-
-    return None
+    return resolve_against_known(spoken, candidates, cutoff=0.75)

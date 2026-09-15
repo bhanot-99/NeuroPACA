@@ -28,6 +28,7 @@ import re
 from collections.abc import Callable
 
 from skills._app_resolver import resolve_app_name
+from skills._correction import token_overlap
 
 # ---------------------------------------------------------------------------
 # Tunable thresholds — see ARCHITECTURE.md open question #1. Starting values
@@ -333,14 +334,6 @@ def _ensure_index_built() -> None:
     _example_texts = all_texts
 
 
-def _token_overlap(a: str, b: str) -> float:
-    ta = set(re.findall(r"\w+", a.lower()))
-    tb = set(re.findall(r"\w+", b.lower()))
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
-
-
 def match(text: str) -> tuple[str | None, dict | None]:
     """Layer 1 semantic match. Returns (name, args) or (None, None)."""
     import numpy as np
@@ -376,7 +369,7 @@ def match(text: str) -> tuple[str | None, dict | None]:
         # average would penalize exactly the cases Layer 1 exists to catch.
         # Overlap can only ever help (rescue a close lexical near-miss),
         # never hurt a real paraphrase that simply shares no words.
-        overlap = _token_overlap(text, _example_texts[best_example_idx])
+        overlap = token_overlap(text, _example_texts[best_example_idx])
         blended = max(best_score, 0.7 * best_score + 0.3 * overlap)
         if blended >= HIGH_THRESHOLD:
             args = _extract_args(skill_name, text)
