@@ -419,6 +419,48 @@ external APIs and move to Step 4 instead, to keep this step truly account-free.)
   abbreviate names, e.g. "code" for "Visual Studio Code," never the reverse).
   Verified against all 6 installed COSMIC-prefixed apps post-fix.
 
+**Post-Step-3 bug hunt (code-review pass over Steps 2+3):**
+- `_trailing_location`/`_trailing_word`/`_app_name_trailing`'s cue-word lists
+  were missing common filler ("the," "'s," "tell," "could," "you," etc.),
+  leaving garbled multi-word junk glued to the extracted value instead of
+  just the target word/city — e.g. "Paris" was extracting as "'s the local
+  Paris." `_APP_CUE_WORDS` additionally stripped "editor"/"manager"/"client,"
+  which are literal parts of real app names, not filler — fixed all three
+  lists and extracted the shared strip/collapse/trim logic into one
+  `_strip_cue_words()` helper instead of five copies of the same three lines.
+- `_percent_arg` took the first 1-3 digit number anywhere in the sentence,
+  so "it was at 20 earlier, set it to 60 percent" silently set volume to 20
+  instead of 60 — a wrong action executing, not a safe fallback. Fixed to
+  prefer a number explicitly tagged "%"/"percent," else the last bare number
+  (natural speech states context before the actual instruction).
+- `main.py`'s eager Layer 1 warm-up had no error handling, unlike every
+  other fallible call in the file — a model-load failure (no network on
+  first-ever download, a corrupted cache) would crash the assistant before
+  it ever started listening. Fixed with the same try/except pattern as
+  everything else, degrading to Layer 0 + LLM-only for that session instead.
+- **Found a second, deeper instance of the Step 3 substring-ordering bug**
+  while verifying the app-name fix with a real installed app: "settings"
+  matched `com.system76.CosmicSettings.LegacyApplications` (whose 48-
+  character desktop_id happens to contain the word "settings") instead of
+  the exact match `org.gnome.Settings`, because `resolve_against_known()`
+  still returned on the first substring hit found in list order. The
+  one-directional fix from Step 3 was necessary but not sufficient — the
+  real fix was structural: collect ALL substring-containment hits, then
+  pick the one with the shortest match_key (the tightest, most specific
+  match — an exact match being the tightest possible) instead of whichever
+  the candidate list happened to enumerate first. Verified this doesn't
+  regress the original short-abbreviation case ("brave" -> "brave-browser")
+  that an earlier length-ratio-scoring attempt at this same fix broke.
+- Found independently (not from the review): `actions.calculator()`'s
+  character-strip regex silently deleted word-form operators as junk —
+  "multiply 25 by 16" stripped to "2516" (both numbers concatenated with no
+  operator) before falling back to Google, instead of computing 400. Fixed
+  by translating "divided by/multiplied by/times/plus/minus" and the
+  verb-first "multiply X by Y"/"divide X by Y" forms to symbols first.
+- All fixes reverified against the full regression suite (176/176 Layer 0,
+  50/58 Layer 1, all 6 COSMIC apps, plus the specific adversarial phrases
+  each bug was found with) before considering Step 3 closed.
+
 **Step 4 — Scale toward the full 181, wave by wave**
 - Add the rest of the unmarked (buildable-now) skills: D, E, F, G, I, J, K, L.
 - Set up each ⚙️-tagged external API/account one at a time, adding its skill

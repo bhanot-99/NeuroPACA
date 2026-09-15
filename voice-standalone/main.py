@@ -12,9 +12,18 @@ from skills import semantic_match
 def main() -> None:
     # Warm up Layer 1 once, upfront — otherwise the ~1.3s embedding-model
     # load would hit as a surprise mid-conversation, the first time Layer 0
-    # misses a match, instead of a known, one-time startup cost.
+    # misses a match, instead of a known, one-time startup cost. If it fails
+    # (no network for the first-ever model download, a corrupted cache),
+    # the assistant must still start — it just runs Layer 0 + LLM fallback
+    # only for this session, same principle as every other try/except here.
     print("Loading local semantic matcher...")
-    semantic_match._ensure_index_built()
+    layer1_available = True
+    try:
+        semantic_match._ensure_index_built()
+    except Exception as exc:
+        layer1_available = False
+        print(f"[warning] Layer 1 (semantic match) unavailable this session: {exc}")
+        print("[warning] Continuing with Layer 0 + LLM fallback only.")
 
     print("Voice commander (push-to-talk). Ctrl+C to quit.")
     while True:
@@ -51,7 +60,8 @@ def main() -> None:
             if name is not None:
                 print(f"[layer0] {name}({args})")
             else:
-                name, args = semantic_match.match(text)
+                if layer1_available:
+                    name, args = semantic_match.match(text)
                 if name is not None:
                     print(f"[layer1] {name}({args})")
                 else:

@@ -64,12 +64,24 @@ def resolve_against_known(
     # abbreviated form of the real name — "code" for "Visual Studio Code").
     # The reverse ("Files" contained in "cosmic files") is NOT safe: a short,
     # generic candidate name can be a coincidental substring of a longer,
-    # more specific spoken phrase, and returning on the first such hit (not
-    # the best-scoring one) would silently pick the wrong candidate even
-    # when a much better match exists elsewhere in the list.
-    for match_key, return_value in candidates:
-        if spoken in match_key:
-            return return_value
+    # more specific spoken phrase.
+    #
+    # Any containment match is a strong, unambiguous signal — that's what
+    # lets a genuine short abbreviation ("brave" for "brave-browser") win
+    # confidently without needing to separately clear the ensemble cutoff
+    # below. But when MULTIPLE candidates satisfy containment, picking
+    # whichever was enumerated first is a real bug found via live testing:
+    # "settings" matched a 48-character desktop_id
+    # (com.system76.cosmicsettings.legacyapplications) that happens to
+    # contain the word, before ever considering the exact match "Settings"
+    # (org.gnome.Settings) elsewhere in the list. Among all containment
+    # hits, the SHORTEST match_key is the tightest, most specific one — an
+    # exact match is the tightest possible — so that's the principled
+    # tie-break, not enumeration order.
+    substring_hits = [(key, value) for key, value in candidates if spoken in key]
+    if substring_hits:
+        _, return_value = min(substring_hits, key=lambda pair: len(pair[0]))
+        return return_value
 
     # Pass 2: ensemble score, best match only, gated by cutoff.
     best_score = 0.0

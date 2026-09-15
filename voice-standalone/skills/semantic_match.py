@@ -125,10 +125,21 @@ def _no_args(_text: str) -> dict:
 
 
 def _percent_arg(text: str) -> dict | None:
-    m = re.search(r"\b(\d{1,3})\s*(?:%|percent)?\b", text)
-    if not m:
-        return None
-    percent = int(m.group(1))
+    # A number explicitly tagged "%"/"percent" is unambiguous — prefer it
+    # over any other number in the sentence. Found via live testing: taking
+    # the FIRST bare number anywhere silently picked a reference value
+    # instead of the target one — "it was at 20 earlier, set it to 60
+    # percent" was extracting 20, not the intended 60. Natural speech states
+    # context before the actual instruction, so among untagged numbers the
+    # LAST one is the safer default.
+    tagged = re.search(r"\b(\d{1,3})\s*(?:%|percent)\b", text, re.IGNORECASE)
+    if tagged:
+        percent = int(tagged.group(1))
+    else:
+        bare = re.findall(r"\b(\d{1,3})\b", text)
+        if not bare:
+            return None
+        percent = int(bare[-1])
     if not (0 <= percent <= 100):
         return None
     return {"percent": percent}
@@ -162,18 +173,32 @@ def _mirror_extend(text: str) -> dict:
     return {"mode": mode}
 
 
+def _strip_cue_words(text: str, cue_pattern: re.Pattern) -> str | None:
+    """Shared by every trailing-extractor: strip filler, collapse whitespace,
+    trim trailing punctuation, return None if nothing meaningful is left."""
+    stripped = cue_pattern.sub(" ", text)
+    stripped = re.sub(r"\s+", " ", stripped).strip(" .,?!'")
+    return stripped or None
+
+
+# NOTE: "editor"/"manager"/"client" are deliberately NOT in this list — they
+# are literal parts of real app display names (GNOME "Text Editor", a
+# generic "File Manager", a "Mail Client"), and stripping them removed the
+# one word that actually identified the app. Found via live testing:
+# "fire up my text editor" was stripping to "fire up text" (losing "editor"
+# while keeping "fire up" filler), which then failed to resolve at all.
 _APP_CUE_WORDS = re.compile(
-    r"\b(?:open|close|shut|quit|exit|kill|force\s+quit|force\s+close|start|launch|"
-    r"get|bring|pull\s+up|switch\s+to|go\s+to|focus\s+on|focus|the|my|for\s+me|"
-    r"to\s+the\s+front|window|app|application|program|editor|client|manager)\b",
+    r"\b(?:can\s+you|could\s+you|please|open|close|shut|quit|exit|kill|"
+    r"force\s+quit|force\s+close|start|launch|fresh|"
+    r"get|bring|pull\s+up|switch\s+to|go\s+to|focus\s+on|focus|the|my|a|an|for\s+me|"
+    r"to\s+the\s+front|window|app|application|program|up)\b",
     re.IGNORECASE,
 )
 
 
 def _app_name_trailing(text: str) -> dict | None:
-    stripped = _APP_CUE_WORDS.sub(" ", text)
-    stripped = re.sub(r"\s+", " ", stripped).strip(" .?!")
-    if not stripped:
+    stripped = _strip_cue_words(text, _APP_CUE_WORDS)
+    if stripped is None:
         return None
     desktop_id = resolve_app_name(stripped.lower())
     if desktop_id is None:
@@ -208,40 +233,40 @@ _QUERY_CUE_WORDS = re.compile(
 
 
 def _trailing_query(text: str) -> dict | None:
-    stripped = _QUERY_CUE_WORDS.sub(" ", text)
-    stripped = re.sub(r"\s+", " ", stripped).strip(" .?!")
-    if not stripped:
-        return None
-    return {"query": stripped}
+    stripped = _strip_cue_words(text, _QUERY_CUE_WORDS)
+    return {"query": stripped} if stripped else None
 
 
+# Found via live testing: missing "could/you/word/for/me/i/don't/know/means/
+# explain" left multi-word junk glued to the target word — e.g. "could you
+# spell the word receive for me" was extracting "could you word receive for
+# me" instead of "receive".
 _WORD_CUE_WORDS = re.compile(
-    r"\b(?:what|does|is|the|definition|meaning|of|actually|mean|can\s+you|"
-    r"spell|out|write|give\s+me|how\s+do\s+you)\b",
+    r"'s|\b(?:what|does|is|the|definition|meaning|of|actually|mean|can\s+you|"
+    r"could\s+you|spell|out|write|give\s+me|give|how\s+do\s+you|word|for|me|"
+    r"i|don't|know|means|explain|you)\b",
     re.IGNORECASE,
 )
 
 
 def _trailing_word(text: str) -> dict | None:
-    stripped = _WORD_CUE_WORDS.sub(" ", text)
-    stripped = re.sub(r"\s+", " ", stripped).strip(" .?!")
-    if not stripped:
-        return None
-    return {"word": stripped}
+    stripped = _strip_cue_words(text, _WORD_CUE_WORDS)
+    return {"word": stripped} if stripped else None
 
 
+# Found via live testing: missing "the/'s/tell/me/local/clock/reading" left
+# junk glued to the city name — e.g. "what's the local time over in Paris
+# right now" was extracting "'s the local Paris" instead of "Paris".
 _LOCATION_CUE_WORDS = re.compile(
-    r"\b(?:what|time|would|it|be|in|current|right|now|over|do\s+we\s+have|got\s+the)\b",
+    r"'s|\b(?:what|time|would|it|be|in|current|right|now|over|do\s+we\s+have|"
+    r"got\s+the|the|tell|me|local|clock|reading)\b",
     re.IGNORECASE,
 )
 
 
 def _trailing_location(text: str) -> dict | None:
-    stripped = _LOCATION_CUE_WORDS.sub(" ", text)
-    stripped = re.sub(r"\s+", " ", stripped).strip(" .?!")
-    if not stripped:
-        return None
-    return {"location": stripped}
+    stripped = _strip_cue_words(text, _LOCATION_CUE_WORDS)
+    return {"location": stripped} if stripped else None
 
 
 def _whole_text_query(text: str) -> dict:
@@ -254,11 +279,8 @@ _EXPR_CUE_WORDS = re.compile(
 
 
 def _trailing_expression(text: str) -> dict | None:
-    stripped = _EXPR_CUE_WORDS.sub(" ", text)
-    stripped = re.sub(r"\s+", " ", stripped).strip(" .?!")
-    if not stripped:
-        return None
-    return {"expression": stripped}
+    stripped = _strip_cue_words(text, _EXPR_CUE_WORDS)
+    return {"expression": stripped} if stripped else None
 
 
 SKILL_EXTRACTOR: dict[str, Callable[[str], dict | None]] = {

@@ -763,9 +763,25 @@ def unit_conversion(query: str) -> None:
 # ── C11  calculator ─────────────────────────────────────────────────────────
 
 def calculator(expression: str) -> None:
-    """Evaluate a mathematical expression locally; fall back to Google."""
-    # Try to evaluate safely using Python — only allow math literals and ops
-    clean = re.sub(r"[^0-9+\-*/.() %^]", "", expression.replace("^", "**").replace("×", "*").replace("÷", "/"))
+    """Evaluate a mathematical expression locally; fall back to Google.
+
+    Found via live testing (Layer 1 can route natural phrases like "multiply
+    25 by 16" here, unlike Layer 0's own more symbol-anchored pattern): word
+    operators must be translated to symbols BEFORE the character-strip below,
+    which otherwise silently deletes them as junk — "multiply 25 by 16" was
+    stripping to "2516" (both numbers concatenated with no operator at all,
+    then falling back to Google) instead of correctly computing 400.
+    """
+    normalized = expression.lower()
+    normalized = re.sub(r"\bdivided\s+by\b", "/", normalized)
+    normalized = re.sub(r"\bmultiplied\s+by\b", "*", normalized)
+    normalized = re.sub(r"\bdivide\s+(.+?)\s+by\b", r"\1 /", normalized)
+    normalized = re.sub(r"\bmultiply\s+(.+?)\s+by\b", r"\1 *", normalized)
+    normalized = re.sub(r"\btimes\b", "*", normalized)
+    normalized = re.sub(r"\bplus\b", "+", normalized)
+    normalized = re.sub(r"\bminus\b", "-", normalized)
+
+    clean = re.sub(r"[^0-9+\-*/.() %^]", "", normalized.replace("^", "**").replace("×", "*").replace("÷", "/"))
     try:
         result = eval(clean, {"__builtins__": {}})  # noqa: S307 — sandboxed
         print(f"[calculator] {expression} = {result}")
