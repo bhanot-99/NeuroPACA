@@ -22,6 +22,10 @@ section near the end, deliberately not entangled with the pipeline design.
 | Turn-detection (know when you've stopped talking, without a flat timer) | LiveKit Agents' adaptive interruption/turn-taking |
 | Skills as a scalable local layer (150+) | Your friend's local-model build — same shape as Mycroft/OVOS's Adapt+Padatious pipeline, independently arrived at |
 | Local semantic matching via vector similarity instead of LLM-per-utterance | Padatious's own approach (a small trained matcher, not a full LLM call) generalized with off-the-shelf sentence embeddings |
+| English + Hindi TTS with real, verified Hindi voices | Kokoro-82M (`hexgrad/Kokoro-82M`, Apache-2.0) — re-verified directly against its own `VOICES.md`, not trusted from the old A6 feature's memory |
+| Punjabi TTS, where mainstream/Western options have none | AI4Bharat's IndicF5 (MIT) — an IIT Madras research group building open Indic-language speech models specifically |
+| Streaming/low-latency TTS, <100ms time-to-first-audio | RealtimeTTS (KoljaB) — has a built-in Kokoro engine; no equivalent exists yet for IndicF5 |
+| Concrete techniques for humanizing speech (not just model choice) | ElevenLabs' own engineering blog on sounding less robotic, converged with multiple independent TTS guides |
 
 ## Phase 0 — already scaffolded (done)
 
@@ -310,6 +314,114 @@ trail used, rebuilt here standalone.
 **Activation** — off by default. Turned on tier-by-tier once the pipeline has
 run reliably for real, day-to-day use. Your call, exactly as already agreed.
 
+## Voice output (TTS) — Step 7 design, planned
+
+Currently this assistant only *listens* — feedback is desktop notifications
+and (in `main.py`'s dev mode) printed text. Real spoken output is the next
+step: not just "any TTS," but natural/human-toned, in English, Hindi, and
+Punjabi. Hinglish/code-switching is explicitly OUT of scope — you ruled it
+out directly, and it's independently one of the hardest open problems in
+speech research (see the sources table's existing Hinglish citation) —
+right to not treat it as a given.
+
+**Model choice — grounded in verified research, not the old A6 assumption
+carried forward blindly:**
+
+- **English + Hindi: Kokoro-82M** (Apache-2.0, 82M params, CPU-capable).
+  The old A6 feature's notes claimed it had a Hindi voice pack; this time
+  that claim was actually re-verified directly against Kokoro's own
+  `VOICES.md` rather than trusted from memory — confirmed real: four Hindi
+  voices (`hf_alpha`, `hf_beta` — female; `hm_omega`, `hm_psi` — male)
+  alongside its English voices.
+- **Punjabi: AI4Bharat's IndicF5** (MIT license, self-hostable,
+  `github.com/AI4Bharat/IndicF5`), NOT Kokoro. This is the one honest gap
+  worth stating plainly: no mainstream/Western TTS project — Kokoro, Piper,
+  Chatterbox, ElevenLabs — has real Punjabi support. IndicF5 does: verified
+  directly, one of 11 supported Indic languages, built on the F5-TTS
+  architecture, trained on 1,417 hours of real speech across real datasets
+  (Rasa, IndicTTS, LIMMITS, IndicVoices-R). Its authors describe it as
+  "near-human polyglot" — their own claim, not independently confirmed,
+  and no published latency/real-time-factor numbers exist for it. Speed on
+  this actual machine is unverified and needs direct benchmarking before
+  relying on it, same discipline every other model choice in this doc got.
+- **Considered, not chosen as primary:** Chatterbox (Resemble AI) — a cited
+  blind-listening study had 65.3% of listeners prefer it over ElevenLabs
+  (24.5%), genuinely impressive, but no Punjabi. F5-TTS and Orpheus 3B —
+  strong voice-cloning research models, also no Punjabi. ElevenLabs — the
+  cloud quality benchmark everything else gets compared against, but the
+  same cloud cost/privacy/quota tradeoff flagged in the earlier
+  local-vs-cloud TTS discussion, and no particular Indic-language strength.
+
+**Streaming/latency infrastructure: RealtimeTTS** (KoljaB, MIT,
+`github.com/KoljaB/RealtimeTTS`) — 28+ engine backends, a real, direct
+**KokoroEngine** built in, <100ms claimed time-to-first-audio. This is what
+the English/Hindi path should run through — matches this whole project's
+latency-conscious design (the same "don't wait for the whole thing before
+reacting" instinct behind Layer 0/1 existing at all). **Punjabi via IndicF5
+has no RealtimeTTS engine** — a real architectural asymmetry to state
+honestly rather than paper over: English/Hindi speech will feel
+streaming-snappy, Punjabi speech will feel batch-slower (wait for full
+synthesis) unless a custom RealtimeTTS adapter gets built for IndicF5 later.
+
+**Humanizing techniques — concrete, not just "pick a good model"** (converged
+across ElevenLabs' own engineering blog and multiple TTS guides):
+- SSML `<break>` tags at clause/comma boundaries, not only at full stops —
+  most human speech pauses mid-sentence more than models default to.
+- Broaden pitch range across a sentence — rise on key words, relax on
+  endings — instead of flat, monotone delivery.
+- A short breath/fade at the start of a phrase.
+- Micro timing/pitch jitter — perfectly regular timing is what reads as
+  robotic; a little natural variance is what reads as human.
+- SSML `prosody`/`emphasis`/`phoneme` tags handle most of the practical
+  work, per multiple independent sources ("90% of it," one put it).
+- A prerequisite, not a technique: the underlying model has to be neural,
+  not concatenative — no amount of SSML tuning fixes a concatenative
+  engine's fundamental choppiness. Both Kokoro and IndicF5 are neural, so
+  this is already satisfied by the model choice above, not something to
+  separately solve.
+
+**How this plugs into the existing architecture:**
+- A new `tts.py`, exposing `speak(text: str, lang: str = "en") -> None`
+  (or a streaming variant matching RealtimeTTS's own API) — analogous to
+  how `stt.py` and `llm_intent.py` are the existing thin wrappers around an
+  external engine.
+- Wired into `daemon.py`'s `_process_command`: speak the result once ready,
+  same principle as your own example ("hey jarvis, open YouTube and play
+  music" → speak "Playing music on YouTube" alongside the action actually
+  running). For anything with real latency (a web search, an LLM-fallback
+  answer), speak a brief interim line before the result is ready ("on it,"
+  "let me check") rather than going silent for several seconds — the exact
+  case you named for "what's the meaning of X."
+- Output-language selection: input-language auto-detection isn't built (see
+  below), so v1 should use a simple configured default
+  (`config.TTS_LANGUAGE`), not silent guessing — a real design decision to
+  make explicitly, not default into by accident.
+- **Multi-language INPUT matching (Layer 0/1 understanding Hindi/Punjabi
+  commands) is a separate, larger, already-deferred undertaking** — this
+  Step 7 is about OUTPUT and tone specifically. Input-side multilingual
+  Layer 0/1 coverage stays in "Explicitly deferred" below; Gemini's STT
+  likely already handles multilingual *input* reasonably via the LLM
+  fallback path regardless, untested.
+
+**Staged build plan** (same "verify each stage before the next" discipline
+every prior step used, not a one-shot integration):
+1. Wire Kokoro (English) through RealtimeTTS into `daemon.py` — prove the
+   mechanism end to end, decide the interim-phrase-vs-wait-for-result
+   timing, live-test with real ears.
+2. Add Kokoro's Hindi voices — same engine, mostly a config addition once
+   step 1 works.
+3. Add IndicF5 for Punjabi as a separate, non-streaming integration —
+   benchmark its actual speed on this machine first; if it's too slow for
+   a live assistant, that's a real finding to report, not something to
+   force through.
+4. A humanizing-tuning pass applying the SSML/prosody techniques above —
+   inherently subjective, needs your ears to judge "does this actually
+   sound human," not something a test suite can verify the way skill
+   matching can.
+
+Open questions this plan doesn't resolve yet are numbered 6-8 in the "Open
+questions" section below, alongside the rest of the project's.
+
 ## Explicitly deferred / not part of this doc
 
 - Safety tier *activation* — Step 6 built the mechanism (tiers, confirm-loop,
@@ -338,6 +450,14 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
 - Extending Layer 1 (semantic match) to the ~55 skills added in Step 4 — they
   resolve via Layer 0 grammar only; paraphrases that miss their regex fall
   straight to the LLM instead of a fast local match, unlike the original 50.
+- Hinglish/code-switched speech — explicitly ruled out by direct instruction
+  when Step 7 was scoped, not an oversight. Independently one of the harder
+  open problems in speech research generally (see the sources table).
+- Multi-language INPUT matching (Layer 0/1 understanding spoken Hindi/
+  Punjabi commands, not just producing spoken Hindi/Punjabi output) — Step
+  7 is output-only; this is a separate, larger undertaking that would mean
+  parallel regex/embedding coverage for every skill, multiple languages
+  over, not attempted here.
 
 ## Open questions
 
@@ -362,6 +482,16 @@ run reliably for real, day-to-day use. Your call, exactly as already agreed.
    already-reasoned 🔒 skills plus the 2 added REVIEW items are a judgment
    call, not exhaustively re-audited across all 105 skills — worth a second
    look before ever setting `SAFETY_TIERS_ENABLED=true` for real.
+6. (New, from Step 7 planning) IndicF5's real-world latency on this machine
+   is completely unverified — no published numbers exist, and it has no
+   RealtimeTTS engine to fall back on for streaming. Could rule it out for
+   live use; needs direct benchmarking before Step 7's Punjabi stage.
+7. (New, from Step 7 planning) Punjabi voice *quality*, not just existence —
+   IndicF5's "near-human polyglot" is its own authors' framing, not
+   independently confirmed by listening.
+8. (New, from Step 7 planning) Fixed default output language vs.
+   auto-detecting and matching the input's language — a real design choice
+   Step 7's plan explicitly leaves open rather than deciding by default.
 
 ## Build steps
 
@@ -745,9 +875,18 @@ remains entirely your call)
   executed for real and checked the actual returned output — which is what
   caught the `run_terminal` bug above in the first place.
 
+**Step 7 — Spoken output (TTS), human-toned, English/Hindi/Punjabi** —
+PLANNED, not started. Full design above in "Voice output (TTS) — Step 7
+design." Kokoro (English + Hindi, streaming via RealtimeTTS) + AI4Bharat's
+IndicF5 (Punjabi, no streaming engine yet) + concrete humanizing techniques
+(SSML pauses/prosody, pitch variance) on top of either. Hinglish explicitly
+out of scope. Four-stage build (Kokoro English → Kokoro Hindi → IndicF5
+Punjabi, benchmarked live before trusting it → a humanizing-tuning pass).
+
 ## Build status — 2026-09-15
 
-All six planned steps are done. This is where the project actually stands,
+Six of seven planned steps are done; Step 7 (spoken output) is designed but
+not started. This is where the project actually stands,
 not an aspirational summary:
 
 **Post-Step-6 bug found from real daily use, not testing:** the first real
@@ -785,6 +924,11 @@ notification, no spurious second one afterward.
   confirm-loop, always-on audit log). DONE. Activation
   (`SAFETY_TIERS_ENABLED`) stays off by default — that switch is still
   yours to flip, whenever, tier by tier or all at once.
+- **Step 7** — spoken output (TTS), human-toned, English/Hindi/Punjabi.
+  PLANNED — design researched and written up, nothing built yet. Kokoro
+  (English + Hindi, streaming) + AI4Bharat's IndicF5 (Punjabi, the one
+  real gap mainstream options don't cover) + concrete humanizing
+  techniques on top. Hinglish explicitly excluded, by your direction.
 
 **What "done" does not mean:** every ⚙️-tagged skill across every
 category is still unbuilt (no external accounts were set up), Layer 1
