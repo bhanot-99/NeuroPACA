@@ -1,3 +1,6 @@
+import _process_guard
+_process_guard.ensure_libgomp_preloaded()
+
 import contextlib
 import io
 import os

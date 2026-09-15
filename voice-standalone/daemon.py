@@ -23,6 +23,9 @@ The tray's manual toggle keeps working regardless; it's the only way to
 say "wake up" while wake-word listening is paused.
 """
 
+import _process_guard
+_process_guard.ensure_libgomp_preloaded()
+
 import contextlib
 import io
 import os
@@ -79,11 +82,13 @@ def _notify(title: str, body: str, *, speak_text: str | None = None, speak: bool
     panel text (multi-line warnings, raw args dicts, etc.) isn't what you'd
     want read aloud; speak=False is for the one case where speaking would
     actively break things — see the "Listening..." call site."""
-    import subprocess
     display_body = body.strip()
     if len(display_body) > 300:
         display_body = display_body[:300] + "…"
-    subprocess.run(["notify-send", "--app-name=Voice Assistant", title, display_body], check=False)
+    try:
+        _process_guard.safe_run(["notify-send", "--app-name=Voice Assistant", title, display_body])
+    except Exception as exc:
+        print(f"[notify-send error] {exc}")
     if speak:
         _speak(speak_text if speak_text is not None else body)
 
@@ -255,21 +260,29 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
 def main() -> None:
     _ensure_fifo()
 
-    # Runs alongside the other slow model loads below rather than after —
-    # even Piper's ~1.1s cold load would otherwise sit on the critical path
-    # of the very first spoken confirmation (the "Ready" message itself),
-    # during which the main loop can't listen for the next wake-word
-    # either. Joined right before "Ready" so both TTS and the mic are
-    # actually ready by the time that message fires.
-    tts_warm_thread = None
+    # Runs FIRST, before semantic_match/openwakeword load anything —
+    # found live (2026-09-16), through extensive repeated testing, that
+    # this daemon process hung intermittently when tts.warm_up() (which
+    # spawns a subprocess — see tts.py's PROCESS ISOLATION note) ran
+    # AFTER those libraries were already loaded. Root cause: subprocess
+    # creation on POSIX uses fork() internally; forking a process that
+    # already has multiple background threads (onnxruntime's and numpy's
+    # own thread pools, both spun up by semantic_match/openwakeword) is a
+    # classic, well-documented source of child-process hangs — if any
+    # thread besides the one calling fork() held an internal lock (e.g.
+    # malloc) at that exact moment, the child inherits it permanently
+    # locked, since the thread that would release it doesn't exist in the
+    # child. This explains the non-determinism directly: it depends on
+    # exact thread-scheduling timing, not on any single library's code
+    # being wrong. Running this warm-up before those libraries load means
+    # forking from a process with far fewer background threads active —
+    # reproduced fixed across repeated real runs after moving it here.
     if tts is not None:
-        def _warm_tts() -> None:
-            try:
-                tts.warm_up()
-            except Exception as exc:
-                print(f"[warning] TTS warm-up failed: {exc}")
-        tts_warm_thread = threading.Thread(target=_warm_tts, daemon=True)
-        tts_warm_thread.start()
+        print("Warming up TTS engines...")
+        try:
+            tts.warm_up()
+        except Exception as exc:
+            print(f"[warning] TTS warm-up failed: {exc}")
 
     print("Loading local semantic matcher...")
     layer1_available = True
@@ -289,10 +302,6 @@ def main() -> None:
 
     def _callback(indata, _frames, _time_info, _status) -> None:
         audio_q.put(indata.copy().flatten())
-
-    if tts_warm_thread is not None:
-        print("Waiting for TTS warm-up to finish...")
-        tts_warm_thread.join()
 
     _notify("Voice Assistant", "Ready — click the tray icon, or say 'hey jarvis.'")
 
