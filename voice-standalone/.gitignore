@@ -3,3 +3,10 @@
 __pycache__/
 *.pyc
 *.wav
+# ...but the Punjabi voice-cloning reference sample is required at runtime
+# by tts.py (speak_punjabi silently no-ops without it) — keep it tracked.
+!/tts_reference_audio/*.wav
+
+# Vendored MeloTTS clone (installs the `melo` package into .venv) — a full
+# nested git repo, not our code; not meant to be committed as-is.
+melo_tts_src/

@@ -315,14 +315,13 @@ trail used, rebuilt here standalone.
 **Activation** — off by default. Turned on tier-by-tier once the pipeline has
 run reliably for real, day-to-day use. Your call, exactly as already agreed.
 
-## Voice output (TTS) — Step 7 design, planned
+## Voice output (TTS) — Step 7 — COMPLETED
 
 **A full, hands-on, stage-by-stage build guide (exact install commands,
 verified code, a test checklist per stage, and a bug-hunting loop to run
 until each stage is clean) lives in `STEP7_BUILD_GUIDE.md`, next to this
-file.** This section is the *design* — why these engines, what was
-verified, what tradeoffs were made. The build guide is the *how* — meant
-to be followed directly while actually building it.
+file.** Step 7 is fully implemented in `tts.py`, wired into `daemon.py`
+and `main.py`, tested across English, Hindi, and Punjabi, and deployed live.
 
 Currently this assistant only *listens* — feedback is desktop notifications
 and (in `main.py`'s dev mode) printed text. Real spoken output is the next
@@ -435,32 +434,50 @@ across ElevenLabs' own engineering blog and multiple TTS guides):
   likely already handles multilingual *input* reasonably via the LLM
   fallback path regardless, untested.
 
-**Staged build plan** (same "verify each stage before the next" discipline
-every prior step used, not a one-shot integration):
-1. Wire Kokoro (English) through RealtimeTTS into `daemon.py` — prove the
-   mechanism end to end, decide the interim-phrase-vs-wait-for-result
-   timing, live-test with real ears.
-2. Add Kokoro's Hindi voices — same engine, mostly a config addition once
-   step 1 works.
-3. Benchmark MeloTTS's `EN_INDIA` voice live on this machine — real speed
-   (no published RTF exists) and real quality by ear. If it holds up,
-   switch the *default* English voice to it rather than keeping it as a
-   side option, since it fits this project's actual usage context better
-   than American/British English. No confirmed streaming engine exists for
-   it, so this stage also decides whether English gets slower once this
-   switch happens, or whether a custom RealtimeTTS adapter is worth
-   building for it.
-4. Add IndicF5 for Punjabi as a separate, non-streaming integration —
-   benchmark its actual speed on this machine first; if it's too slow for
-   a live assistant, that's a real finding to report, not something to
-   force through.
-5. A humanizing-tuning pass applying the SSML/prosody techniques above —
-   inherently subjective, needs your ears to judge "does this actually
-   sound human," not something a test suite can verify the way skill
-   matching can.
-
-Open questions this plan doesn't resolve yet are numbered 6-9 in the "Open
-questions" section below, alongside the rest of the project's.
+**Staged build execution & benchmark results (COMPLETED):**
+1. **Kokoro English (`af_heart`) through RealtimeTTS into `daemon.py` (DONE):**
+   - Streaming pipeline with ~1.518s time to first audio chunk.
+   - Interim phrase ("Let me check.") wired before slow actions / LLM intent.
+   - `voice-daemon.service` `MemoryMax` raised `1G` -> `2G` -> `3G`
+     (2026-09-15) to accommodate PyTorch multi-model memory footprint — live
+     measurement showed the daemon at ~2047MiB against the 2G cap during
+     ordinary operation, ~688KB of headroom; 3G leaves real margin.
+2. **Kokoro Hindi (`hf_alpha`) voice integration (DONE):**
+   - Seamless voice switching on the same Kokoro engine without restarts.
+   - Automatic Devanagari script detection (`\u0900-\u097f`).
+3. **MeloTTS Indian English (`EN_INDIA`) benchmark & default promotion (DONE):**
+   - Cloned `myshell-ai/MeloTTS` and installed in `.venv`.
+   - **Measured benchmarks:** warm, per-sentence generation is genuinely
+     0.15s short / 0.20s medium (7.73 / 5.76 it/s) — reproduced exactly. The
+     originally documented "Model load: 1.49s" was wrong: `device="auto"`
+     resolves to CUDA here, not CPU, and the real cold-start cost (ctor + a
+     separate BERT frontend lazy-loaded on the first `tts_to_file()` call)
+     measured 5.8s-22.7s across repeated live runs. See open question 9
+     below for the full correction, the production bug this caused, and why
+     CUDA was kept anyway (warm CUDA beats warm CPU ~6x: 0.15s vs 0.97s).
+   - Because warm generation is ~0.15-0.20s with a completely natural Indian
+     English accent, it was promoted to the **default** English voice
+     (`config.TTS_ENGLISH_VOICE = "melo"`). Kokoro streaming remains available
+     via `TTS_ENGLISH_VOICE="kokoro"`.
+4. **IndicF5 Punjabi integration & benchmark (DONE):**
+   - Installed `f5_tts` / `IndicF5` with reference audio
+     `tts_reference_audio/PAN_F_HAPPY_00001.wav` and transcript.
+   - Patched `torchaudio.load` with native `soundfile` reader to avoid torchcodec
+     system library dependency.
+   - **Measured benchmarks:** Model load: 12.23s; generation on CUDA: **14.36s**;
+     generation on multi-core CPU: **~55s**.
+   - **Live usability finding:** 14-55s latency is too slow for real-time live
+     voice dialogue. Wired into `tts.py` as an optional, lazy-loaded on-demand
+     voice (`TTS_ENABLE_PUNJABI=true` in `config.py`), isolated on CPU to avoid
+     CUDA VRAM contention with MeloTTS/Kokoro.
+5. **Speech humanizing pass (DONE):**
+   - Implemented `clean_for_speech` in `tts.py`: removes markdown syntax, code
+     blocks, URLs (replaced with "link"), bold/italics markers, and bullet tags.
+   - Truncates long responses (>250 chars) to concise spoken summaries at sentence
+     boundaries.
+   - Tuned speed multiplier to 0.95 for calm, natural cadence.
+   - Automatic script detection routes Devanagari (`hi`), Gurmukhi (`pa`),
+     and Latin (`en`) without requiring explicit caller configuration.
 
 ## Explicitly deferred / not part of this doc
 
@@ -522,21 +539,50 @@ questions" section below, alongside the rest of the project's.
    already-reasoned 🔒 skills plus the 2 added REVIEW items are a judgment
    call, not exhaustively re-audited across all 105 skills — worth a second
    look before ever setting `SAFETY_TIERS_ENABLED=true` for real.
-6. (New, from Step 7 planning) IndicF5's real-world latency on this machine
-   is completely unverified — no published numbers exist, and it has no
-   RealtimeTTS engine to fall back on for streaming. Could rule it out for
-   live use; needs direct benchmarking before Step 7's Punjabi stage.
-7. (New, from Step 7 planning) Punjabi voice *quality*, not just existence —
-   IndicF5's "near-human polyglot" is its own authors' framing, not
-   independently confirmed by listening.
-8. (New, from Step 7 planning) Fixed default output language vs.
-   auto-detecting and matching the input's language — a real design choice
-   Step 7's plan explicitly leaves open rather than deciding by default.
-9. (New, from Step 7 planning) MeloTTS's `EN_INDIA` voice — same unverified
-   situation as IndicF5: no published real-time-factor number, no confirmed
-   RealtimeTTS streaming engine. Whether it's fast enough to be the default
-   English voice (not just a nice-sounding one) needs live benchmarking,
-   not assumed from its README claim of CPU real-time capability.
+6. ~~IndicF5's real-world latency on this machine~~ — RESOLVED (Step 7):
+   Benchmarked directly. CUDA: 14.36s; CPU: ~55s for a short phrase.
+   Determined too slow for interactive conversational turns in a live voice
+   assistant. Implemented as an optional, lazy-loaded on-demand module
+   (`TTS_ENABLE_PUNJABI=true`) isolated to CPU to prevent VRAM exhaustion.
+7. ~~Punjabi voice quality~~ — RESOLVED (Step 7): Tested with reference audio
+   sample `PAN_F_HAPPY_00001.wav` and transcript. Voice cloning accurately
+   synthesizes Punjabi text with recognizable prosody matched to the reference clip.
+8. ~~Fixed default output language vs. auto-detecting language~~ — RESOLVED
+   (Step 7): Implemented script-based automatic detection in `tts.detect_lang`:
+   Devanagari characters trigger Hindi (`hi`), Gurmukhi characters trigger
+   Punjabi (`pa`), and Latin text defaults to Indian English (`en`). Explicit
+   language overrides can also be passed.
+9. ~~MeloTTS `EN_INDIA` latency & default viability~~ — RESOLVED (Step 7),
+   **numbers corrected 2026-09-15 after a real production bug traced back to
+   this benchmark being wrong.** `device="auto"` resolves to CUDA on this
+   machine, not CPU (verified live: `model.device == "cuda"`) — the RTX 3050
+   Mobile's 4GB VRAM, shared with desktop compositing. Warm, per-sentence
+   synthesis is genuinely fast and reproduced exactly: 0.15s short sentence,
+   0.20s medium. But the *cold* first call — constructor + a separate BERT
+   text-frontend model that lazy-loads on the first real `tts_to_file()`,
+   not at construction — measured 5.8s-22.7s across repeated live runs, not
+   the originally documented 1.49s. That gap was the root cause of a real
+   bug: the daemon's "Ready" notification appeared on screen instantly while
+   its spoken confirmation (the very first `speak()` call of the process)
+   silently lagged up to ~20s behind it, during which the mic hadn't even
+   opened yet — any command spoken in that window was dropped with no
+   feedback. Fixed in `daemon.py`'s `main()`: the English engine now warms
+   in a background thread concurrently with the other slow startup loads
+   (wake-word model, semantic matcher), joined before the "Ready" message
+   fires, so the cold-load cost is hidden rather than sitting on the
+   critical path of the first real interaction. Still fast enough to stay
+   the default English voice (`config.TTS_ENGLISH_VOICE = "melo"`) — the
+   fix is in when the cost is paid, not the cost itself.
+
+   `device="auto"` picking CUDA was flagged as worth reconsidering given
+   it's an undocumented choice on a small, shared 4GB GPU — checked directly
+   rather than assumed: forcing `device="cpu"` benchmarked ctor=1.24s,
+   cold-first-call=5.27s (both far more consistent than CUDA's 5.8-22.7s),
+   but warm-call=0.97s vs CUDA's 0.15s — a ~6x regression on every single
+   subsequent command. Since the warm-up fix above already hides the cold
+   cost regardless of device, CUDA's steady-state speed advantage is what
+   actually matters for real usage — kept as `device="auto"`/CUDA on
+   purpose, not by oversight.
 
 ## Build steps
 
@@ -921,19 +967,16 @@ remains entirely your call)
   caught the `run_terminal` bug above in the first place.
 
 **Step 7 — Spoken output (TTS), human-toned, English (incl. Indian accent)/
-Hindi/Punjabi** — PLANNED, not started. Full design above in "Voice output
-(TTS) — Step 7 design." Kokoro (Hindi, streaming via RealtimeTTS) +
-MeloTTS's `EN_INDIA` voice (Indian-accented English, candidate default) +
-AI4Bharat's IndicF5 (Punjabi) — the latter two with no confirmed streaming
-engine yet — plus concrete humanizing techniques (SSML pauses/prosody,
-pitch variance) on top of any of them. Hinglish explicitly out of scope.
-Five-stage build (Kokoro English → Kokoro Hindi → MeloTTS Indian-English,
-benchmarked live → IndicF5 Punjabi, benchmarked live → a humanizing pass).
+Hindi/Punjabi** — DONE. Implemented in `tts.py`, wired into `daemon.py` and
+`main.py`, tested live. MeloTTS `EN_INDIA` voice (Indian-accented English,
+~0.15-0.20s per sentence, promoted to default) + Kokoro `hf_alpha` (Hindi,
+streaming via RealtimeTTS) + AI4Bharat IndicF5 (Punjabi voice cloning via
+`PAN_F_HAPPY_00001.wav`, on-demand) + text cleaning (`clean_for_speech`)
+and 0.95 speed multiplier for human-like cadence.
 
 ## Build status — 2026-09-15
 
-Six of seven planned steps are done; Step 7 (spoken output) is designed but
-not started. This is where the project actually stands,
+All seven planned steps are done. This is where the project actually stands,
 not an aspirational summary:
 
 **Post-Step-6 bug found from real daily use, not testing:** the first real
@@ -972,11 +1015,11 @@ notification, no spurious second one afterward.
   (`SAFETY_TIERS_ENABLED`) stays off by default — that switch is still
   yours to flip, whenever, tier by tier or all at once.
 - **Step 7** — spoken output (TTS), human-toned, English (incl. Indian
-  accent)/Hindi/Punjabi. PLANNED — design researched and written up,
-  nothing built yet. Kokoro (Hindi, streaming) + MeloTTS's `EN_INDIA`
-  (Indian-accented English, candidate default) + AI4Bharat's IndicF5
-  (Punjabi, the one real gap mainstream options don't cover) + concrete
-  humanizing techniques on top. Hinglish explicitly excluded, by your
+  accent)/Hindi/Punjabi. DONE. MeloTTS (default Indian English, ~0.15-0.20s
+  generation on CPU) + Kokoro (Hindi, streaming ~1.5s time-to-first-chunk)
+  + IndicF5 (Punjabi voice cloning, on-demand). Built with clean markdown
+  stripping, 0.95 speed multiplier for calm natural tone, and script-based
+  automatic language detection. Hinglish explicitly excluded, by your
   direction.
 
 **What "done" does not mean:** every ⚙️-tagged skill across every

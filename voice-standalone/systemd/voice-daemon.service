@@ -46,7 +46,12 @@ StandardError=journal
 SyslogIdentifier=voice-daemon
 
 Nice=5
-MemoryMax=1G
+# Raised 1G -> 2G -> 3G. Live measurement (2026-09-15) showed the daemon
+# sitting at ~2047MiB against the 2G cap during ordinary operation with
+# faster-whisper (base) + MeloTTS + fastembed + wake-word all resident —
+# ~688KB of headroom, one allocation away from an OOM-kill. 5.5G was free
+# system-wide at the time; 3G leaves real margin without over-provisioning.
+MemoryMax=3G
 
 [Install]
 WantedBy=graphical-session.target

@@ -13,6 +13,20 @@ from audio_capture import record_until_enter
 from confirm_loop import confirm_and_run
 from skills import _audit, _session_state, _tiers, semantic_match
 
+try:
+    import tts
+except Exception as _tts_err:
+    tts = None
+
+
+def _speak(text: str) -> None:
+    if tts is None or not text.strip():
+        return
+    try:
+        tts.speak(text)
+    except Exception as exc:
+        print(f"[tts error] {exc}")
+
 
 def main() -> None:
     # Warm up Layer 1 once, upfront — otherwise the ~1.3s embedding-model
@@ -69,12 +83,15 @@ def main() -> None:
                     name, args = semantic_match.match(text)
                 if name is not None:
                     print(f"[layer1] {name}({args})")
-                else:
+                elif config.LLM_FALLBACK_ENABLED:
                     name, args = llm_intent.resolve_intent(text)
                     if name is None:
                         print("No matching action.")
                         continue
                     print(f"[llm] {name}({args})")
+                else:
+                    print("No matching action.")
+                    continue
 
             # Asleep gates EXECUTION, not matching — we still always try to
             # recognize "wake up" specifically; everything else is ignored
@@ -110,6 +127,7 @@ def main() -> None:
                 if output:
                     print(output, end="")
                     _session_state.set_last_response(output)
+                    _speak(output)
                 _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
                 continue
 
@@ -128,6 +146,7 @@ def main() -> None:
             if output:
                 print(output, end="")
                 _session_state.set_last_response(output)
+                _speak(output)
             _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
         except KeyboardInterrupt:
             break

@@ -46,6 +46,12 @@ from config import SAMPLE_RATE
 from confirm_loop import confirm_and_run
 from skills import _audit, _session_state, _tiers, semantic_match
 
+try:
+    import tts
+except Exception as _tts_err:
+    tts = None
+    print(f"[warning] TTS unavailable: {_tts_err}")
+
 FIFO_PATH = os.path.expanduser("~/.local/share/voice-standalone/toggle.fifo")
 
 CHUNK_SIZE = 1280  # 80ms @ 16kHz — openwakeword's expected input size; the
@@ -66,12 +72,60 @@ _HEY_JARVIS_PATH = os.path.join(
 _manual_toggle_event = threading.Event()
 
 
-def _notify(title: str, body: str) -> None:
+def _notify(title: str, body: str, *, speak_text: str | None = None, speak: bool = True) -> None:
+    """Every desktop notification also gets spoken, so nothing shown in the
+    notification panel goes silent. speak_text overrides the body when the
+    panel text (multi-line warnings, raw args dicts, etc.) isn't what you'd
+    want read aloud; speak=False is for the one case where speaking would
+    actively break things — see the "Listening..." call site."""
     import subprocess
-    body = body.strip()
-    if len(body) > 300:
-        body = body[:300] + "…"
-    subprocess.run(["notify-send", "--app-name=Voice Assistant", title, body], check=False)
+    display_body = body.strip()
+    if len(display_body) > 300:
+        display_body = display_body[:300] + "…"
+    subprocess.run(["notify-send", "--app-name=Voice Assistant", title, display_body], check=False)
+    if speak:
+        _speak(speak_text if speak_text is not None else body)
+
+
+def _detect_lang(text: str) -> str:
+    for ch in text:
+        if "\u0900" <= ch <= "\u097f":
+            return "hi"
+        if "\u0a00" <= ch <= "\u0a7f":
+            return "pa"
+    return "en"
+
+
+def _clean_for_speech(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    if len(lines) > 2:
+        spoken = " ".join(lines[:2])
+    else:
+        spoken = " ".join(lines)
+    if len(spoken) > 250:
+        spoken = spoken[:247] + "..."
+    return spoken
+
+
+def _speak(text: str, lang: str | None = None) -> None:
+    if tts is None:
+        return
+    text = _clean_for_speech(text)
+    if not text:
+        return
+    if lang is None:
+        lang = _detect_lang(text)
+    try:
+        tts.speak(text, lang=lang)
+    except TypeError:
+        try:
+            tts.speak(text)
+        except Exception as exc:
+            print(f"[tts error] {exc}")
+    except Exception as exc:
+        print(f"[tts error] {exc}")
 
 
 def _ensure_fifo() -> None:
@@ -103,21 +157,25 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
     try:
         text = stt.transcribe(wav_path)
     except Exception as exc:
-        _notify("Voice Assistant — error", f"Could not transcribe that: {exc}")
+        _notify("Voice Assistant — error", f"Could not transcribe that: {exc}",
+                 speak_text="Could not transcribe that audio.")
         return
     finally:
         if os.path.exists(wav_path):
             os.unlink(wav_path)
 
     if not text:
-        _notify("Voice Assistant", "(heard nothing)")
+        _notify("Voice Assistant", "(heard nothing)", speak_text="I didn't hear anything.")
         return
 
     try:
+        matched_layer = "layer0"
         name, args = skills.match_skill(text)
         if name is None and layer1_available:
+            matched_layer = "layer1"
             name, args = semantic_match.match(text)
-        if name is None:
+        if name is None and config.LLM_FALLBACK_ENABLED:
+            matched_layer = "llm"
             name, args = llm_intent.resolve_intent(text)
 
         if name is None:
@@ -125,8 +183,16 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
             return
 
         if _session_state.is_asleep() and name != "wake_back_up":
-            _notify("Voice Assistant", "(asleep — say 'wake up' to resume)")
+            _notify("Voice Assistant", "(asleep — say 'wake up' to resume)",
+                     speak_text="Asleep. Say wake up to resume.")
             return
+
+        # Immediate interim phrase for slow actions or LLM resolution
+        if matched_layer == "llm" or name in (
+            "google_search", "youtube_search", "wikipedia_search",
+            "duckduckgo_search", "speed_test", "define_word"
+        ):
+            _speak("Let me check.")
 
         tier = _tiers.tier_of(name)
 
@@ -139,6 +205,7 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
                 f"Click the tray within 10s to run it.{warning_text}\n"
                 "(No text editing from the tray yet — main.py's terminal mode "
                 "supports editing the command before confirming.)",
+                speak_text=f"Please confirm: {pause['preview']}",
             )
             confirmed = _manual_toggle_event.wait(timeout=10)
             if confirmed:
@@ -149,7 +216,8 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
             except StopIteration as done:
                 result = done.value
             if result and result["cancelled"]:
-                _notify("Voice Assistant", "Cancelled (no confirmation within 10s).")
+                _notify("Voice Assistant", "Cancelled (no confirmation within 10s).",
+                         speak_text="Cancelled.")
                 _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="cancelled")
                 return
             output = (result["output"].strip() if result else "") or f"Ran: {name}"
@@ -159,7 +227,7 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
             return
 
         if tier == "REVIEW" and config.SAFETY_TIERS_ENABLED:
-            _notify(f"About to run: {name}", str(args))
+            _notify(f"About to run: {name}", str(args), speak_text=f"About to run {name}.")
             time.sleep(2)
 
         buffer = io.StringIO()
@@ -175,6 +243,22 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
 
 def main() -> None:
     _ensure_fifo()
+
+    # Runs alongside the other slow model loads below rather than after —
+    # MeloTTS's cold load (~20s, reproduced live) would otherwise sit on the
+    # critical path of the very first spoken confirmation (even the "Ready"
+    # message itself), during which the main loop can't listen for the next
+    # wake-word either. Joined right before "Ready" so both TTS and the mic
+    # are actually ready by the time that message fires.
+    tts_warm_thread = None
+    if tts is not None:
+        def _warm_tts() -> None:
+            try:
+                tts.warm_up_english()
+            except Exception as exc:
+                print(f"[warning] TTS warm-up failed: {exc}")
+        tts_warm_thread = threading.Thread(target=_warm_tts, daemon=True)
+        tts_warm_thread.start()
 
     print("Loading local semantic matcher...")
     layer1_available = True
@@ -194,6 +278,10 @@ def main() -> None:
 
     def _callback(indata, _frames, _time_info, _status) -> None:
         audio_q.put(indata.copy().flatten())
+
+    if tts_warm_thread is not None:
+        print("Waiting for TTS warm-up to finish...")
+        tts_warm_thread.join()
 
     _notify("Voice Assistant", "Ready — click the tray icon, or say 'hey jarvis.'")
 
@@ -221,7 +309,14 @@ def main() -> None:
                     first_chunk = None  # the wake word itself isn't part of the command
 
             # ---- RECORDING ----
-            _notify("Voice Assistant", "Listening...")
+            # speak=False here on purpose: this notification fires right as
+            # the VAD-based recording loop below starts consuming live mic
+            # frames. Speaking through the speakers at this exact moment
+            # would risk the TTS audio itself bleeding into the mic (no
+            # acoustic echo cancellation in this pipeline) and either
+            # getting transcribed as part of the command or falsely
+            # tripping the VAD's speech_detected state.
+            _notify("Voice Assistant", "Listening...", speak=False)
             frames = [first_chunk] if first_chunk is not None else []
             start_time = time.monotonic()
             speech_detected = False

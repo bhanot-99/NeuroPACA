@@ -702,8 +702,34 @@ def google_search(query: str) -> None:
 
 # ── C02  youtube_search ─────────────────────────────────────────────────────
 
+def _yt_dlp_top_video_id(query: str) -> str | None:
+    """Resolve a search query to the top YouTube result's video ID via
+    yt-dlp, without downloading anything. Returns None on any failure
+    (yt-dlp missing, network timeout, no results) so callers can fall back
+    to the plain search-results page."""
+    if shutil.which("yt-dlp") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["yt-dlp", f"ytsearch1:{query}", "--flat-playlist", "--print", "id",
+             "--skip-download", "--no-warnings"],
+            capture_output=True, text=True, check=False, timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    video_id = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    return video_id or None
+
+
 def youtube_search(query: str) -> None:
-    _open_url(f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}")
+    """Play the top result directly instead of landing on the
+    search-results page — resolves via yt-dlp, falls back to a plain
+    search if resolution fails."""
+    video_id = _yt_dlp_top_video_id(query)
+    if video_id:
+        _open_url(f"https://www.youtube.com/watch?v={video_id}&autoplay=1")
+    else:
+        _open_url(f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}")
 
 
 # ── C03  wikipedia_search ───────────────────────────────────────────────────
@@ -1249,7 +1275,14 @@ def previous_track() -> None:
 
 
 def play_youtube_music(query: str) -> None:
-    _open_url(f"https://music.youtube.com/search?q={urllib.parse.quote_plus(query)}")
+    """Play the top result directly on YouTube Music — video IDs are shared
+    between youtube.com and music.youtube.com, so the same yt-dlp resolution
+    used by youtube_search works here too."""
+    video_id = _yt_dlp_top_video_id(query)
+    if video_id:
+        _open_url(f"https://music.youtube.com/watch?v={video_id}")
+    else:
+        _open_url(f"https://music.youtube.com/search?q={urllib.parse.quote_plus(query)}")
 
 
 def play_soundcloud(query: str) -> None:
