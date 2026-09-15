@@ -9,6 +9,7 @@ import config
 import llm_intent
 import skills  # noqa: F401 — skills/ package (replaces flat skills.py)
 import stt
+import wiki_fastpath
 from audio_capture import record_until_enter
 from confirm_loop import confirm_and_run
 from skills import _audit, _session_state, _tiers, semantic_match
@@ -83,15 +84,21 @@ def main() -> None:
                     name, args = semantic_match.match(text)
                 if name is not None:
                     print(f"[layer1] {name}({args})")
-                elif config.LLM_FALLBACK_ENABLED:
-                    name, args = llm_intent.resolve_intent(text)
-                    if name is None:
+                else:
+                    wiki_hit = wiki_fastpath.lookup(text)
+                    if wiki_hit is not None:
+                        question, answer, url = wiki_hit
+                        name, args = "answer_question", {"question": question, "answer": answer, "url": url}
+                        print(f"[wiki] {name}({args})")
+                    elif config.LLM_FALLBACK_ENABLED:
+                        name, args = llm_intent.resolve_intent(text)
+                        if name is None:
+                            print("No matching action.")
+                            continue
+                        print(f"[llm] {name}({args})")
+                    else:
                         print("No matching action.")
                         continue
-                    print(f"[llm] {name}({args})")
-                else:
-                    print("No matching action.")
-                    continue
 
             # Asleep gates EXECUTION, not matching — we still always try to
             # recognize "wake up" specifically; everything else is ignored

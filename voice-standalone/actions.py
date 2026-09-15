@@ -746,15 +746,17 @@ def duckduckgo_search(query: str) -> None:
 
 # ── answer_question — Layer-2 cascade only (llm_intent.py) ─────────────────
 
-def answer_question(question: str, answer: str) -> None:
-    """Speaks a real conversational answer (generated upstream by the
-    Gemini/Qwen cascade in llm_intent.py — this executor doesn't generate
-    anything itself, just delivers what was already produced) AND still
-    opens a Google search page for the same question, so "what is python"
-    gets both a spoken answer and a page to read more on, not one instead
-    of the other."""
+def answer_question(question: str, answer: str, url: str | None = None) -> None:
+    """Speaks a real conversational answer (generated upstream — either
+    wiki_fastpath.py's Wikipedia lookup, or the Gemini/Qwen cascade in
+    llm_intent.py; this executor doesn't generate anything itself, just
+    delivers what was already produced) AND still opens a page for the
+    same question, so "what is python" gets both a spoken answer and a
+    page to read more on, not one instead of the other. Opens the actual
+    Wikipedia article when the answer came from there (url passed in);
+    otherwise falls back to a plain Google search for the question."""
     print(f"[answer] {answer}")
-    _open_url(f"https://www.google.com/search?q={urllib.parse.quote_plus(question)}")
+    _open_url(url or f"https://www.google.com/search?q={urllib.parse.quote_plus(question)}")
 
 
 # ── C05  define_word ────────────────────────────────────────────────────────

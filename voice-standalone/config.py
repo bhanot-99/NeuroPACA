@@ -24,22 +24,24 @@ SAMPLE_RATE = 16000
 # while giving noticeably more natural/conversational answer phrasing.
 INTENT_MODEL = "gemini-flash-lite-latest"
 
-# Layer-2 LLM intent fallback (llm_intent.py) — off by default. As of
-# 2026-09-16 llm_intent.py is a real cascade, not just a single Gemini call:
-# Gemini (flash-lite) first, and on ANY failure — quota 429, a deprecated
-# model, network — it falls through to a fully local Qwen2.5-1.5B model via
-# Ollama instead of giving up (benchmarked directly: 1.5B beat 3B on both
-# speed and accuracy, so that's what's used, not the larger model). A 429
-# specifically also gets remembered for the rest of the day (quota_tracker.py)
-# so later utterances skip straight to local instead of re-paying a network
-# round-trip to fail again. This removes the original reason this flag was
-# off (quota exhaustion used to be a dead end) — still defaulting to off
-# because flipping it is a real behavior change (unmatched utterances now
-# always try an LLM, cloud or local, instead of silently doing nothing) and
-# that's your call, same as SAFETY_TIERS_ENABLED below. When off, an
-# utterance that layer0 (regex) and layer1 (local semantic matcher) can't
+# Layer-2 LLM intent fallback (llm_intent.py) — ON by default as of
+# 2026-09-16 (was off since this flag was added). llm_intent.py is a real
+# cascade, not just a single Gemini call: Gemini (flash-lite) first, and on
+# ANY failure — quota 429, a deprecated model, network — it falls through
+# to a fully local Qwen2.5-1.5B model via Ollama instead of giving up
+# (benchmarked directly: 1.5B beat 3B on both speed and accuracy, so
+# that's what's used, not the larger model). A 429 specifically also gets
+# remembered for the rest of the day (quota_tracker.py) so later
+# utterances skip straight to local instead of re-paying a network
+# round-trip to fail again. This is what removed the original reason this
+# flag was off (quota exhaustion used to be a dead end) — explicitly
+# turned on by direct instruction, not a default that quietly changed
+# itself. Also as of 2026-09-16, wiki_fastpath.py tries a free Wikipedia
+# lookup for clean "what is X"/"who is X" phrasing BEFORE this even runs —
+# independent of this flag, since it costs no quota. When this flag is
+# off, an utterance that layer0, layer1, and the Wikipedia fast-path can't
 # resolve is just reported as "no matching action."
-LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "false").lower() == "true"
+LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "true").lower() == "true"
 
 # Step 6 safety tiers — off by default. ARCHITECTURE.md: "Activation — off
 # by default. Turned on tier-by-tier once the pipeline has run reliably for

@@ -42,6 +42,7 @@ import config
 import llm_intent
 import skills
 import stt
+import wiki_fastpath
 from config import SAMPLE_RATE
 from confirm_loop import confirm_and_run
 from skills import _audit, _session_state, _tiers, semantic_match
@@ -172,6 +173,18 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
         if name is None and layer1_available:
             matched_layer = "layer1"
             name, args = semantic_match.match(text)
+        if name is None:
+            # Free, zero-quota, no API key — tried regardless of
+            # LLM_FALLBACK_ENABLED since it isn't an LLM call at all, just
+            # two HTTP GETs to Wikipedia's public API. Only ever narrows
+            # what reaches the LLM cascade below, never replaces it: a
+            # None here (no clean "what is X" phrasing, no search hit,
+            # disambiguation, network failure) falls straight through.
+            wiki_hit = wiki_fastpath.lookup(text)
+            if wiki_hit is not None:
+                matched_layer = "wiki"
+                question, answer, url = wiki_hit
+                name, args = "answer_question", {"question": question, "answer": answer, "url": url}
         if name is None and config.LLM_FALLBACK_ENABLED:
             matched_layer = "llm"
             name, args = llm_intent.resolve_intent(text)

@@ -581,12 +581,31 @@ since it isn't a Python package — worth knowing before deploying this
 elsewhere, it won't "just work" from a fresh `pip install -r
 requirements.txt` alone.
 
-**Still off by default:** `LLM_FALLBACK_ENABLED` — the quota dead-end that
-originally justified leaving it off is fixed, but flipping it is still a
-real behavior change (an utterance Layer 0/1 can't resolve now always
-tries an LLM, cloud or local, instead of silently doing nothing), and
-that's explicitly your call to make, same framing as
-`SAFETY_TIERS_ENABLED`.
+**`LLM_FALLBACK_ENABLED` turned ON (2026-09-16), by direct instruction** —
+not a default that quietly changed itself; the quota dead-end that
+justified leaving it off is fixed, and flipping it was an explicit call.
+
+**Wikipedia fast-path added the same day (`wiki_fastpath.py`), in front of
+the LLM cascade:** for narrow "what is X"/"who is X"/"what's X"/"tell me
+about X" phrasing, tries Wikipedia's public API first — free, no API key,
+no quota — before ever reaching Gemini/Qwen. Two HTTP calls, not one,
+because that was verified directly to matter: fetching the summary for
+the literal spoken topic isn't reliable for common single-word topics —
+"python" (the literal extraction from "what is python") resolves to a
+disambiguation page ("Python may refer to..."), not the programming-
+language article. Wikipedia's own search API's top hit for "python", by
+contrast, correctly is "Python (programming language)" — so this searches
+first, then fetches the summary for whatever real title that search
+returns. Deliberately scoped narrow (not causal/explanatory phrasing like
+"why is the sky blue" — those aren't well served by a raw wiki summary,
+and stayed on the LLM cascade) and always tried regardless of
+`LLM_FALLBACK_ENABLED`, since it isn't an LLM call at all — on any
+uncertainty (no phrasing match, no search hit, disambiguation, network
+failure) it returns nothing and falls straight through to the LLM cascade
+exactly as before this existed. Wired into both `daemon.py` and `main.py`
+between Layer 1 and the LLM cascade. On a hit, opens the actual Wikipedia
+article (not a Google search) alongside the spoken answer — `actions.py`'s
+`answer_question` now takes an optional `url` for this.
 
 ## Explicitly deferred / not part of this doc
 
