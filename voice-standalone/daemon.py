@@ -93,6 +93,30 @@ def _notify(title: str, body: str, *, speak_text: str | None = None, speak: bool
         _speak(speak_text if speak_text is not None else body)
 
 
+_WAKE_CHIME_PATH = "/usr/share/sounds/Pop/stereo/notification/message.oga"
+
+
+def _play_wake_chime() -> None:
+    """A short (0.5s), non-speech notification sound on wake-word
+    detection — direct request: saying "hey jarvis" gave no audible
+    confirmation the daemon actually heard it, unlike the tray's visible
+    icon state for a manual trigger. Deliberately a fixed system sound,
+    not synthesized speech (the simpler option, chosen directly): a
+    chime carries none of spoken TTS's risk of being mistaken for actual
+    command content by STT, and is short enough that the existing
+    audio_q drain (right after this call, in the caller) clears any mic
+    bleed before the real recording loop starts scoring input. paplay,
+    not aplay: this file is Ogg Vorbis (system notification themes
+    aren't shipped as WAV), and PipeWire's pulse-compat layer already
+    handles this natively (confirmed live) — aplay only speaks WAV."""
+    if not os.path.exists(_WAKE_CHIME_PATH):
+        return
+    try:
+        _process_guard.safe_run(["paplay", _WAKE_CHIME_PATH], timeout=3.0)
+    except Exception as exc:
+        print(f"[wake chime error] {exc}")
+
+
 def _detect_lang(text: str) -> str:
     for ch in text:
         if "\u0900" <= ch <= "\u097f":
@@ -329,13 +353,34 @@ def main() -> None:
                     first_chunk = None  # the wake word itself isn't part of the command
 
             # ---- RECORDING ----
+            # Wake-word-only, not manual: a tray click is already a
+            # deliberate, visually-confirmed action — the "am I actually
+            # being heard" ambiguity this chime solves is specific to
+            # saying "hey jarvis" with no visual feedback.
+            if trigger == "wakeword":
+                _play_wake_chime()
+                # Same drain idiom used after _process_command below —
+                # the mic kept capturing live chunks the whole 0.5s the
+                # chime played (this stream is never paused), so whatever
+                # bleed made it back in is sitting in audio_q right now.
+                # Discarded here so the real recording loop below starts
+                # scoring genuinely live audio, not the chime's own echo.
+                while not audio_q.empty():
+                    try:
+                        audio_q.get_nowait()
+                    except queue.Empty:
+                        break
+
             # speak=False here on purpose: this notification fires right as
             # the VAD-based recording loop below starts consuming live mic
             # frames. Speaking through the speakers at this exact moment
             # would risk the TTS audio itself bleeding into the mic (no
             # acoustic echo cancellation in this pipeline) and either
             # getting transcribed as part of the command or falsely
-            # tripping the VAD's speech_detected state.
+            # tripping the VAD's speech_detected state. The chime above
+            # has the same theoretical risk but is short (0.5s) and
+            # non-speech — already drained from audio_q by the time we
+            # get here, same as this notification staying silent.
             _notify("Voice Assistant", "Listening...", speak=False)
             frames = [first_chunk] if first_chunk is not None else []
             start_time = time.monotonic()
