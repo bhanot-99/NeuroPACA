@@ -1,0 +1,50 @@
+# voice-standalone 7-day soak monitor. systemd --user unit.
+#
+# Install: use setup_services.sh in the repo root, not this file directly —
+# it installs and enables this alongside voice-daemon and voice-tray
+# together, which is the actual point ("one unified script").
+#
+# Same lifecycle as voice-daemon.service/voice-tray.service on purpose —
+# graphical-session.target start/stop is what "starts at boot, closes
+# safely on shutdown" actually means for a systemd --user service: it
+# starts once the login session's compositor/D-Bus/audio are up, and
+# systemd sends it a normal SIGTERM (caught by soak_monitor.py, which
+# writes its summary before exiting) when that session ends — logout or
+# shutdown alike, no separate shutdown hook needed.
+#
+# Runs __REPO__/.venv/bin/python — soak_monitor.py only uses the stdlib,
+# but staying in the same venv as the other two services keeps this
+# consistent rather than a special case.
+#
+# No Restart= directive: soak_monitor.py exits 0 on its own once the
+# configured duration elapses OR it's told to stop — a "restart on
+# success" here would silently start a brand new 7-day run forever,
+# which is the opposite of what a bounded soak test means. If it crashes
+# (non-zero exit) that's a real bug worth seeing as a stopped, failed
+# unit (`systemctl --user status voice-soak`), not something to paper
+# over with an automatic restart either.
+
+[Unit]
+Description=voice-standalone — 7-day soak monitor
+Documentation=file://__REPO__/ARCHITECTURE.md
+After=graphical-session.target voice-daemon.service
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__REPO__/.venv/bin/python __REPO__/soak_monitor.py --duration-days 7 --interval-seconds 300
+
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voice-soak
+
+Nice=15
+MemoryMax=128M
+
+[Install]
+WantedBy=graphical-session.target

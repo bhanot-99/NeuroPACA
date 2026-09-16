@@ -601,6 +601,51 @@ guarantee. A real residual risk, not zero, but converting all of
 (the daemon reliably starting) given the time already spent isolating
 the two root causes above.
 
+## Unified boot-to-shutdown setup + 7-day soak monitor (2026-09-16) — DONE
+
+**One script installs and enables the whole system together**:
+`setup_services.sh` (repo root) installs `voice-daemon.service`,
+`voice-tray.service`, and the new `voice-soak.service`, all as
+systemd `--user` units tied to `graphical-session.target` — that target
+is what makes "starts with turning on the system, closes safely on
+shutdown" actually true: it starts once the login session's compositor/
+D-Bus/audio are up (these services need real audio devices and a
+notification server, not just the OS booting), and systemd sends each
+one a normal `SIGTERM` when that session ends, logout or real shutdown
+alike. Not a custom shutdown hook — systemd's own session lifecycle, the
+same mechanism the daemon and tray already relied on before this.
+
+**`soak_monitor.py`** (new) samples both services every 5 minutes for 7
+days — `ActiveState`, restart count, memory, plus a count of real
+commands processed in that interval (from `skills/_audit.py`'s existing
+log) — and writes one JSON line per sample to
+`~/.local/share/voice-standalone/soak_log.jsonl`. On completion, whether
+that's the full 7 days elapsing or an early `SIGTERM` (verified live:
+both paths tested directly, not assumed), it writes a summary
+(`soak_summary.json`) with uptime %, restart deltas, and memory min/max/
+avg per service. Deliberately **not** the main NeuroPaca project's
+existing soak infrastructure (`scripts/soak_probe.py` etc.) — that reads
+a daemon-authored `health_check()` JSON dump this project's daemon
+doesn't have; this reads what actually exists here instead
+(`systemctl --user show` + the audit log), same "read the real source of
+truth, don't build one this ask didn't call for" reasoning.
+
+**`voice-soak.service` has no `Restart=` directive, on purpose**: the
+script exits `0` on its own once the 7 days elapse or it's told to
+stop — an automatic restart on a *successful* exit would silently start
+a brand new 7-day run forever, the opposite of what a bounded soak test
+means. A real crash (non-zero exit) surfaces as a stopped, failed unit
+(`systemctl --user status voice-soak`), not something quietly retried.
+
+**Re-running `setup_services.sh` is safe** — it won't restart an
+already-running daemon/tray (systemd's own `enable --now` no-ops if
+they're already up) and deliberately does **not** auto-restart
+`voice-soak` on a re-run, so picking up a code change doesn't silently
+reset an in-progress 7-day count back to day 0. `./setup_services.sh
+--uninstall` stops, disables, and removes all three units (leaves the
+soak/audit log data files alone — those are results, not install
+artifacts).
+
 ## Explicitly deferred / not part of this doc
 
 - Safety tier *activation* — Step 6 built the mechanism (tiers, confirm-loop,
