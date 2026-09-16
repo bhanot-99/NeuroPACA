@@ -26,8 +26,6 @@ say "wake up" while wake-word listening is paused.
 import _process_guard
 _process_guard.ensure_libgomp_preloaded()
 
-import contextlib
-import io
 import os
 import queue
 import tempfile
@@ -35,20 +33,20 @@ import threading
 import time
 
 import numpy as np
-import sounddevice as sd
 import soundfile as sf
 from openwakeword.model import Model
 from openwakeword.vad import VAD
 
-import actions
+from audio_bus import audio_bus
 import config
+import dispatch
+import live_conversation
 import llm_intent
 import skills
 import stt
 import wiki_fastpath
 from config import SAMPLE_RATE
-from confirm_loop import confirm_and_run
-from skills import _audit, _session_state, _tiers, semantic_match
+from skills import _session_state, semantic_match
 
 try:
     import tts
@@ -234,11 +232,13 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
         ):
             _speak("Let me check.")
 
-        tier = _tiers.tier_of(name)
+        result = dispatch.execute_skill(
+            name, args, text=text,
+            on_review=lambda name, args: _notify(f"About to run: {name}", str(args), speak_text=f"About to run {name}."),
+        )
 
-        if tier == "DANGEROUS" and config.SAFETY_TIERS_ENABLED:
-            gen = confirm_and_run(name, args)
-            pause = next(gen)
+        if result["outcome"] == "needs_confirmation":
+            tier, pause = result["tier"], result["pause"]
             warning_text = ("\n⚠ " + "; ".join(pause["warnings"])) if pause["warnings"] else ""
             _notify(
                 f"Confirm: {pause['preview']}",
@@ -250,33 +250,17 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
             confirmed = _manual_toggle_event.wait(timeout=10)
             if confirmed:
                 _manual_toggle_event.clear()
-            try:
-                gen.send(None if confirmed else "")
-                result = None
-            except StopIteration as done:
-                result = done.value
-            if result and result["cancelled"]:
+            result = dispatch.finish_confirm(
+                result["generator"], None if confirmed else "",
+                name=name, args=args, text=text, tier=tier,
+            )
+            if result["outcome"] == "cancelled":
                 _notify("Voice Assistant", "Cancelled (no confirmation within 10s).",
                          speak_text="Cancelled.")
-                _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="cancelled")
                 return
-            output = (result["output"].strip() if result else "") or f"Ran: {name}"
-            _session_state.set_last_response(output)
-            _notify(f"Heard: {text}", output)
-            _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
-            return
 
-        if tier == "REVIEW" and config.SAFETY_TIERS_ENABLED:
-            _notify(f"About to run: {name}", str(args), speak_text=f"About to run {name}.")
-            time.sleep(2)
-
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            actions.DISPATCH[name](args)
-        output = buffer.getvalue().strip() or f"Ran: {name}"
-        _session_state.set_last_response(output)
+        output = result["output"].strip() or f"Ran: {name}"
         _notify(f"Heard: {text}", output)
-        _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
     except Exception as exc:
         _notify("Voice Assistant — error", f"Could not complete that command: {exc}")
 
@@ -322,124 +306,117 @@ def main() -> None:
 
     threading.Thread(target=_fifo_listener, daemon=True).start()
 
-    audio_q: queue.Queue[np.ndarray] = queue.Queue()
-
-    def _callback(indata, _frames, _time_info, _status) -> None:
-        audio_q.put(indata.copy().flatten())
-
     _notify("Voice Assistant", "Ready — click the tray icon, or say 'hey jarvis.'")
 
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16",
-                         blocksize=CHUNK_SIZE, callback=_callback):
-        while True:
-            # ---- IDLE: wait for either trigger ----
-            trigger = None
-            first_chunk = None
-            while trigger is None:
-                chunk = audio_q.get()
+    mic_sub = audio_bus.subscribe(sample_rate=SAMPLE_RATE, chunk_size=CHUNK_SIZE)
+    while True:
+        # ---- IDLE: wait for either trigger ----
+        trigger = None
+        first_chunk = None
+        while trigger is None:
+            chunk = mic_sub.get()
 
+            if _manual_toggle_event.is_set():
+                _manual_toggle_event.clear()
+                trigger = "manual"
+                first_chunk = chunk
+                break
+
+            if _session_state.is_asleep():
+                continue  # wake-word disabled while asleep; manual still works above
+
+            prediction = wake_model.predict(chunk)
+            if any(score > WAKE_THRESHOLD for score in prediction.values()):
+                trigger = "wakeword"
+                first_chunk = None  # the wake word itself isn't part of the command
+
+        # ---- RECORDING ----
+        # Wake-word-only, not manual: a tray click is already a
+        # deliberate, visually-confirmed action — the "am I actually
+        # being heard" ambiguity this chime solves is specific to
+        # saying "hey jarvis" with no visual feedback.
+        if trigger == "wakeword":
+            _play_wake_chime()
+            # Same drain idiom used after _process_command below —
+            # the mic kept capturing live chunks the whole 0.5s the
+            # chime played (this stream is never paused), so whatever
+            # bleed made it back in is sitting in mic_sub right now.
+            # Discarded here so the real recording loop below starts
+            # scoring genuinely live audio, not the chime's own echo.
+            mic_sub.drain()
+
+            # Step 8/9: hand the whole turn to the Realtime conversational
+            # layer instead of the single-shot VAD-record block below —
+            # off by default (config.CONVERSATION_MODE_ENABLED), and
+            # falling back to that same block below on any connection
+            # failure rather than going silent.
+            # Under Step 9's audio_bus architecture, exactly one capture
+            # stream runs on the microphone; live_conversation subscribes
+            # to native 24kHz audio from that same bus.
+            if config.CONVERSATION_MODE_ENABLED:
+                try:
+                    live_conversation.run_session(_manual_toggle_event, _notify)
+                    mic_sub.drain()
+                    continue
+                except live_conversation.RealtimeUnavailable as exc:
+                    print(f"[live_conversation] unavailable, falling back: {exc}")
+
+        # speak=False here on purpose: this notification fires right as
+        # the VAD-based recording loop below starts consuming live mic
+        # frames. Speaking through the speakers at this exact moment
+        # would risk the TTS audio itself bleeding into the mic (no
+        # acoustic echo cancellation in this pipeline) and either
+        # getting transcribed as part of the command or falsely
+        # tripping the VAD's speech_detected state. The chime above
+        # has the same theoretical risk but is short (0.5s) and
+        # non-speech — already drained from mic_sub by the time we
+        # get here, same as this notification staying silent.
+        _notify("Voice Assistant", "Listening...", speak=False)
+        frames = [first_chunk] if first_chunk is not None else []
+        start_time = time.monotonic()
+        speech_detected = False
+        silence_start: float | None = None
+
+        while True:
+            try:
+                chunk = mic_sub.get(timeout=0.5)
+            except queue.Empty:
+                chunk = None
+
+            elapsed = time.monotonic() - start_time
+            if elapsed > MAX_RECORDING_SECONDS:
+                break
+
+            if chunk is None:
+                continue
+            frames.append(chunk)
+
+            if trigger == "manual":
                 if _manual_toggle_event.is_set():
                     _manual_toggle_event.clear()
-                    trigger = "manual"
-                    first_chunk = chunk
                     break
+                continue
 
-                if _session_state.is_asleep():
-                    continue  # wake-word disabled while asleep; manual still works above
-
-                prediction = wake_model.predict(chunk)
-                if any(score > WAKE_THRESHOLD for score in prediction.values()):
-                    trigger = "wakeword"
-                    first_chunk = None  # the wake word itself isn't part of the command
-
-            # ---- RECORDING ----
-            # Wake-word-only, not manual: a tray click is already a
-            # deliberate, visually-confirmed action — the "am I actually
-            # being heard" ambiguity this chime solves is specific to
-            # saying "hey jarvis" with no visual feedback.
-            if trigger == "wakeword":
-                _play_wake_chime()
-                # Same drain idiom used after _process_command below —
-                # the mic kept capturing live chunks the whole 0.5s the
-                # chime played (this stream is never paused), so whatever
-                # bleed made it back in is sitting in audio_q right now.
-                # Discarded here so the real recording loop below starts
-                # scoring genuinely live audio, not the chime's own echo.
-                while not audio_q.empty():
-                    try:
-                        audio_q.get_nowait()
-                    except queue.Empty:
-                        break
-
-            # speak=False here on purpose: this notification fires right as
-            # the VAD-based recording loop below starts consuming live mic
-            # frames. Speaking through the speakers at this exact moment
-            # would risk the TTS audio itself bleeding into the mic (no
-            # acoustic echo cancellation in this pipeline) and either
-            # getting transcribed as part of the command or falsely
-            # tripping the VAD's speech_detected state. The chime above
-            # has the same theoretical risk but is short (0.5s) and
-            # non-speech — already drained from audio_q by the time we
-            # get here, same as this notification staying silent.
-            _notify("Voice Assistant", "Listening...", speak=False)
-            frames = [first_chunk] if first_chunk is not None else []
-            start_time = time.monotonic()
-            speech_detected = False
-            silence_start: float | None = None
-
-            while True:
-                try:
-                    chunk = audio_q.get(timeout=0.5)
-                except queue.Empty:
-                    chunk = None
-
-                elapsed = time.monotonic() - start_time
-                if elapsed > MAX_RECORDING_SECONDS:
+            # wake-word trigger: VAD-based turn detection
+            score = vad.predict(chunk, frame_size=CHUNK_SIZE)
+            if score > SPEECH_VAD_THRESHOLD:
+                speech_detected = True
+                silence_start = None
+            elif speech_detected:
+                if silence_start is None:
+                    silence_start = time.monotonic()
+                elif time.monotonic() - silence_start > SILENCE_STOP_SECONDS:
                     break
+            elif elapsed > NO_SPEECH_TIMEOUT_SECONDS:
+                break  # wake word fired but nothing was ever said
 
-                if chunk is None:
-                    continue
-                frames.append(chunk)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            wav_path = tmp.name
+        _save_wav(frames, wav_path)
+        _process_command(wav_path, layer1_available)
 
-                if trigger == "manual":
-                    if _manual_toggle_event.is_set():
-                        _manual_toggle_event.clear()
-                        break
-                    continue
-
-                # wake-word trigger: VAD-based turn detection
-                score = vad.predict(chunk, frame_size=CHUNK_SIZE)
-                if score > SPEECH_VAD_THRESHOLD:
-                    speech_detected = True
-                    silence_start = None
-                elif speech_detected:
-                    if silence_start is None:
-                        silence_start = time.monotonic()
-                    elif time.monotonic() - silence_start > SILENCE_STOP_SECONDS:
-                        break
-                elif elapsed > NO_SPEECH_TIMEOUT_SECONDS:
-                    break  # wake word fired but nothing was ever said
-
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                wav_path = tmp.name
-            _save_wav(frames, wav_path)
-            _process_command(wav_path, layer1_available)
-
-            # Found via a real user report: _process_command (STT + skill
-            # resolution + execution) takes real wall-clock seconds, during
-            # which the InputStream callback keeps stuffing fresh chunks
-            # into audio_q — nothing is reading them meanwhile. Returning
-            # straight to idle would burn through that whole backlog in a
-            # tight burst against the wake-word model, including whatever
-            # played *during* processing (e.g. the video the command itself
-            # just opened) — a spurious "Listening..." right after a correct
-            # action, with nothing real said. Drain it so idle only ever
-            # scores live audio going forward.
-            while not audio_q.empty():
-                try:
-                    audio_q.get_nowait()
-                except queue.Empty:
-                    break
+        # Drain backlog so idle only ever scores live audio going forward.
+        mic_sub.drain()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """
-Category E — Files & filesystem (16 skills, Step 4).
+Category E — Files & filesystem (17 skills, Step 4 + Step 8's read_pdf).
 
   E01  find_file            — "find a file called X", "locate X on my computer"
   E02  open_file             — "open the file X"
@@ -17,6 +17,7 @@ Category E — Files & filesystem (16 skills, Step 4).
   E14  open_recent_downloads  — "open my recent downloads"
   E15  search_file_contents   — "search my files for X"
   E16  open_file_manager_at   — "open file manager at downloads"
+  E17  read_pdf               — "read my resume pdf"
 
 Placed BEFORE web_knowledge.py (C1) in skills/__init__.py's scan order: E15's
 "search my files for X" and E01's "find a file called X" must not be stolen
@@ -202,6 +203,26 @@ def _match_search_file_contents(text: str) -> dict | None:
     return {"term": term}
 
 
+def _match_read_pdf(text: str) -> dict | None:
+    # "called"/"named" required (not optional) in the first alternative —
+    # otherwise it backtracks into treating "the"/"my" itself as the
+    # filename for phrasing like "read the pdf called X" (reproduced live:
+    # matched {"name": "the"}). Order matters too: this specific pattern
+    # must be tried before the looser "read X pdf" one below, or the same
+    # backtracking problem resurfaces.
+    m = re.search(
+        r"\bread\s+(?:the\s+|my\s+)?pdf\s+(?:called|named)\s+(.+)"
+        r"|\bread\s+(?:the\s+|my\s+)?(.+?)\s+pdf\b",
+        text, re.IGNORECASE
+    )
+    if not m:
+        return None
+    name = next((g for g in m.groups() if g), "").strip().rstrip("?.")
+    if not name:
+        return None
+    return {"name": name}
+
+
 def _match_open_file_manager_at(text: str) -> dict | None:
     m = re.search(
         r"\bopen\s+(?:the\s+)?file\s+manager\s+at\s+(?:my\s+)?(.+)"
@@ -223,6 +244,7 @@ SKILLS: list[tuple[str, Callable[[str], dict | None]]] = [
     ("move_file", _match_move_file),
     # Specific-phrase skills before looser ones.
     ("search_file_contents", _match_search_file_contents),
+    ("read_pdf", _match_read_pdf),
     ("find_file", _match_find_file),
     ("open_file_manager_at", _match_open_file_manager_at),
     ("open_recent_downloads", _match_open_recent_downloads),

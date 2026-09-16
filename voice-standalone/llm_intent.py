@@ -85,6 +85,16 @@ _TOOLS = [
             "required": ["command"],
         },
     ),
+    types.FunctionDeclaration(
+        name="read_pdf",
+        description="Read a PDF file by name from the user's common folders (Downloads, "
+                     "Documents, Desktop, etc.) and return its extracted text.",
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    ),
 ]
 
 _TOOL = types.Tool(function_declarations=_TOOLS)

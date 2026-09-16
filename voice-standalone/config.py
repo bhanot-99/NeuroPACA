@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 SAMPLE_RATE = 16000
 # gemini-2.5-flash was deprecated for this API key ("no longer available to
 # new users") — found via a real 404 during live testing, 2026-09-15. The
@@ -50,6 +51,22 @@ LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "true").lower() ==
 # skills from executing immediately to routing through the confirm-loop.
 # The audit log stays on regardless — it's observability, not a gate.
 SAFETY_TIERS_ENABLED = os.environ.get("SAFETY_TIERS_ENABLED", "false").lower() == "true"
+
+# Step 8 — the OpenAI Realtime conversational layer, sitting behind the
+# wake word. Off by default, same as SAFETY_TIERS_ENABLED above and
+# LLM_FALLBACK_ENABLED before it went on — this is a real category change
+# (continuous mic audio streams to OpenAI's cloud for the duration of an
+# active conversation, not just a one-shot per-utterance call like the
+# existing Gemini intent fallback), so turning it on is explicitly the
+# user's call, not a default. See voice-standalone/STEP8_CONVERSATION_PLAN.txt.
+CONVERSATION_MODE_ENABLED = os.environ.get("CONVERSATION_MODE_ENABLED", "false").lower() == "true"
+
+# Checked against the installed openai SDK's live type stubs directly
+# (2026-09-16), not guessed — "gpt-realtime" is the current GA base model;
+# "gpt-realtime-2" adds reasoning support if that's ever worth the extra
+# latency. Re-verify against a live account before relying on this, same
+# discipline as INTENT_MODEL above.
+REALTIME_MODEL = "gpt-realtime"
 
 # Step 7 TTS — no config switch needed here anymore: tts.py hardcodes
 # Piper (en_IN-spicor, a real Indian-English voice) for English and Kokoro

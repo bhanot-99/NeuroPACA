@@ -29,6 +29,8 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+import pypdf
+
 from skills import _session_state
 from skills._paths import find_file, resolve_folder
 
@@ -1088,6 +1090,60 @@ def open_file_manager_at(folder: str) -> None:
     subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# ── E17  read_pdf ────────────────────────────────────────────────────────────
+
+_PDF_TEXT_CHAR_CAP = 12_000  # Step 8: enough for a real resume/paper/report
+                             # to be discussed meaningfully without risking
+                             # the Realtime/LLM context on a huge document.
+
+
+_PDF_DENYLIST_PATTERNS = (
+    ".env", "password", "id_rsa", "id_ed25519", ".key", ".pem",
+    "secret", "credential", "token", ".p12", ".pfx"
+)
+
+
+def read_pdf(name: str) -> None:
+    """Finds a PDF by spoken name (same common-folders search as
+    find_file/open_file) and prints its extracted text so the caller
+    (a Realtime tool response, or the LLM-fallback cascade) has real
+    content to read/summarize/react to — not just a "found it" pointer
+    like find_file_skill."""
+    lower_name = name.lower()
+    if any(pat in lower_name for pat in _PDF_DENYLIST_PATTERNS):
+        print(f"[read_pdf] Access denied: '{name}' matches sensitive file protection rules.")
+        return
+
+    path = find_file(name)
+    if path is None:
+        print(f"[read_pdf] Could not find a file named '{name}'.")
+        return
+
+    lower_path = path.lower()
+    if any(pat in lower_path for pat in _PDF_DENYLIST_PATTERNS):
+        print(f"[read_pdf] Access denied: '{os.path.basename(path)}' matches sensitive file protection rules.")
+        return
+
+    if not path.lower().endswith(".pdf"):
+        print(f"[read_pdf] '{path}' isn't a PDF.")
+        return
+
+    try:
+        reader = pypdf.PdfReader(path)
+        text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception as exc:
+        print(f"[read_pdf] Could not read '{path}': {exc}")
+        return
+
+    if not text:
+        print(f"[read_pdf] '{path}' has no extractable text (likely a scanned image PDF).")
+        return
+
+    if len(text) > _PDF_TEXT_CHAR_CAP:
+        text = text[:_PDF_TEXT_CHAR_CAP] + "\n[...truncated — the document continues]"
+    print(f"[read_pdf] {os.path.basename(path)}:\n{text}")
+
+
 # ===========================================================================
 # ─── Category F — Terminal & dev tools ──────────────────────────────────────
 # ===========================================================================
@@ -1667,6 +1723,7 @@ DISPATCH: dict[str, object] = {
     "open_recent_downloads": lambda args: open_recent_downloads(**args),
     "search_file_contents": lambda args: search_file_contents(**args),
     "open_file_manager_at": lambda args: open_file_manager_at(**args),
+    "read_pdf":             lambda args: read_pdf(**args),
     # ── Category F ────────────────────────────────────────────────────────
     "git_status":           lambda args: git_status(**args),
     "check_processes":      lambda args: check_processes(**args),

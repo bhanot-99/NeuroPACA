@@ -1,21 +1,17 @@
 import _process_guard
 _process_guard.ensure_libgomp_preloaded()
 
-import contextlib
-import io
 import os
 import tempfile
-import time
 
-import actions
 import config
+import dispatch
 import llm_intent
 import skills  # noqa: F401 — skills/ package (replaces flat skills.py)
 import stt
 import wiki_fastpath
 from audio_capture import record_until_enter
-from confirm_loop import confirm_and_run
-from skills import _audit, _session_state, _tiers, semantic_match
+from skills import _session_state, semantic_match
 
 try:
     import tts
@@ -110,11 +106,13 @@ def main() -> None:
                 print("[asleep] (ignoring — say 'wake up' to resume)")
                 continue
 
-            tier = _tiers.tier_of(name)
+            result = dispatch.execute_skill(
+                name, args, text=text,
+                on_review=lambda name, args: print(f"[REVIEW] about to run: {name}({args})"),
+            )
 
-            if tier == "DANGEROUS" and config.SAFETY_TIERS_ENABLED:
-                gen = confirm_and_run(name, args)
-                pause = next(gen)
+            if result["outcome"] == "needs_confirmation":
+                tier, pause = result["tier"], result["pause"]
                 print(f"[{tier}] {pause['preview']}")
                 for warning in pause["warnings"]:
                     print(f"  ⚠ machine-scan: {warning}")
@@ -124,40 +122,15 @@ def main() -> None:
                 else:
                     confirm = input("Run this? [Y/n]: ")
                     sent = "" if confirm.strip().lower() == "n" else None
-                try:
-                    gen.send(sent)
-                    result = None
-                except StopIteration as done:
-                    result = done.value
-                if result and result["cancelled"]:
+                result = dispatch.finish_confirm(result["generator"], sent, name=name, args=args, text=text, tier=tier)
+                if result["outcome"] == "cancelled":
                     print("[cancelled]")
-                    _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="cancelled")
                     continue
-                output = result["output"] if result else ""
-                if output:
-                    print(output, end="")
-                    _session_state.set_last_response(output)
-                    _speak(output)
-                _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
-                continue
 
-            if tier == "REVIEW" and config.SAFETY_TIERS_ENABLED:
-                print(f"[{tier}] about to run: {name}({args})")
-                time.sleep(2)
-
-            # Capture what the executor prints so "repeat that" (J07) works
-            # without rewriting every existing executor to return a string
-            # instead of printing — captured text is still shown live, just
-            # via this buffer instead of print() writing straight to stdout.
-            buffer = io.StringIO()
-            with contextlib.redirect_stdout(buffer):
-                actions.DISPATCH[name](args)
-            output = buffer.getvalue()
+            output = result["output"]
             if output:
                 print(output, end="")
-                _session_state.set_last_response(output)
                 _speak(output)
-            _audit.record(text=text, skill_name=name, args=args, tier=tier, outcome="executed")
         except KeyboardInterrupt:
             break
         except Exception as exc:

@@ -8,3 +8,6 @@ openwakeword>=0.6.0
 faster-whisper>=1.2.1
 piper-tts>=1.8.0
 RealtimeTTS>=0.8.5
+openai>=1.50.0
+pypdf>=4.0
+soxr>=1.0.0
