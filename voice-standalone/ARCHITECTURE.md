@@ -623,7 +623,24 @@ log) — and writes one JSON line per sample to
 that's the full 7 days elapsing or an early `SIGTERM` (verified live:
 both paths tested directly, not assumed), it writes a summary
 (`soak_summary.json`) with uptime %, restart deltas, and memory min/max/
-avg per service. Deliberately **not** the main NeuroPaca project's
+avg per service.
+
+**Pauses on shutdown, resumes on restart — not wall-clock since first
+launch** (fixed 2026-09-16, direct user feedback on the original
+version: a reboot mid-soak either reset the count to zero or would have
+counted downtime as observed uptime, neither of which is what "7-day
+soak" means). `soak_state.json` persists real observed time only
+(`cumulative_elapsed_seconds`) across runs; on `SIGTERM` the current
+session folds into that total before exit, so the next login resumes
+the 7-day count from exactly where it left off, not from zero. A
+one-time migration bootstraps a soak that was already running under the
+old version from its last sample's `elapsed_hours` instead of
+discarding already-collected data — also doubles as a self-healing
+fallback if the process ever exits ungracefully (SIGKILL, OOM, power
+loss) before writing state. Verified with a full pause/resume cycle
+before applying to the real running soak.
+
+Deliberately **not** the main NeuroPaca project's
 existing soak infrastructure (`scripts/soak_probe.py` etc.) — that reads
 a daemon-authored `health_check()` JSON dump this project's daemon
 doesn't have; this reads what actually exists here instead
