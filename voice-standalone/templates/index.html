@@ -100,6 +100,12 @@
           <span>gemini-2.5-flash-native-audio</span>
         </div>
 
+        <!-- In-Browser Speech (TTS) Toggle -->
+        <button id="tts-toggle-btn" onclick="toggleAutoTTS()" title="Toggle Browser Spoken Audio (TTS)" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition">
+          <span id="tts-toggle-icon">🔊</span>
+          <span id="tts-toggle-label">Speech: On</span>
+        </button>
+
         <!-- Refresh Button -->
         <button onclick="fetchStatus()" title="Refresh System Status" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white transition">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -419,6 +425,36 @@
     let scriptProcessor = null;
     let audioBuffers = [];
     let isRecording = false;
+    let autoTTS = true;
+
+    function toggleAutoTTS() {
+      autoTTS = !autoTTS;
+      const label = document.getElementById('tts-toggle-label');
+      const icon = document.getElementById('tts-toggle-icon');
+      if (autoTTS) {
+        label.innerText = 'Speech: On';
+        icon.innerText = '🔊';
+      } else {
+        label.innerText = 'Speech: Off';
+        icon.innerText = '🔇';
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      }
+    }
+
+    function speakInBrowser(text) {
+      if (!text || !('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      // Clean tags like [answer], [ip], etc.
+      let clean = text.replace(/^\s*\[[a-zA-Z0-9_\-]+\]\s*/, '')
+                      .replace(/\(([A-Z]{1,5})\)/g, ', $1, ')
+                      .replace(/```[\s\S]*?```/g, 'code block omitted')
+                      .replace(/`([^`]+)`/g, '$1')
+                      .replace(/https?:\/\/\S+/g, 'link');
+      const utter = new SpeechSynthesisUtterance(clean);
+      utter.rate = 1.0;
+      utter.pitch = 1.0;
+      window.speechSynthesis.speak(utter);
+    }
 
     // Initialize on DOM ready
     window.addEventListener('DOMContentLoaded', () => {
@@ -556,13 +592,17 @@
         <div class="bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-2xl rounded-tl-none shadow-md max-w-2xl space-y-1">
           <div class="flex justify-between items-center text-[10px] text-violet-300 font-semibold">
             <span>Conversational Response</span>
-            ${timeStr}
+            <div class="flex items-center space-x-2">
+              <button onclick="speakInBrowser(this.closest('.space-y-1').querySelector('p').innerText)" title="Speak out loud" class="hover:scale-110 transition text-xs">🔊</button>
+              ${timeStr}
+            </div>
           </div>
           <p class="leading-relaxed whitespace-pre-wrap">${escapeHtml(text)}</p>
         </div>
       `;
       timeline.appendChild(div);
       scrollToBottom();
+      if (autoTTS) speakInBrowser(text);
     }
 
     function appendToolExecutionCard(data) {
@@ -607,6 +647,7 @@
             <div class="flex items-center space-x-2">
               ${layerBadge}
               <span class="font-mono text-[11px] text-slate-400">${latency}</span>
+              <button onclick="speakInBrowser(this.closest('.space-y-2.5').querySelector('.whitespace-pre-wrap').innerText)" title="Speak answer out loud" class="hover:scale-110 transition text-xs">🔊</button>
             </div>
           </div>
 
@@ -625,6 +666,7 @@ ${escapeHtml(outputText)}
       `;
       timeline.appendChild(div);
       scrollToBottom();
+      if (autoTTS && outputText) speakInBrowser(outputText);
     }
 
     function appendErrorMessage(msg) {

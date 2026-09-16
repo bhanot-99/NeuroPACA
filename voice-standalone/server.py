@@ -32,6 +32,19 @@ from skills import _session_state, _tiers, semantic_match
 import stt
 import wiki_fastpath
 
+try:
+    import tts
+except Exception:
+    tts = None
+
+
+def _speak_bg(text: str) -> None:
+    if tts is not None and text and text.strip():
+        try:
+            tts.speak(text)
+        except Exception as e:
+            print(f"[tts warning] {e}")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
@@ -333,6 +346,7 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     continue
 
                 output_text = res.get("output", "").strip() or f"Executed {skill_name}."
+                asyncio.create_task(asyncio.to_thread(_speak_bg, output_text))
                 await websocket.send_json({
                     "type": "tool_executed",
                     "skill": skill_name,
@@ -363,6 +377,7 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     contents=user_text,
                 )
                 response_text = response.text or "I did not understand that request."
+                asyncio.create_task(asyncio.to_thread(_speak_bg, response_text))
                 await websocket.send_json({
                     "type": "chat_message",
                     "text": response_text,

@@ -73,8 +73,10 @@ _PIPER_MODEL_PATH = os.path.join(_BASE_DIR, "piper_voices", "en_IN-spicor.onnx")
 def clean_for_speech(text: str) -> str:
     """Prepares text for natural speech output by removing markdown, code blocks,
     URLs, and bullet formatting, and truncating overly long responses."""
-    if not text or not text.strip():
-        return ""
+    # Strip leading action tags like [answer], [ip], [battery]
+    text = re.sub(r"^\s*\[[a-zA-Z0-9_\-]+\]\s*", "", text)
+    # Normalize parenthetical acronyms e.g. (EI) -> , EI,
+    text = re.sub(r"\(([A-Z]{1,5})\)", r", \1, ", text)
     # Omit multi-line code blocks
     text = re.sub(r"```[\s\S]*?```", "code block omitted", text)
     # Strip backticks from inline code
