@@ -5,7 +5,7 @@ tts.py — spoken output for the voice assistant.
 - Hindi: Kokoro (hf_alpha) — streaming via RealtimeTTS.
 
 Two earlier engines were tried and dropped, not silently — see
-ARCHITECTURE.md's Step 7 section for the full history:
+guide.md's Step 7 section for the full history:
 - MeloTTS (EN_INDIA) was the original English voice: real Indian accent,
   but only one voice with no gender/tone alternate, and no pitch control
   exposed at synthesis time — when it didn't suit, there was nothing to
@@ -19,7 +19,7 @@ ARCHITECTURE.md's Step 7 section for the full history:
   (hf_alpha/hf_beta female, hm_omega/hm_psi male).
 - Punjabi (IndicF5) was built, benchmarked, and removed — too slow
   (96s/phrase full-pipeline) for live use. Also documented in
-  ARCHITECTURE.md, not repeated here.
+  guide.md, not repeated here.
 
 PROCESS ISOLATION, and why it's not optional: speak() and warm_up() run
 the actual synthesis in a separate OS process (this same file, invoked as
@@ -117,14 +117,14 @@ def _get_kokoro(voice: str):
 def _get_piper():
     """Lazy loads the Piper English voice. Requires piper_voices/en_IN-spicor.onnx
     + its .onnx.json — not committed to the repo (a 63.5MB binary weight
-    file), see ARCHITECTURE.md's setup section for the download step."""
+    file), see guide.md's setup section for the download step."""
     global _piper_voice
     if _piper_voice is None:
         from piper import PiperVoice
         if not os.path.exists(_PIPER_MODEL_PATH):
             raise FileNotFoundError(
                 f"Piper voice model not found at {_PIPER_MODEL_PATH} — "
-                "see ARCHITECTURE.md's Step 7 setup section to download it."
+                "see guide.md's Step 7 setup section to download it."
             )
         _piper_voice = PiperVoice.load(_PIPER_MODEL_PATH)
     return _piper_voice

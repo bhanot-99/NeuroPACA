@@ -1,5 +1,5 @@
 """
-Audit log — independent of tier (see ARCHITECTURE.md's "Safety measures"
+Audit log — independent of tier (see guide.md's "Safety measures"
 section: "every resolved action... gets logged through the Audit module,
 whether or not it needed confirmation"). Unlike tier GATING, which stays off
 until config.SAFETY_TIERS_ENABLED is turned on, this is pure observability

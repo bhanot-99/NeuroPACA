@@ -1,6 +1,6 @@
 """
 The confirm-loop generator (Open Interpreter's pattern, adapted — see
-ARCHITECTURE.md's "Safety measures" section and sources table). Used for
+guide.md's "Safety measures" section and sources table). Used for
 DANGEROUS-tier actions once config.SAFETY_TIERS_ENABLED is on.
 
 The executor call is wrapped in a generator that pauses right before

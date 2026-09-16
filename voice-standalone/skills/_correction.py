@@ -1,8 +1,8 @@
 """
-Generalized correction layer (Step 3) — see ARCHITECTURE.md's pipeline diagram.
+Generalized correction layer (Step 3) — see guide.md's pipeline diagram.
 
 "Never execute your best guess — correct it first" (Home Assistant's pattern,
-credited in ARCHITECTURE.md's sources table). Any argument naming something we
+credited in guide.md's sources table). Any argument naming something we
 have an authoritative local list for (installed apps today; known sites/files
 in future steps) goes through this instead of trusting the raw transcription.
 

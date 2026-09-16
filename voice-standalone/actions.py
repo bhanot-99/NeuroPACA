@@ -1366,7 +1366,7 @@ def play_bandcamp(query: str) -> None:
 
 def play_internet_radio(query: str | None = None) -> None:
     """No single canonical 'internet radio' target — TuneIn is the same
-    aggregator the earlier OVOS research (ARCHITECTURE.md's sources table)
+    aggregator the earlier OVOS research (guide.md's sources table)
     found used for exactly this."""
     if query:
         _open_url(f"https://tunein.com/search/?query={urllib.parse.quote_plus(query)}")

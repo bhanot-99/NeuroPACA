@@ -40,11 +40,11 @@ if [[ "${1:-}" == "--uninstall" ]]; then
 fi
 
 if [[ ! -f "$REPO_DIR/.venv/bin/python" ]]; then
-    echo "ERROR: $REPO_DIR/.venv not found — set up the venv first (see ARCHITECTURE.md)." >&2
+    echo "ERROR: $REPO_DIR/.venv not found — set up the venv first (see guide.md)." >&2
     exit 1
 fi
 if [[ ! -f "$REPO_DIR/piper_voices/en_IN-spicor.onnx" ]]; then
-    echo "ERROR: Piper voice model not found — see ARCHITECTURE.md's Step 7 setup section to download it." >&2
+    echo "ERROR: Piper voice model not found — see guide.md's Step 7 setup section to download it." >&2
     exit 1
 fi
 

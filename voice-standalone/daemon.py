@@ -1,6 +1,6 @@
 """
 Always-on voice daemon. Two independent ways to trigger a command, exactly
-as ARCHITECTURE.md's Step 5 requires ("push-to-talk stays as the permanent
+as guide.md's Step 5 requires ("push-to-talk stays as the permanent
 manual fallback — it doesn't get removed"):
 
   1. Manual: the tray (tray.py) toggles over a FIFO — click 1 starts, click

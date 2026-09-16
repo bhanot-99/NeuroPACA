@@ -17,7 +17,7 @@
 
 [Unit]
 Description=voice-standalone — tray icon
-Documentation=file://__REPO__/ARCHITECTURE.md
+Documentation=file://__REPO__/guide.md
 After=graphical-session.target
 PartOf=graphical-session.target
 Requisite=graphical-session.target

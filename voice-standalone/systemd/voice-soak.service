@@ -26,7 +26,7 @@
 
 [Unit]
 Description=voice-standalone — 7-day soak monitor
-Documentation=file://__REPO__/ARCHITECTURE.md
+Documentation=file://__REPO__/guide.md
 After=graphical-session.target voice-daemon.service
 PartOf=graphical-session.target
 Requisite=graphical-session.target

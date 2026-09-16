@@ -23,7 +23,7 @@ Cascade, in order:
 
 Benchmarked directly before choosing gemini-flash-lite-latest as the
 primary and Qwen2.5-1.5B (not 3B — measured slower AND less accurate) as
-the local fallback; see ARCHITECTURE.md for the full numbers.
+the local fallback; see guide.md for the full numbers.
 """
 
 from google import genai

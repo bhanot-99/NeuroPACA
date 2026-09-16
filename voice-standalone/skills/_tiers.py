@@ -1,6 +1,6 @@
 """
 Step 6 & Step 9 — static tier registry. Never inferred at runtime, so it's
-predictable and auditable (see ARCHITECTURE.md's "Safety measures" section).
+predictable and auditable (see guide.md's "Safety measures" section).
 
 DANGEROUS contains the 11 skills marked with a specific 🔒 comment in actions.py
 during Steps 1-4, plus logout added in Step 9:

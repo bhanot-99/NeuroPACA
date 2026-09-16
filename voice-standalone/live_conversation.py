@@ -34,6 +34,8 @@ import queue
 import threading
 import time
 
+from google import genai
+from google.genai import types as genai_types
 import numpy as np
 import sounddevice as sd
 from openai import AsyncOpenAI
@@ -132,6 +134,18 @@ _SYSTEM_INSTRUCTIONS = (
 )
 
 
+_GEMINI_TOOLS = [{
+    "function_declarations": [
+        {
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["parameters"],
+        }
+        for t in _TOOLS
+    ]
+}]
+
+
 class RealtimeUnavailable(Exception):
     """Raised when a Realtime session can't be established or drops mid-
     call — the caller (daemon.py) is expected to fall back to the existing
@@ -151,14 +165,140 @@ def run_session(manual_stop_event: threading.Event, notify) -> None:
     importing it back would be circular (daemon.py is the one importing
     this module)."""
     try:
-        asyncio.run(_run_session_async(manual_stop_event, notify))
+        if config.CONVERSATION_BACKEND in ("gemini", "gemini-2.5-flash"):
+            asyncio.run(_run_session_gemini_async(manual_stop_event, notify))
+        else:
+            asyncio.run(_run_session_openai_async(manual_stop_event, notify))
     except RealtimeUnavailable:
         raise
     except Exception as exc:
         raise RealtimeUnavailable(str(exc)) from exc
 
 
-async def _run_session_async(manual_stop_event: threading.Event, notify) -> None:
+async def _run_session_gemini_async(manual_stop_event: threading.Event, notify) -> None:
+    if not config.GEMINI_API_KEY:
+        raise RealtimeUnavailable("GEMINI_API_KEY is not set")
+
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
+    state = {"last_activity": time.monotonic(), "response_in_progress": False}
+    stop = asyncio.Event()
+    confirm_pending = threading.Event()
+
+    config_live = genai_types.LiveConnectConfig(
+        response_modalities=[genai_types.Modality.AUDIO],
+        tools=_GEMINI_TOOLS,
+        system_instruction=genai_types.Content(parts=[genai_types.Part.from_text(text=_SYSTEM_INSTRUCTIONS)]),
+    )
+
+    playback_queue: queue.Queue = queue.Queue()
+
+    def _playback_callback(outdata, frames, _time_info, _status) -> None:
+        needed = frames * 2  # int16 mono = 2 bytes/sample
+        buf = bytearray()
+        while len(buf) < needed:
+            try:
+                buf += playback_queue.get_nowait()
+            except queue.Empty:
+                break
+        buf = bytes(buf[:needed]).ljust(needed, b"\x00")
+        outdata[:] = np.frombuffer(buf, dtype="int16").reshape(-1, 1)
+
+    try:
+        async with client.aio.live.connect(model=config.GEMINI_LIVE_MODEL, config=config_live) as session:
+            with audio_bus.subscribe(sample_rate=REALTIME_SAMPLE_RATE, chunk_size=_CHUNK_SAMPLES) as mic_sub, \
+                 sd.OutputStream(samplerate=REALTIME_SAMPLE_RATE, channels=1, dtype="int16",
+                                  blocksize=_CHUNK_SAMPLES, callback=_playback_callback):
+
+                async def _send_mic_audio():
+                    while not stop.is_set():
+                        chunk = await asyncio.to_thread(mic_sub.get_bytes)
+                        await session.send_realtime_input(
+                            media=genai_types.Blob(data=chunk, mime_type="audio/pcm;rate=24000")
+                        )
+
+                async def _watch_idle_and_manual_stop():
+                    while not stop.is_set():
+                        if manual_stop_event.is_set() and not confirm_pending.is_set():
+                            manual_stop_event.clear()
+                            stop.set()
+                            return
+                        idle_for = time.monotonic() - state["last_activity"]
+                        if idle_for > IDLE_TIMEOUT_SECONDS and not state["response_in_progress"]:
+                            stop.set()
+                            return
+                        await asyncio.sleep(0.2)
+
+                async def _handle_events():
+                    async for response in session.receive():
+                        state["last_activity"] = time.monotonic()
+                        sc = response.server_content
+                        if sc is not None:
+                            if sc.interrupted:
+                                while not playback_queue.empty():
+                                    try:
+                                        playback_queue.get_nowait()
+                                    except queue.Empty:
+                                        break
+                            if sc.model_turn is not None:
+                                state["response_in_progress"] = True
+                                for part in sc.model_turn.parts:
+                                    if part.inline_data is not None:
+                                        playback_queue.put(part.inline_data.data)
+                            if sc.turn_complete:
+                                state["response_in_progress"] = False
+
+                        if response.tool_call is not None:
+                            for call in response.tool_call.function_calls:
+                                name, call_id, args = call.name, call.id, (call.args or {})
+
+                                if name == "sleep_stop_listening":
+                                    _session_state.go_to_sleep()
+                                    stop.set()
+                                    return
+
+                                output = await asyncio.to_thread(
+                                    _run_tool, name, args, notify=notify,
+                                    manual_stop_event=manual_stop_event,
+                                    confirm_pending=confirm_pending,
+                                )
+                                await session.send_tool_response(
+                                    function_responses=[genai_types.FunctionResponse(
+                                        id=call_id,
+                                        name=name,
+                                        response={"output": output},
+                                    )]
+                                )
+
+                        if stop.is_set():
+                            return
+
+                send_task = asyncio.create_task(_send_mic_audio())
+                watch_task = asyncio.create_task(_watch_idle_and_manual_stop())
+                events_task = asyncio.create_task(_handle_events())
+
+                done, pending = await asyncio.wait(
+                    {send_task, watch_task, events_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                stop.set()
+                for t in pending:
+                    t.cancel()
+                for t in (send_task, watch_task, events_task):
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                for t in done:
+                    if t.exception() is not None:
+                        raise t.exception()
+    except RealtimeUnavailable:
+        raise
+    except Exception as exc:
+        raise RealtimeUnavailable(str(exc)) from exc
+
+
+async def _run_session_openai_async(manual_stop_event: threading.Event, notify) -> None:
     if not config.OPENAI_API_KEY:
         raise RealtimeUnavailable("OPENAI_API_KEY is not set")
 

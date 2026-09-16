@@ -1,0 +1,2392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeuroPACA — The Biological Blueprint (Refined)</title>
+<style>
+/* ==========================================================================
+   NEUROPACA vs. HUMAN BIOLOGY: DESIGN SYSTEM (v2 ELEVATED)
+   Strictly Zero External Requests (Zero Egress Principle)
+   Elevated Glassmorphism, Dual Motion Language, System & Local Serif Fonts
+   ========================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Canvas & Glassmorphic Surface */
+  --bg-gradient: linear-gradient(135deg, #f8f6fb 0%, #f2f7f6 50%, #eef6f5 100%);
+  --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.45) 100%);
+  --glass-radius: 20px;
+
+  /* Elevated Glass Recipe */
+  --glass-shadow:
+    0 8px 32px rgba(31, 38, 135, 0.08),
+    0 2px 8px rgba(31, 38, 135, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(31, 38, 135, 0.05);
+
+  --glass-shadow-hover:
+    0 16px 44px rgba(31, 38, 135, 0.12),
+    0 4px 12px rgba(31, 38, 135, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(31, 38, 135, 0.07);
+
+  /* Typography Stacks */
+  --font-system: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, serif;
+  --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+
+  --text-slate: #3a3a4a;
+  --text-muted: #646478;
+  --text-dim: #8c8c9e;
+
+  /* Color Families */
+  --human-coral: #ff8a7a;
+  --human-amber: #f6d365;
+  --human-glow: rgba(255, 138, 122, 0.28);
+  --digital-mint: #6ee7d0;
+  --digital-teal: #2dd4bf;
+  --digital-indigo: #a5b4fc;
+  --digital-glow: rgba(110, 231, 208, 0.32);
+
+  /* Unified Outline Badges */
+  --badge-built-border: #2dd4bf;
+  --badge-built-bg: rgba(110, 231, 208, 0.14);
+  --badge-built-text: #0d6859;
+
+  --badge-partial-border: #f59e0b;
+  --badge-partial-bg: rgba(246, 211, 101, 0.16);
+  --badge-partial-text: #92400e;
+
+  --badge-planned-border: #94a3b8;
+  --badge-planned-bg: rgba(226, 232, 240, 0.45);
+  --badge-planned-text: #475569;
+
+  /* Master Clock Cycle */
+  --cycle-dur: 4.0s;
+
+  /* Dual Motion Easing Functions */
+  --ease-human: cubic-bezier(0.34, 1.56, 0.64, 1);    /* Organic spring/overshoot */
+  --ease-human-soft: cubic-bezier(0.25, 1, 0.5, 1);   /* Biological fluid deceleration */
+  --ease-digital: cubic-bezier(0.4, 0, 0.2, 1);       /* Sharp, mechanical, no overshoot */
+  --ease-digital-step: steps(4, jump-end);            /* Quantized clockwork steps */
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-system);
+  color: var(--text-slate);
+  background: var(--bg-gradient);
+  background-attachment: fixed;
+  min-height: 100vh;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Atmospheric mist ambient light background */
+body::before {
+  content: "";
+  position: fixed;
+  top: -14vw;
+  left: -10vw;
+  width: 55vw;
+  height: 55vw;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 138, 122, 0.08) 0%, transparent 68%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  bottom: -15vw;
+  right: -10vw;
+  width: 58vw;
+  height: 58vw;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(110, 231, 208, 0.10) 0%, transparent 68%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Top Progress Bar for Mobile (< 700px) */
+.mobile-progress-bar {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: rgba(58, 58, 74, 0.06);
+  z-index: 999;
+}
+.mobile-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--human-coral) 0%, var(--digital-teal) 100%);
+  transition: width 0.05s linear;
+}
+
+/* Sticky Progress Rail for Desktop (> 700px) */
+.progress-rail {
+  position: fixed;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.70);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 4px 24px rgba(31, 38, 135, 0.08);
+  padding: 14px 9px;
+  border-radius: 999px;
+}
+
+.rail-dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgba(58, 58, 74, 0.22);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.22s var(--ease-human), background-color 0.22s ease, box-shadow 0.22s ease;
+  position: relative;
+  display: block;
+  text-decoration: none;
+}
+
+.rail-dot:hover {
+  background: var(--digital-teal);
+  transform: scale(1.25);
+}
+
+.rail-dot.is-active {
+  background: #10b981;
+  border-color: #ffffff;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.7);
+  transform: scale(1.35);
+}
+
+.rail-tooltip {
+  position: absolute;
+  right: 26px;
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 3px 12px rgba(31, 38, 135, 0.10);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-slate);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s var(--ease-human);
+}
+
+.rail-dot:hover .rail-tooltip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.page-wrapper {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 52px 24px 80px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ==========================================================================
+   HERO HEADER
+   ========================================================================== */
+.hero {
+  text-align: center;
+  margin-bottom: 42px;
+  padding: 0 12px;
+}
+
+.hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.90);
+  box-shadow: 0 2px 12px rgba(31, 38, 135, 0.05);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.hero-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--human-coral), var(--digital-mint));
+}
+
+.hero-title {
+  font-size: clamp(2.2rem, 4.4vw, 3.3rem);
+  font-weight: 850;
+  letter-spacing: -0.035em;
+  color: var(--text-slate);
+  line-height: 1.14;
+  margin-bottom: 18px;
+}
+
+.hero-title span.coral {
+  color: #ea5845;
+}
+
+.hero-title span.teal {
+  color: #0d9488;
+}
+
+.hero-subtitle {
+  max-width: 760px;
+  margin: 0 auto;
+  font-size: clamp(1.05rem, 1.8vw, 1.22rem);
+  color: var(--text-muted);
+  line-height: 1.62;
+  font-weight: 400;
+}
+
+/* ==========================================================================
+   1. OPENING SYSTEM MAP CARD (VISION.md §2 Topology)
+   ========================================================================== */
+.system-map-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid;
+  border-color: rgba(255, 255, 255, 0.85) rgba(255, 255, 255, 0.55) rgba(255, 255, 255, 0.40) rgba(255, 255, 255, 0.70);
+  box-shadow: var(--glass-shadow);
+  border-radius: var(--glass-radius);
+  margin-bottom: 48px;
+  padding: 30px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.system-map-card:hover {
+  box-shadow: var(--glass-shadow-hover);
+}
+
+.map-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.map-title {
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--text-slate);
+  margin-top: 4px;
+}
+
+.map-subtitle {
+  font-size: 0.94rem;
+  color: var(--text-muted);
+  max-width: 680px;
+  line-height: 1.5;
+}
+
+.map-canvas-container {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: inset 0 2px 8px rgba(31, 38, 135, 0.03);
+  border-radius: 14px;
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.map-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Map Node Interactive Elements */
+.map-node-link {
+  cursor: pointer;
+  outline: none;
+}
+
+.map-node-rect {
+  fill: rgba(255, 255, 255, 0.92);
+  stroke: rgba(165, 180, 252, 0.5);
+  stroke-width: 1.4px;
+  transition: all 0.22s var(--ease-digital);
+  filter: drop-shadow(0 2px 6px rgba(31, 38, 135, 0.04));
+}
+
+.map-node-link:hover .map-node-rect,
+.map-node-link:focus .map-node-rect {
+  fill: #ffffff;
+  stroke: var(--digital-teal);
+  stroke-width: 2px;
+  filter: drop-shadow(0 4px 14px rgba(45, 212, 191, 0.35));
+}
+
+.map-node-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  fill: var(--text-slate);
+  font-family: var(--font-system);
+}
+
+.map-node-sub {
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  fill: var(--text-muted);
+}
+
+/* ==========================================================================
+   2. ELEVATED GLASS COMPARISON CARDS (01 - 06)
+   ========================================================================== */
+.comparison-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid;
+  border-color: rgba(255, 255, 255, 0.85) rgba(255, 255, 255, 0.55) rgba(255, 255, 255, 0.40) rgba(255, 255, 255, 0.70);
+  box-shadow: var(--glass-shadow);
+  border-radius: var(--glass-radius);
+  margin-bottom: 44px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.comparison-card:hover {
+  box-shadow: var(--glass-shadow-hover);
+  border-color: rgba(255, 255, 255, 0.95) rgba(255, 255, 255, 0.75) rgba(255, 255, 255, 0.60) rgba(255, 255, 255, 0.85);
+}
+
+/* Diagonal Specular Sweep on Hover */
+.comparison-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.0) 20%,
+    rgba(255, 255, 255, 0.38) 50%,
+    rgba(255, 255, 255, 0.0) 80%,
+    transparent 100%
+  );
+  transform: skewX(-24deg);
+  pointer-events: none;
+  z-index: 10;
+  transition: none;
+}
+
+.comparison-card:hover::before {
+  left: 220%;
+  transition: left 0.65s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.card-side {
+  padding: 34px 32px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.side-human {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 237, 233, 0.16) 100%);
+}
+
+.side-digital {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(235, 250, 247, 0.18) 100%);
+}
+
+/* Oversized Ghost Numeral behind Human Header */
+.ghost-numeral {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  font-size: clamp(4.4rem, 6.5vw, 6.2rem);
+  font-weight: 900;
+  line-height: 1;
+  font-family: var(--font-system);
+  color: rgba(58, 58, 74, 0.048);
+  user-select: none;
+  pointer-events: none;
+  z-index: 0;
+  letter-spacing: -0.05em;
+}
+
+/* Header Elements & Staggered Reveal */
+.side-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.facet-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.facet-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.tag-human {
+  color: #d94b37;
+}
+
+.tag-human .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--human-coral);
+}
+
+.tag-digital {
+  color: #0f766e;
+}
+
+.tag-digital .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--digital-teal);
+}
+
+.side-title {
+  font-size: 1.38rem;
+  font-weight: 800;
+  letter-spacing: -0.022em;
+  color: var(--text-slate);
+  line-height: 1.25;
+}
+
+/* 6. TYPOGRAPHIC HIERARCHY: SERIF PULL-QUOTE */
+.side-pullquote {
+  font-family: var(--font-serif);
+  font-size: 1.08rem;
+  font-style: italic;
+  line-height: 1.48;
+  margin-bottom: 16px;
+  position: relative;
+  padding-left: 14px;
+}
+
+.side-human .side-pullquote {
+  color: #a83d2e;
+  border-left: 2.5px solid var(--human-coral);
+}
+
+.side-digital .side-pullquote {
+  color: #0b6b5c;
+  border-left: 2.5px solid var(--digital-teal);
+}
+
+/* 8. BADGE SYSTEM UNIFICATION (OUTLINE CHIPS) */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+}
+
+.badge-icon {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.badge-built {
+  border: 1.5px solid var(--badge-built-border);
+  background: var(--badge-built-bg);
+  color: var(--badge-built-text);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.12);
+}
+
+.badge-partial {
+  border: 1.5px dashed var(--badge-partial-border);
+  background: var(--badge-partial-bg);
+  color: var(--badge-partial-text);
+}
+
+.badge-planned {
+  border: 1.5px dotted var(--badge-planned-border);
+  background: var(--badge-planned-bg);
+  color: var(--badge-planned-text);
+}
+
+/* Center Divider with '≈' Glyph */
+.divider-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 38px;
+  z-index: 2;
+}
+
+.divider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(58, 58, 74, 0.12) 15%,
+    rgba(58, 58, 74, 0.12) 85%,
+    transparent 100%
+  );
+}
+
+.divider-glyph {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 10px rgba(31, 38, 135, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-slate);
+  position: relative;
+  z-index: 3;
+}
+
+/* Animation Stage Container */
+.stage-container {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: inset 0 2px 8px rgba(31, 38, 135, 0.03);
+  border-radius: 14px;
+  padding: 14px;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.stage-svg {
+  width: 100%;
+  height: 100%;
+  max-height: 220px;
+  display: block;
+}
+
+/* Captions & Metadata */
+.side-caption {
+  font-size: 0.94rem;
+  color: var(--text-slate);
+  line-height: 1.58;
+  margin-bottom: 16px;
+}
+
+.side-mechanism {
+  margin-top: auto;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.50);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 10px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.side-mechanism strong {
+  color: var(--text-slate);
+  font-weight: 700;
+}
+
+.side-mechanism code {
+  font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.79rem;
+  color: #115e59;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Staggered Entrance Reveal on Scroll-Into-View */
+.comparison-card .facet-meta {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s var(--ease-human);
+  transition-delay: 0ms;
+}
+.comparison-card .side-title {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s var(--ease-human);
+  transition-delay: 80ms;
+}
+.comparison-card .side-pullquote {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.4s ease, transform 0.4s var(--ease-human);
+  transition-delay: 160ms;
+}
+.comparison-card .side-caption {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s var(--ease-human);
+  transition-delay: 240ms;
+}
+.comparison-card .side-mechanism {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s var(--ease-human);
+  transition-delay: 320ms;
+}
+
+.comparison-card.is-in-view .facet-meta,
+.comparison-card.is-in-view .side-title,
+.comparison-card.is-in-view .side-pullquote,
+.comparison-card.is-in-view .side-caption,
+.comparison-card.is-in-view .side-mechanism {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ==========================================================================
+   10. FOOTER WITH COMPLETION BAR & UNIFIED LEGEND
+   ========================================================================== */
+.footer {
+  text-align: center;
+  padding: 30px 16px 20px;
+}
+
+.completion-bar-container {
+  max-width: 520px;
+  margin: 0 auto 24px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: var(--glass-shadow);
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+
+.completion-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-slate);
+  margin-bottom: 10px;
+}
+
+.completion-stats {
+  font-family: var(--font-mono);
+  color: #0f766e;
+}
+
+.completion-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(58, 58, 74, 0.08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+  gap: 2px;
+}
+
+.bar-segment {
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.seg-built {
+  background: #2dd4bf;
+}
+.seg-partial {
+  background: #f59e0b;
+}
+.seg-planned {
+  background: #94a3b8;
+}
+
+.legend-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: var(--glass-shadow);
+  border-radius: 999px;
+  padding: 10px 24px;
+  margin-bottom: 20px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-slate);
+}
+
+.footer-manifesto {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+/* ==========================================================================
+   RESPONSIVENESS (COLLAPSE UNDER 700PX)
+   ========================================================================== */
+@media (max-width: 768px) {
+  .card-side {
+    padding: 26px 22px;
+  }
+  .side-title {
+    font-size: 1.25rem;
+  }
+  .ghost-numeral {
+    font-size: 4.5rem;
+  }
+}
+
+@media (max-width: 700px) {
+  .progress-rail {
+    display: none;
+  }
+  .mobile-progress-bar {
+    display: block;
+  }
+  .page-wrapper {
+    padding: 32px 14px 60px;
+  }
+  .comparison-card {
+    grid-template-columns: 1fr;
+  }
+  .divider-col {
+    width: 100%;
+    height: 38px;
+    flex-direction: row;
+    padding: 0 16px;
+  }
+  .divider-line {
+    top: 50%;
+    bottom: auto;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(to right,
+      transparent 0%,
+      rgba(58, 58, 74, 0.12) 15%,
+      rgba(58, 58, 74, 0.12) 85%,
+      transparent 100%
+    );
+  }
+}
+
+/* ==========================================================================
+   3 & 4. DUAL MOTION LANGUAGE & SYNCHRONIZED MASTER CLOCK
+   Human: Organic spring easing cubic-bezier(0.34, 1.56, 0.64, 1)
+   Digital: Mechanical easing cubic-bezier(0.4, 0, 0.2, 1) / steps(n) / linear
+   Master Cycle: 4.0s (exact cause -> effect lockstep timing)
+   ========================================================================== */
+
+/* Animations active only when card is in view */
+.comparison-card .anim-human,
+.comparison-card .anim-digital,
+.system-map-card .anim-map {
+  animation-play-state: paused;
+}
+.comparison-card.is-in-view .anim-human,
+.comparison-card.is-in-view .anim-digital,
+.system-map-card.is-in-view .anim-map {
+  animation-play-state: running;
+}
+
+/* System Map Signal Flow */
+@keyframes mapSignalFlow {
+  0% { offset-distance: 0%; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
+/* --- SECTION 1: SYNAPSE & HEBBIAN GRAPH ---
+   Synchronized:
+   40%: Vesicle reaches cleft (Human organic spring)
+   48%: Neurotransmitters hit dendritic receptors
+   48%: Exact same instant -> Digital packet surges along Edge A-B!
+   60%: Peak Hebbian thickening w=0.94; edge C-D linearly steps down
+   -------------------------------------------------------------------------- */
+@keyframes s1_vesicleTravel {
+  0% { transform: translateY(0) scale(0.9); opacity: 0.3; }
+  25% { transform: translateY(35px) scale(1); opacity: 0.9; }
+  45% { transform: translateY(85px) scale(1.08); opacity: 1; }
+  55% { transform: translateY(118px) scale(1.15); opacity: 0.95; }
+  65% { transform: translateY(132px) scale(0.6); opacity: 0; }
+  100% { transform: translateY(0) scale(0.9); opacity: 0; }
+}
+
+@keyframes s1_cleftSpray {
+  0%, 42% { opacity: 0; transform: translateY(0) scale(0.6); }
+  48% { opacity: 1; transform: translateY(14px) scale(1.2); }
+  62% { opacity: 0.9; transform: translateY(38px) scale(1.0); }
+  75% { opacity: 0.2; transform: translateY(50px) scale(0.7); }
+  85%, 100% { opacity: 0; transform: translateY(54px) scale(0.5); }
+}
+
+@keyframes s1_dendriteFlash {
+  0%, 47% {
+    fill: rgba(255, 138, 122, 0.15);
+    stroke: rgba(255, 138, 122, 0.35);
+    filter: none;
+  }
+  52% {
+    fill: rgba(246, 211, 101, 0.45);
+    stroke: #ff8a7a;
+    filter: drop-shadow(0 0 12px rgba(255, 138, 122, 0.8));
+  }
+  75% {
+    fill: rgba(255, 138, 122, 0.25);
+    stroke: #ff8a7a;
+  }
+  100% {
+    fill: rgba(255, 138, 122, 0.15);
+    stroke: rgba(255, 138, 122, 0.35);
+    filter: none;
+  }
+}
+
+@keyframes s1_hebbianThicken {
+  0%, 47% {
+    stroke-width: 2.2px;
+    stroke: #6ee7d0;
+    filter: drop-shadow(0 0 2px rgba(110, 231, 208, 0.3));
+  }
+  56%, 75% {
+    stroke-width: 6.2px;
+    stroke: #2dd4bf;
+    filter: drop-shadow(0 0 10px rgba(45, 212, 191, 0.95));
+  }
+  92%, 100% {
+    stroke-width: 3.2px;
+    stroke: #6ee7d0;
+    filter: drop-shadow(0 0 3px rgba(110, 231, 208, 0.4));
+  }
+}
+
+@keyframes s1_dataPacketTravel {
+  0%, 47% { offset-distance: 0%; opacity: 0; }
+  49% { opacity: 1; }
+  68% { offset-distance: 100%; opacity: 1; }
+  75%, 100% { offset-distance: 100%; opacity: 0; }
+}
+
+@keyframes s1_decayThin {
+  0%, 40% { stroke-width: 2.2px; opacity: 0.65; }
+  60% { stroke-width: 1.5px; opacity: 0.45; }
+  85%, 100% { stroke-width: 0.85px; opacity: 0.14; }
+}
+
+/* --- SECTION 2: EYE TRACKING & PASSIVE SENSORS ---
+   Synchronized:
+   35%: Eye saccade locks onto target dot (organic spring)
+   35%: Exact lockstep -> Row 1 (FOCUS: neovim) mechanically steps to LOCKED!
+   -------------------------------------------------------------------------- */
+@keyframes s2_focalSaccade {
+  0% { transform: translate(160px, 95px); }
+  25% { transform: translate(255px, 65px); }
+  50% { transform: translate(200px, 128px); }
+  75% { transform: translate(265px, 105px); }
+  100% { transform: translate(160px, 95px); }
+}
+
+@keyframes s2_irisTrack {
+  0% { transform: translate(0px, 0px) scale(1); }
+  25% { transform: translate(20px, -7px) scale(1.06); }
+  50% { transform: translate(8px, 9px) scale(0.96); }
+  75% { transform: translate(22px, 3px) scale(1.07); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+@keyframes s2_soundwaveArc {
+  0% { transform: scale(0.65); opacity: 0.85; stroke-width: 3px; }
+  50% { opacity: 0.4; stroke-width: 2px; }
+  100% { transform: scale(1.5); opacity: 0; stroke-width: 0.7px; }
+}
+
+@keyframes s2_ekgLinearScan {
+  0% { stroke-dashoffset: 400; }
+  100% { stroke-dashoffset: 0; }
+}
+
+@keyframes s2_sensorRowHighlight {
+  0%, 22% { background: rgba(255, 255, 255, 0.45); border-color: rgba(255, 255, 255, 0.6); }
+  26%, 70% { background: rgba(110, 231, 208, 0.24); border-color: #2dd4bf; box-shadow: 0 0 14px rgba(45, 212, 191, 0.3); }
+  85%, 100% { background: rgba(255, 255, 255, 0.45); border-color: rgba(255, 255, 255, 0.6); }
+}
+
+/* --- SECTION 3: HIPPOCAMPUS & EPISODIC LOG ---
+   Synchronized:
+   45%: Fluid memory particles dock inside hippocampal fold
+   48%: Discrete episodic record card mechanically locks into timeline
+   -------------------------------------------------------------------------- */
+@keyframes s3_particleToHippo {
+  0% { offset-distance: 0%; opacity: 0; transform: scale(0.7); }
+  15% { opacity: 1; }
+  75% { opacity: 1; transform: scale(1.15); }
+  100% { offset-distance: 100%; opacity: 0.35; transform: scale(0.85); }
+}
+
+@keyframes s3_hippoPulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(255, 138, 122, 0.3)); fill: rgba(255, 138, 122, 0.24); }
+  48% { filter: drop-shadow(0 0 16px rgba(246, 211, 101, 0.85)); fill: rgba(246, 211, 101, 0.48); }
+}
+
+@keyframes s3_logCardStep {
+  0% { transform: translateY(48px); opacity: 0; }
+  18% { transform: translateY(32px); opacity: 0.8; }
+  45% { transform: translateY(16px); opacity: 1; }
+  75% { transform: translateY(0px); opacity: 1; }
+  92% { opacity: 0.7; transform: translateY(-8px); }
+  100% { transform: translateY(-16px); opacity: 0; }
+}
+
+@keyframes s3_dbLatchPulse {
+  0%, 55% { transform: scale(1); filter: drop-shadow(0 0 3px rgba(110, 231, 208, 0.3)); }
+  68% { transform: scale(1.16); filter: drop-shadow(0 0 12px rgba(45, 212, 191, 0.95)); }
+  85%, 100% { transform: scale(1); filter: drop-shadow(0 0 3px rgba(110, 231, 208, 0.3)); }
+}
+
+/* --- SECTION 4: SLEEP & PRUNING CONSOLIDATION ---
+   Synchronized:
+   45%: Memory particles converge into 2 consolidated nodes
+   50%: Stepped idle pass prunes dead-hub node (steps)
+   -------------------------------------------------------------------------- */
+@keyframes s4_dreamParticlesMerge {
+  0% { transform: scale(1) translate(0, 0); opacity: 0.45; }
+  45% { transform: scale(0.65) translate(28px, 18px); opacity: 0.85; }
+  75%, 100% { transform: scale(0) translate(40px, 26px); opacity: 0; }
+}
+
+@keyframes s4_consolidateCore {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(165, 180, 252, 0.4)); stroke: #a5b4fc; }
+  50% { filter: drop-shadow(0 0 14px rgba(45, 212, 191, 0.85)); stroke: #2dd4bf; stroke-width: 5px; }
+}
+
+@keyframes s4_deadHubSteppedPrune {
+  0%, 35% { opacity: 0.88; transform: scale(1); }
+  52% { opacity: 0.50; transform: scale(0.92); stroke-dasharray: 4 3; }
+  72% { opacity: 0.20; transform: scale(0.70); }
+  85%, 100% { opacity: 0; transform: scale(0.35); pointer-events: none; }
+}
+
+/* --- SECTION 5: PFC & ATTENTION/JUDGMENT GATE ---
+   Synchronized:
+   22%: Low-priority packet sharply bounces off closed gate
+   68%: High-priority packet triggers mechanical gate rotation (sharp mechanical swing)
+   -------------------------------------------------------------------------- */
+@keyframes s5_pfcShieldPulse {
+  0%, 100% { stroke: rgba(255, 138, 122, 0.4); filter: drop-shadow(0 0 3px rgba(255, 138, 122, 0.2)); }
+  45% { stroke: rgba(255, 138, 122, 0.95); filter: drop-shadow(0 0 14px rgba(255, 138, 122, 0.75)); }
+}
+
+@keyframes s5_sharpBounceNoise {
+  0% { transform: translate(20px, 105px); opacity: 0; }
+  20% { transform: translate(140px, 105px); opacity: 1; }
+  35% { transform: translate(182px, 105px); opacity: 1; }
+  50% { transform: translate(115px, 55px); opacity: 0.6; }
+  70%, 100% { transform: translate(85px, 30px); opacity: 0; }
+}
+
+@keyframes s5_gateMechanicalSwing {
+  0%, 62% { transform: rotate(0deg); }
+  68%, 84% { transform: rotate(-58deg); }
+  92%, 100% { transform: rotate(0deg); }
+}
+
+@keyframes s5_passPriorityPacket {
+  0%, 52% { transform: translate(20px, 105px); opacity: 0; }
+  64% { transform: translate(160px, 105px); opacity: 1; }
+  74% { transform: translate(220px, 105px); opacity: 1; filter: drop-shadow(0 0 8px #2dd4bf); }
+  90% { transform: translate(320px, 105px); opacity: 1; }
+  100% { transform: translate(350px, 105px); opacity: 0; }
+}
+
+/* --- SECTION 6: SPEAKING/ACTION & SAFE NOTIFICATION ---
+   Synchronized:
+   30%: Vocal acoustic wave blooms with organic spring
+   30%: Notification toast slides down with mechanical precision
+   -------------------------------------------------------------------------- */
+@keyframes s6_speechWaveBloom {
+  0% { transform: scale(0.8) translate(0, 0); opacity: 0; }
+  30% { opacity: 0.95; }
+  75% { transform: scale(1.24) translate(14px, -8px); opacity: 0.7; }
+  100% { transform: scale(1.42) translate(22px, -14px); opacity: 0; }
+}
+
+@keyframes s6_handDeliberateTap {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  45% { transform: translate(4px, -10px) rotate(-3deg); }
+  58% { transform: translate(6px, 2px) rotate(2deg); }
+  72% { transform: translate(0, 0) rotate(0deg); }
+}
+
+@keyframes s6_toastMechanicalSlide {
+  0%, 15% { transform: translateY(-40px); opacity: 0; }
+  28%, 84% { transform: translateY(0); opacity: 1; }
+  95%, 100% { transform: translateY(-8px); opacity: 0; }
+}
+
+@keyframes s6_padlockPrecisionShine {
+  0%, 100% { filter: drop-shadow(0 0 3px rgba(165, 180, 252, 0.4)); }
+  45% { filter: drop-shadow(0 0 10px rgba(45, 212, 191, 0.85)); }
+}
+
+/* ==========================================================================
+   ACCESSIBILITY: PREFERS-REDUCED-MOTION
+   Freezes each animation on its settled, informative end-state
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after, svg * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    animation-fill-mode: forwards !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .comparison-card::before {
+    display: none !important;
+  }
+
+  .comparison-card .facet-meta,
+  .comparison-card .side-title,
+  .comparison-card .side-pullquote,
+  .comparison-card .side-caption,
+  .comparison-card .side-mechanism {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  /* Explicit settled configurations */
+  .s1-hebbian-edge {
+    stroke-width: 5.5px !important;
+    stroke: #2dd4bf !important;
+    filter: drop-shadow(0 0 8px rgba(45, 212, 191, 0.8)) !important;
+  }
+  .s1-decay-edge {
+    stroke-width: 0.85px !important;
+    opacity: 0.14 !important;
+  }
+  .s1-dendrite {
+    fill: rgba(246, 211, 101, 0.35) !important;
+    stroke: #ff8a7a !important;
+  }
+  .s2-iris-group {
+    transform: translate(16px, 0px) scale(1.03) !important;
+  }
+  .s2-focal-target {
+    transform: translate(250px, 95px) !important;
+  }
+  .s2-row-active {
+    background: rgba(110, 231, 208, 0.25) !important;
+    border-color: #2dd4bf !important;
+  }
+  .s3-hippo-path {
+    fill: rgba(246, 211, 101, 0.45) !important;
+    filter: drop-shadow(0 0 10px rgba(246, 211, 101, 0.8)) !important;
+  }
+  .s3-log-card {
+    transform: translateY(0px) !important;
+    opacity: 1 !important;
+  }
+  .s4-dead-hub {
+    opacity: 0 !important;
+  }
+  .s4-core-edge {
+    stroke: #2dd4bf !important;
+    stroke-width: 5px !important;
+  }
+  .s5-gate-valve {
+    transform: rotate(-55deg) !important;
+  }
+  .s5-priority-packet {
+    transform: translate(260px, 105px) !important;
+    opacity: 1 !important;
+  }
+  .s6-toast {
+    transform: translateY(0) !important;
+    opacity: 1 !important;
+  }
+  .s6-speech-bubble {
+    transform: scale(1.15) translate(8px, -4px) !important;
+    opacity: 0.85 !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- Mobile Scroll Progress Indicator (<700px) -->
+<div class="mobile-progress-bar" aria-hidden="true">
+  <div class="mobile-progress-fill" id="mobileProgressFill"></div>
+</div>
+
+<!-- Sticky Progress Rail for Desktop (>700px) -->
+<nav class="progress-rail" aria-label="Faculties navigation rail">
+  <a href="#system-map" class="rail-dot is-active" data-target="system-map" aria-label="Jump to System Map">
+    <span class="rail-tooltip">00 &middot; System Map</span>
+  </a>
+  <a href="#section-1" class="rail-dot" data-target="section-1" aria-label="Jump to Section 1: Plasticity">
+    <span class="rail-tooltip">01 &middot; Plasticity</span>
+  </a>
+  <a href="#section-2" class="rail-dot" data-target="section-2" aria-label="Jump to Section 2: Sensors">
+    <span class="rail-tooltip">02 &middot; Senses</span>
+  </a>
+  <a href="#section-3" class="rail-dot" data-target="section-3" aria-label="Jump to Section 3: Memory">
+    <span class="rail-tooltip">03 &middot; Memory</span>
+  </a>
+  <a href="#section-4" class="rail-dot" data-target="section-4" aria-label="Jump to Section 4: Dreaming">
+    <span class="rail-tooltip">04 &middot; Sleep</span>
+  </a>
+  <a href="#section-5" class="rail-dot" data-target="section-5" aria-label="Jump to Section 5: Gating">
+    <span class="rail-tooltip">05 &middot; Judgment</span>
+  </a>
+  <a href="#section-6" class="rail-dot" data-target="section-6" aria-label="Jump to Section 6: Action">
+    <span class="rail-tooltip">06 &middot; Agency</span>
+  </a>
+</nav>
+
+<div class="page-wrapper">
+
+  <!-- HERO SECTION -->
+  <header class="hero">
+    <div class="hero-pill">
+      <span class="dot"></span>
+      <span>Cognitive Ecology &middot; Zero Egress Architecture</span>
+    </div>
+    <h1 class="hero-title">
+      NeuroPACA & The <span class="coral">Biological</span> <span class="teal">Blueprint</span>
+    </h1>
+    <p class="hero-subtitle">
+      Every mechanism in NeuroPACA is the digital twin of a human biological faculty &mdash; not a chatbot bolted onto a computer, but a living mind running entirely on your laptop.
+    </p>
+  </header>
+
+  <!-- ====================================================================
+       1. OPENING SYSTEM MAP (VISION.md §2 Topology)
+       ==================================================================== -->
+  <section class="system-map-card" id="system-map" aria-label="NeuroPACA System Map">
+    <div class="map-header">
+      <div>
+        <div class="facet-tag tag-digital"><span class="dot"></span> Executive Topology &middot; VISION.md &sect;2</div>
+        <h2 class="map-title">The Cognitive Flow</h2>
+      </div>
+      <p class="map-subtitle">
+        Organised as a mind, not a pipeline. Click any faculty below to jump directly to its biological counterpart.
+      </p>
+    </div>
+
+    <div class="map-canvas-container">
+      <svg class="map-svg" viewBox="0 0 940 185" role="navigation" aria-label="Clickable pipeline map of NeuroPACA faculties">
+        <!-- Connecting Pipeline Paths (Upper Row) -->
+        <path id="path_senses_episodes" d="M 175 50 L 260 50" fill="none" stroke="rgba(45, 212, 191, 0.45)" stroke-width="2" stroke-dasharray="4 3"/>
+        <path id="path_episodes_graph" d="M 410 50 L 490 50" fill="none" stroke="rgba(45, 212, 191, 0.45)" stroke-width="2" stroke-dasharray="4 3"/>
+        <path id="path_graph_dreaming" d="M 640 50 L 730 50" fill="none" stroke="rgba(245, 158, 11, 0.5)" stroke-width="2" stroke-dasharray="4 3"/>
+
+        <!-- Feedforward to Lower Row -->
+        <path id="path_graph_attention" d="M 565 74 C 565 105, 340 100, 340 128" fill="none" stroke="rgba(45, 212, 191, 0.45)" stroke-width="2" stroke-dasharray="4 3"/>
+        <path id="path_attention_judgment" d="M 410 145 L 490 145" fill="none" stroke="rgba(148, 163, 184, 0.6)" stroke-width="2" stroke-dasharray="4 3"/>
+        <path id="path_judgment_action" d="M 640 145 L 730 145" fill="none" stroke="rgba(45, 212, 191, 0.45)" stroke-width="2" stroke-dasharray="4 3"/>
+
+        <!-- Flowing Signal Particles (Master Cycle) -->
+        <circle class="anim-map" style="offset-path: path('M 175 50 L 260 50'); animation: mapSignalFlow var(--cycle-dur) linear infinite;"
+                cx="0" cy="0" r="3.5" fill="#2dd4bf" filter="drop-shadow(0 0 4px #2dd4bf)"/>
+
+        <circle class="anim-map" style="offset-path: path('M 410 50 L 490 50'); animation: mapSignalFlow var(--cycle-dur) linear 0.7s infinite;"
+                cx="0" cy="0" r="3.5" fill="#2dd4bf" filter="drop-shadow(0 0 4px #2dd4bf)"/>
+
+        <circle class="anim-map" style="offset-path: path('M 640 50 L 730 50'); animation: mapSignalFlow var(--cycle-dur) linear 1.4s infinite;"
+                cx="0" cy="0" r="3.5" fill="#f59e0b" filter="drop-shadow(0 0 4px #f59e0b)"/>
+
+        <circle class="anim-map" style="offset-path: path('M 565 74 C 565 105, 340 100, 340 128'); animation: mapSignalFlow var(--cycle-dur) linear 1.8s infinite;"
+                cx="0" cy="0" r="3.5" fill="#2dd4bf" filter="drop-shadow(0 0 4px #2dd4bf)"/>
+
+        <circle class="anim-map" style="offset-path: path('M 410 145 L 490 145'); animation: mapSignalFlow var(--cycle-dur) linear 2.5s infinite;"
+                cx="0" cy="0" r="3.5" fill="#94a3b8" filter="drop-shadow(0 0 4px #94a3b8)"/>
+
+        <circle class="anim-map" style="offset-path: path('M 640 145 L 730 145'); animation: mapSignalFlow var(--cycle-dur) linear 3.2s infinite;"
+                cx="0" cy="0" r="3.5" fill="#2dd4bf" filter="drop-shadow(0 0 4px #2dd4bf)"/>
+
+        <!-- ROW 1: INTAKE & MEMORY -->
+        <!-- Node 1: SENSES (Sec 2) -->
+        <a href="#section-2" class="map-node-link" aria-label="Jump to Section 2: Senses">
+          <g transform="translate(25, 24)">
+            <rect class="map-node-rect" width="150" height="52" rx="10"/>
+            <circle cx="18" cy="18" r="4.5" fill="#2dd4bf"/>
+            <text class="map-node-title" x="30" y="22">SENSES (L1/L2)</text>
+            <text class="map-node-sub" x="30" y="38">focus &middot; idle &middot; load &middot; sites</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#0f766e" font-weight="700">&sect;02</text>
+          </g>
+        </a>
+
+        <!-- Node 2: EPISODIC STREAM (Sec 3) -->
+        <a href="#section-3" class="map-node-link" aria-label="Jump to Section 3: Memory Stream">
+          <g transform="translate(260, 24)">
+            <rect class="map-node-rect" width="150" height="52" rx="10"/>
+            <circle cx="18" cy="18" r="4.5" fill="#2dd4bf"/>
+            <text class="map-node-title" x="30" y="22">EPISODIC STREAM</text>
+            <text class="map-node-sub" x="30" y="38">bi-temporal events &middot; sqlite</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#0f766e" font-weight="700">&sect;03</text>
+          </g>
+        </a>
+
+        <!-- Node 3: SEMANTIC GRAPH (Sec 1) -->
+        <a href="#section-1" class="map-node-link" aria-label="Jump to Section 1: Plasticity">
+          <g transform="translate(490, 24)">
+            <rect class="map-node-rect" width="150" height="52" rx="10"/>
+            <circle cx="18" cy="18" r="4.5" fill="#2dd4bf"/>
+            <text class="map-node-title" x="30" y="22">SEMANTIC GRAPH</text>
+            <text class="map-node-sub" x="30" y="38">Hebbian &middot; half-life decay</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#0f766e" font-weight="700">&sect;01</text>
+          </g>
+        </a>
+
+        <!-- Node 4: DREAMING (Sec 4) -->
+        <a href="#section-4" class="map-node-link" aria-label="Jump to Section 4: Sleep Consolidation">
+          <g transform="translate(730, 24)">
+            <rect class="map-node-rect" width="150" height="52" rx="10" stroke="#f59e0b" stroke-dasharray="3 2"/>
+            <circle cx="18" cy="18" r="4.5" fill="#f59e0b"/>
+            <text class="map-node-title" x="30" y="22">DREAMING (IDLE)</text>
+            <text class="map-node-sub" x="30" y="38">consolidate &middot; prune &middot; reflect</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#92400e" font-weight="700">&sect;04</text>
+          </g>
+        </a>
+
+        <!-- ROW 2: DELIBERATION & ACTION -->
+        <!-- Node 5: ATTENTION RETRIEVAL -->
+        <a href="#section-5" class="map-node-link" aria-label="Jump to Section 5: Attention and Judgment">
+          <g transform="translate(260, 118)">
+            <rect class="map-node-rect" width="150" height="52" rx="10" stroke="#94a3b8" stroke-dasharray="2 2"/>
+            <circle cx="18" cy="18" r="4.5" fill="#94a3b8"/>
+            <text class="map-node-title" x="30" y="22">ATTENTION (PPR)</text>
+            <text class="map-node-sub" x="30" y="38">Personalized PageRank</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#475569" font-weight="700">&sect;05</text>
+          </g>
+        </a>
+
+        <!-- Node 6: JUDGMENT GATE (Sec 5) -->
+        <a href="#section-5" class="map-node-link" aria-label="Jump to Section 5: Judgment Gate">
+          <g transform="translate(490, 118)">
+            <rect class="map-node-rect" width="150" height="52" rx="10" stroke="#94a3b8" stroke-dasharray="2 2"/>
+            <circle cx="18" cy="18" r="4.5" fill="#f59e0b"/>
+            <text class="map-node-title" x="30" y="22">JUDGMENT GATE</text>
+            <text class="map-node-sub" x="30" y="38">Thompson sampling &middot; cost</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#92400e" font-weight="700">&sect;05</text>
+          </g>
+        </a>
+
+        <!-- Node 7: VOICE & HANDS (Sec 6) -->
+        <a href="#section-6" class="map-node-link" aria-label="Jump to Section 6: Action Gate">
+          <g transform="translate(730, 118)">
+            <rect class="map-node-rect" width="150" height="52" rx="10"/>
+            <circle cx="18" cy="18" r="4.5" fill="#2dd4bf"/>
+            <text class="map-node-title" x="30" y="22">VOICE &amp; HANDS</text>
+            <text class="map-node-sub" x="30" y="38">notifications &middot; safe-tier</text>
+            <text x="135" y="20" font-size="9" font-family="var(--font-mono)" fill="#0f766e" font-weight="700">&sect;06</text>
+          </g>
+        </a>
+      </svg>
+    </div>
+  </section>
+
+  <main>
+
+    <!-- ====================================================================
+         SECTION 1: SYNAPSE FIRING vs HEBBIAN GRAPH
+         Badge: Solid Teal Outline (Built)
+         ==================================================================== -->
+    <section class="comparison-card" id="section-1" aria-labelledby="s1-h-title s1-d-title">
+      <!-- Human Side (Left) -->
+      <div class="card-side side-human">
+        <div class="ghost-numeral" aria-hidden="true">01</div>
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-human"><span class="dot"></span> Biological Original</span>
+            <h2 id="s1-h-title" class="side-title">Synapse Firing & Potentiation</h2>
+          </div>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;A path is not built, then used; it is built by being used.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Presynaptic axon terminal releasing neurotransmitter vesicles across synaptic cleft into dendritic receptors">
+            <!-- Presynaptic Bulb -->
+            <path d="M 120 10 C 120 70, 70 85, 70 115 C 70 135, 110 145, 180 145 C 250 145, 290 135, 290 115 C 290 85, 240 70, 240 10 Z"
+                  fill="rgba(255, 138, 122, 0.16)" stroke="#ff8a7a" stroke-width="2" stroke-linejoin="round"/>
+            <text x="180" y="38" text-anchor="middle" font-size="11" fill="#ea5845" font-weight="750" letter-spacing="0.05em">AXON TERMINAL</text>
+
+            <!-- Synaptic Vesicles inside Bulb -->
+            <circle cx="140" cy="72" r="9" fill="rgba(255, 138, 122, 0.3)" stroke="#ff8a7a" stroke-width="1.5"/>
+            <circle cx="215" cy="68" r="8" fill="rgba(255, 138, 122, 0.3)" stroke="#ff8a7a" stroke-width="1.5"/>
+            <circle cx="178" cy="92" r="10" fill="rgba(255, 138, 122, 0.3)" stroke="#ff8a7a" stroke-width="1.5"/>
+
+            <!-- Moving Active Vesicle (Organic spring release) -->
+            <g class="anim-human" style="animation: s1_vesicleTravel var(--cycle-dur) var(--ease-human) infinite;">
+              <circle cx="180" cy="18" r="9" fill="rgba(246, 211, 101, 0.5)" stroke="#f6d365" stroke-width="2"/>
+              <circle cx="180" cy="18" r="3.5" fill="#ea5845"/>
+            </g>
+
+            <!-- Cleft Neurotransmitter Sprays -->
+            <g class="anim-human" style="animation: s1_cleftSpray var(--cycle-dur) var(--ease-human) infinite;">
+              <circle cx="165" cy="138" r="3" fill="#f6d365"/>
+              <circle cx="180" cy="140" r="3.5" fill="#ff8a7a"/>
+              <circle cx="195" cy="138" r="3" fill="#f6d365"/>
+              <circle cx="155" cy="148" r="2.5" fill="#ea5845"/>
+              <circle cx="205" cy="148" r="2.5" fill="#ea5845"/>
+            </g>
+
+            <!-- Synaptic Cleft Bracket -->
+            <line x1="45" y1="145" x2="45" y2="175" stroke="#ea5845" stroke-width="1" stroke-dasharray="2 2"/>
+            <text x="38" y="163" text-anchor="end" font-size="10" fill="#ea5845" font-weight="700">Cleft ≈ 20nm</text>
+
+            <!-- Dendritic Spine with Receptors -->
+            <path class="s1-dendrite anim-human" style="animation: s1_dendriteFlash var(--cycle-dur) var(--ease-human) infinite;"
+                  d="M 60 205 C 80 175, 130 170, 150 178 C 158 182, 168 182, 175 177 C 185 170, 205 170, 215 178 C 222 182, 232 182, 240 175 C 260 170, 290 178, 300 205 Z"
+                  fill="rgba(255, 138, 122, 0.16)" stroke="#ff8a7a" stroke-width="2"/>
+            <text x="180" y="198" text-anchor="middle" font-size="10" fill="#ea5845" font-weight="750">POSTSYNAPTIC DENDRITE</text>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          When two neurons fire in close temporal succession, neurotransmitter vesicles cross the synaptic gap, physically multiplying receptor channels. Repeated signaling cements the route &mdash; unused pathways wither.
+        </p>
+        <div class="side-mechanism">
+          <strong>Biology:</strong> Long-Term Potentiation (LTP) &middot; <em>&ldquo;Fire together, wire together&rdquo;</em>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider-col" aria-hidden="true">
+        <div class="divider-line"></div>
+        <div class="divider-glyph">&asymp;</div>
+      </div>
+
+      <!-- Digital Side (Right) -->
+      <div class="card-side side-digital">
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-digital"><span class="dot"></span> NeuroPACA Component</span>
+            <h2 id="s1-d-title" class="side-title">Hebbian Graph Strengthening</h2>
+          </div>
+          <span class="badge badge-built" title="Status: Built in NeuroPACA">
+            <svg class="badge-icon" viewBox="0 0 16 16"><path d="M3 8.5 L6.5 12 L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Built
+          </span>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Association weights grow with co-activity, decaying with uptime into forgotten quiet.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="NeuroPACA mini-graph showing active edge thickening in lockstep with synapse and unused edge decaying">
+            <!-- Background Topology Edges -->
+            <line x1="85" y1="65" x2="85" y2="155" stroke="rgba(165, 180, 252, 0.3)" stroke-width="1.2" stroke-dasharray="3 3"/>
+            <line x1="85" y1="65" x2="275" y2="155" stroke="rgba(165, 180, 252, 0.25)" stroke-width="1"/>
+            <line x1="275" y1="65" x2="85" y2="155" stroke="rgba(165, 180, 252, 0.25)" stroke-width="1"/>
+
+            <!-- Active Co-used Edge (Terminal <-> Neovim, mechanically locked to transmitter strike) -->
+            <line class="s1-hebbian-edge anim-digital" style="animation: s1_hebbianThicken var(--cycle-dur) var(--ease-digital) infinite;"
+                  x1="85" y1="65" x2="275" y2="65" stroke="#2dd4bf" stroke-linecap="round"/>
+
+            <!-- Moving Data Packet along Active Edge (mechanical timing) -->
+            <circle class="anim-digital" style="offset-path: path('M 85 65 L 275 65'); animation: s1_dataPacketTravel var(--cycle-dur) var(--ease-digital) infinite;"
+                    cx="0" cy="0" r="5" fill="#2dd4bf" filter="drop-shadow(0 0 6px #2dd4bf)"/>
+
+            <!-- Unused Edge with Half-life Decay (Browser <-> Music, quantized step down) -->
+            <line class="s1-decay-edge anim-digital" style="animation: s1_decayThin var(--cycle-dur) var(--ease-digital-step) infinite;"
+                  x1="85" y1="155" x2="275" y2="155" stroke="#a5b4fc" stroke-dasharray="4 4" stroke-linecap="round"/>
+
+            <!-- 9. FORMULA TYPESETTING WITH REAL TSPANS -->
+            <g transform="translate(180, 48)">
+              <rect x="-78" y="-13" width="156" height="22" rx="11" fill="rgba(255, 255, 255, 0.94)" stroke="rgba(45, 212, 191, 0.8)" stroke-width="1.2" filter="drop-shadow(0 2px 6px rgba(110,231,208,0.2))"/>
+              <text x="0" y="2" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="#0d6859" font-weight="600">
+                <tspan font-style="italic">w</tspan>
+                <tspan dx="2">&larr;</tspan>
+                <tspan dx="2" font-style="italic">w</tspan>
+                <tspan dx="1">+</tspan>
+                <tspan dx="1" font-style="italic">&eta;&middot;c</tspan><tspan dx="1">(1 &minus;</tspan>
+                <tspan dx="1" font-style="italic">w</tspan><tspan>)</tspan>
+                <tspan dx="4" font-weight="700" fill="#047857">[0.94]</tspan>
+              </text>
+            </g>
+
+            <g transform="translate(180, 172)">
+              <rect x="-85" y="-11" width="170" height="20" rx="10" fill="rgba(255, 255, 255, 0.90)" stroke="rgba(165, 180, 252, 0.6)" stroke-width="1"/>
+              <text x="0" y="3" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="#475569">
+                <tspan font-style="italic">w</tspan>(<tspan font-style="italic">t</tspan>+&Delta;<tspan font-style="italic">t</tspan>) =
+                <tspan font-style="italic">w</tspan>(<tspan font-style="italic">t</tspan>)&middot;2<tspan dy="-5" font-size="75%">&minus;&Delta;<tspan font-style="italic">t</tspan>/<tspan font-style="italic">T</tspan><tspan dy="3" font-size="80%">1/2</tspan></tspan>
+                <tspan dy="2" dx="3" fill="#64748b">&rarr; 0</tspan>
+              </text>
+            </g>
+
+            <!-- Graph Nodes -->
+            <g transform="translate(85, 65)">
+              <circle r="22" fill="rgba(255, 255, 255, 0.95)" stroke="#2dd4bf" stroke-width="2.5" filter="drop-shadow(0 2px 8px rgba(45,212,191,0.25))"/>
+              <circle r="7" fill="#2dd4bf"/>
+              <text x="0" y="34" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text-slate)">terminal</text>
+            </g>
+
+            <g transform="translate(275, 65)">
+              <circle r="22" fill="rgba(255, 255, 255, 0.95)" stroke="#2dd4bf" stroke-width="2.5" filter="drop-shadow(0 2px 8px rgba(45,212,191,0.25))"/>
+              <circle r="7" fill="#2dd4bf"/>
+              <text x="0" y="34" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text-slate)">neovim</text>
+            </g>
+
+            <g transform="translate(85, 155)">
+              <circle r="18" fill="rgba(255, 255, 255, 0.9)" stroke="#a5b4fc" stroke-width="1.5"/>
+              <circle r="5" fill="#a5b4fc"/>
+              <text x="0" y="28" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--text-muted)">browser</text>
+            </g>
+
+            <g transform="translate(275, 155)">
+              <circle r="18" fill="rgba(255, 255, 255, 0.9)" stroke="#a5b4fc" stroke-width="1.5"/>
+              <circle r="5" fill="#a5b4fc"/>
+              <text x="0" y="28" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--text-muted)">spotify</text>
+            </g>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          When apps are used together, their graph link strengthens saturating at 1. During daemon uptime without co-occurrence, unused edges decay with a half-life of 24h &mdash; math directly copying biological plasticity.
+        </p>
+        <div class="side-mechanism">
+          <strong>Formula:</strong> <code>w &larr; w + &eta;c(1 - w)</code> &middot; <code>w(t+&Delta;t) = w(t)&middot;2^(-&Delta;t/T_half)</code>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SECTION 2: EYE TRACKING & EAR vs PASSIVE TELEMETRY SENSORS
+         Badge: Solid Teal Outline (Built)
+         ==================================================================== -->
+    <section class="comparison-card" id="section-2" aria-labelledby="s2-h-title s2-d-title">
+      <!-- Human Side (Left) -->
+      <div class="card-side side-human">
+        <div class="ghost-numeral" aria-hidden="true">02</div>
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-human"><span class="dot"></span> Biological Original</span>
+            <h2 id="s2-h-title" class="side-title">Eye Tracking & Ear Soundwaves</h2>
+          </div>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Sensation is not an interrogation of the world, but an unceasing, involuntary streaming of it.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Human eye tracking moving focal stimulus alongside expanding concentric acoustic soundwaves">
+            <!-- Concentric Ear Soundwaves (Left) -->
+            <g transform="translate(48, 105)">
+              <path class="anim-human" style="animation: s2_soundwaveArc 2.4s var(--ease-human-soft) infinite;"
+                    d="M 0 -35 A 40 40 0 0 1 0 35" fill="none" stroke="#ff8a7a" stroke-linecap="round"/>
+              <path class="anim-human" style="animation: s2_soundwaveArc 2.4s var(--ease-human-soft) 0.6s infinite;"
+                    d="M 12 -50 A 55 55 0 0 1 12 50" fill="none" stroke="#f6d365" stroke-linecap="round"/>
+              <path class="anim-human" style="animation: s2_soundwaveArc 2.4s var(--ease-human-soft) 1.2s infinite;"
+                    d="M 24 -65 A 70 70 0 0 1 24 65" fill="none" stroke="#ff8a7a" stroke-linecap="round"/>
+              <text x="-10" y="5" text-anchor="middle" font-size="9" font-weight="700" fill="#ea5845" transform="rotate(-90 -10 5)">ACOUSTIC</text>
+            </g>
+
+            <!-- Eye Sclera & Contour -->
+            <g transform="translate(195, 105)">
+              <!-- Sclera -->
+              <path d="M -85 0 C -45 -60, 45 -60, 85 0 C 45 60, -45 60, -85 0 Z"
+                    fill="#ffffff" stroke="rgba(58, 58, 74, 0.3)" stroke-width="2" filter="drop-shadow(0 4px 12px rgba(255,138,122,0.15))"/>
+
+              <!-- Iris & Pupil Group tracking target with organic overshoot -->
+              <g class="s2-iris-group anim-human" style="animation: s2_irisTrack var(--cycle-dur) var(--ease-human) infinite;">
+                <!-- Iris -->
+                <circle cx="0" cy="0" r="30" fill="url(#irisGradient)" stroke="#ff8a7a" stroke-width="2"/>
+                <!-- Iris texture striae -->
+                <circle cx="0" cy="0" r="23" fill="none" stroke="rgba(246, 211, 101, 0.6)" stroke-width="1.5" stroke-dasharray="3 2"/>
+                <!-- Pupil -->
+                <circle cx="0" cy="0" r="14" fill="#2d2d3a"/>
+                <!-- Specular light reflections -->
+                <circle cx="-6" cy="-6" r="4.5" fill="#ffffff" opacity="0.9"/>
+                <circle cx="5" cy="5" r="2" fill="#ffffff" opacity="0.7"/>
+              </g>
+
+              <!-- Eyelid Contour Overlays -->
+              <path d="M -85 0 C -45 -60, 45 -60, 85 0" fill="none" stroke="#ff8a7a" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M -85 0 C -45 60, 45 60, 85 0" fill="none" stroke="rgba(255, 138, 122, 0.5)" stroke-width="1.5"/>
+            </g>
+
+            <!-- Roving Focal Target Dot (Organic saccade path) -->
+            <g class="s2-focal-target anim-human" style="animation: s2_focalSaccade var(--cycle-dur) var(--ease-human) infinite;">
+              <circle cx="0" cy="0" r="6" fill="#f6d365" filter="drop-shadow(0 0 8px #ff8a7a)"/>
+              <circle cx="0" cy="0" r="14" fill="none" stroke="#ff8a7a" stroke-width="1" stroke-dasharray="2 2" opacity="0.8"/>
+            </g>
+
+            <defs>
+              <radialGradient id="irisGradient" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#f6d365"/>
+                <stop offset="65%" stop-color="#ff8a7a"/>
+                <stop offset="100%" stop-color="#cf503e"/>
+              </radialGradient>
+            </defs>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          Eyes make rapid saccades to track focal cues, while ears passively capture acoustic waves &mdash; streaming rich sensory signals continuously into the central nervous system without conscious effort.
+        </p>
+        <div class="side-mechanism">
+          <strong>Biology:</strong> Retinal foveation &middot; Auditory mechanoreception &middot; 0ms latency
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider-col" aria-hidden="true">
+        <div class="divider-line"></div>
+        <div class="divider-glyph">&asymp;</div>
+      </div>
+
+      <!-- Digital Side (Right) -->
+      <div class="card-side side-digital">
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-digital"><span class="dot"></span> NeuroPACA Component</span>
+            <h2 id="s2-d-title" class="side-title">Focus/Idle/App/Site Sensors</h2>
+          </div>
+          <span class="badge badge-built" title="Status: Built in NeuroPACA">
+            <svg class="badge-icon" viewBox="0 0 16 16"><path d="M3 8.5 L6.5 12 L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Built
+          </span>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;True perception never asks the user: it samples focus, idle, and load silently at 1Hz with zero egress.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Telemetry HUD showing live ticking strips for active window, idle timer, system load, and browser site with rhythmic scanline">
+            <!-- HUD Card Shell -->
+            <rect x="15" y="10" width="330" height="190" rx="12" fill="rgba(255, 255, 255, 0.88)" stroke="rgba(45, 212, 191, 0.4)" stroke-width="1.5"/>
+
+            <!-- Live Rhythm EKG Strip across top (linear mechanical scan) -->
+            <rect x="25" y="18" width="310" height="28" rx="6" fill="rgba(235, 250, 247, 0.7)" stroke="rgba(45, 212, 191, 0.3)"/>
+            <path class="anim-digital" style="animation: s2_ekgLinearScan 3.0s linear infinite; stroke-dasharray: 400;"
+                  d="M 30 32 L 90 32 L 105 22 L 115 42 L 125 26 L 135 32 L 210 32 L 225 22 L 235 42 L 245 26 L 255 32 L 330 32"
+                  fill="none" stroke="#0f766e" stroke-width="1.8"/>
+            <text x="35" y="27" font-size="8.5" font-family="var(--font-mono)" fill="#0f766e" font-weight="700">1Hz TELEMETRY STREAM</text>
+
+            <!-- Row 1: FOCUS (Highlighted in mechanical lockstep with eye tracking) -->
+            <g class="s2-row-active anim-digital" style="animation: s2_sensorRowHighlight var(--cycle-dur) var(--ease-digital) infinite;">
+              <rect x="25" y="54" width="310" height="30" rx="6" fill="rgba(255, 255, 255, 0.9)" stroke="rgba(45, 212, 191, 0.5)" stroke-width="1.2"/>
+              <circle cx="42" cy="69" r="4.5" fill="#2dd4bf" filter="drop-shadow(0 0 4px #2dd4bf)"/>
+              <text x="56" y="73" font-size="10.5" font-family="var(--font-mono)" font-weight="700" fill="var(--text-slate)">FOCUS:</text>
+              <text x="106" y="73" font-size="10.5" font-family="var(--font-mono)" fill="#0f766e">neovim &middot; phases.md</text>
+              <rect x="268" y="60" width="55" height="18" rx="4" fill="rgba(45, 212, 191, 0.25)"/>
+              <text x="295" y="72.5" text-anchor="middle" font-size="9" font-family="var(--font-mono)" font-weight="700" fill="#0d6859">LOCKED</text>
+            </g>
+
+            <!-- Row 2: IDLE TIMER -->
+            <g transform="translate(25, 90)">
+              <rect x="0" y="0" width="310" height="30" rx="6" fill="rgba(255, 255, 255, 0.7)" stroke="rgba(165, 180, 252, 0.3)" stroke-width="1"/>
+              <circle cx="17" cy="15" r="4" fill="#a5b4fc"/>
+              <text x="31" y="19" font-size="10.5" font-family="var(--font-mono)" font-weight="700" fill="var(--text-slate)">IDLE:</text>
+              <text x="75" y="19" font-size="10.5" font-family="var(--font-mono)" fill="var(--text-muted)">0.0s &middot; [USER ENGAGED]</text>
+              <rect x="245" y="6" width="55" height="18" rx="4" fill="rgba(165, 180, 252, 0.25)"/>
+              <text x="272" y="18.5" text-anchor="middle" font-size="9" font-family="var(--font-mono)" font-weight="600" fill="#4338ca">ACTIVE</text>
+            </g>
+
+            <!-- Row 3: CPU LOAD -->
+            <g transform="translate(25, 126)">
+              <rect x="0" y="0" width="310" height="30" rx="6" fill="rgba(255, 255, 255, 0.7)" stroke="rgba(165, 180, 252, 0.3)" stroke-width="1"/>
+              <circle cx="17" cy="15" r="4" fill="#2dd4bf"/>
+              <text x="31" y="19" font-size="10.5" font-family="var(--font-mono)" font-weight="700" fill="var(--text-slate)">LOAD:</text>
+              <text x="75" y="19" font-size="10.5" font-family="var(--font-mono)" fill="var(--text-muted)">0.28 &middot; [NOMINAL CPU]</text>
+              <rect x="245" y="6" width="55" height="18" rx="4" fill="rgba(45, 212, 191, 0.2)"/>
+              <text x="272" y="18.5" text-anchor="middle" font-size="9" font-family="var(--font-mono)" font-weight="600" fill="#0f766e">STEADY</text>
+            </g>
+
+            <!-- Row 4: BROWSER SITES -->
+            <g transform="translate(25, 162)">
+              <rect x="0" y="0" width="310" height="30" rx="6" fill="rgba(255, 255, 255, 0.7)" stroke="rgba(165, 180, 252, 0.3)" stroke-width="1"/>
+              <circle cx="17" cy="15" r="4" fill="#a5b4fc"/>
+              <text x="31" y="19" font-size="10.5" font-family="var(--font-mono)" font-weight="700" fill="var(--text-slate)">SITE:</text>
+              <text x="75" y="19" font-size="10.5" font-family="var(--font-mono)" fill="var(--text-muted)">docs.rs/tokio &middot; local cache</text>
+              <rect x="245" y="6" width="55" height="18" rx="4" fill="rgba(165, 180, 252, 0.2)"/>
+              <text x="272" y="18.5" text-anchor="middle" font-size="9" font-family="var(--font-mono)" font-weight="600" fill="#4338ca">LOCAL</text>
+            </g>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          Native sensors sample focused window, idle duration, CPU load, and open browser domains at 1Hz. Exactly like biological senses, perception is continuous, silent, and strictly local &mdash; zero bytes leave your machine.
+        </p>
+        <div class="side-mechanism">
+          <strong>Sensors:</strong> Focus &middot; Idle &middot; Load &middot; App &middot; Site (L1/L2 passive polling)
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SECTION 3: HIPPOCAMPUS vs EPISODIC EVENT STREAM
+         Badge: Solid Teal Outline (Built)
+         ==================================================================== -->
+    <section class="comparison-card" id="section-3" aria-labelledby="s3-h-title s3-d-title">
+      <!-- Human Side (Left) -->
+      <div class="card-side side-human">
+        <div class="ghost-numeral" aria-hidden="true">03</div>
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-human"><span class="dot"></span> Biological Original</span>
+            <h2 id="s3-h-title" class="side-title">Hippocampus Memory Formation</h2>
+          </div>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Before the mind understands what a day meant, it must first preserve what actually happened.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Human brain silhouette highlighting the seahorse-shaped hippocampus while memory particles drift along neural tracks and settle">
+            <!-- Brain Silhouette Contour -->
+            <path d="M 60 145 C 40 120, 35 70, 75 40 C 115 10, 225 10, 275 35 C 320 60, 335 110, 315 145 C 295 180, 240 185, 215 165 C 190 195, 110 195, 75 165 C 65 158, 62 150, 60 145 Z"
+                  fill="rgba(255, 255, 255, 0.72)" stroke="rgba(255, 138, 122, 0.4)" stroke-width="1.8"/>
+
+            <!-- Neocortical Convolution Folds -->
+            <path d="M 90 55 Q 120 75 150 45 Q 180 75 220 50 Q 255 75 285 65" fill="none" stroke="rgba(255, 138, 122, 0.25)" stroke-width="1.2"/>
+            <path d="M 70 95 Q 110 115 140 90 Q 175 110 210 95 Q 260 120 295 105" fill="none" stroke="rgba(255, 138, 122, 0.25)" stroke-width="1.2"/>
+
+            <!-- Neural Pathway Guide Tracks to Hippocampus -->
+            <path id="neuralTrack1" d="M 95 60 C 120 85, 150 120, 185 135" fill="none" stroke="rgba(246, 211, 101, 0.3)" stroke-dasharray="3 3"/>
+            <path id="neuralTrack2" d="M 265 65 C 240 90, 210 115, 185 135" fill="none" stroke="rgba(246, 211, 101, 0.3)" stroke-dasharray="3 3"/>
+            <path id="neuralTrack3" d="M 140 180 C 160 160, 175 150, 185 135" fill="none" stroke="rgba(246, 211, 101, 0.3)" stroke-dasharray="3 3"/>
+
+            <!-- Highlighted Hippocampus (Seahorse-shaped fold) -->
+            <path class="s3-hippo-path anim-human" style="animation: s3_hippoPulse var(--cycle-dur) var(--ease-human-soft) infinite;"
+                  d="M 160 142 C 160 125, 185 118, 205 125 C 220 132, 222 148, 210 155 C 195 162, 172 155, 160 142 Z"
+                  fill="rgba(255, 138, 122, 0.3)" stroke="#ff8a7a" stroke-width="2.2"/>
+            <text x="185" y="172" text-anchor="middle" font-size="10.5" font-weight="700" fill="#ea5845">HIPPOCAMPUS</text>
+
+            <!-- Drifting Memory Particles settling into fold (organic deceleration) -->
+            <circle class="anim-human" style="offset-path: path('M 95 60 C 120 85, 150 120, 185 135'); animation: s3_particleToHippo var(--cycle-dur) var(--ease-human-soft) infinite;"
+                    cx="0" cy="0" r="4.5" fill="#f6d365" filter="drop-shadow(0 0 6px #ff8a7a)"/>
+
+            <circle class="anim-human" style="offset-path: path('M 265 65 C 240 90, 210 115, 185 135'); animation: s3_particleToHippo var(--cycle-dur) var(--ease-human-soft) 1.2s infinite;"
+                    cx="0" cy="0" r="4" fill="#ff8a7a" filter="drop-shadow(0 0 6px #f6d365)"/>
+
+            <circle class="anim-human" style="offset-path: path('M 140 180 C 160 160, 175 150, 185 135'); animation: s3_particleToHippo var(--cycle-dur) var(--ease-human-soft) 2.4s infinite;"
+                    cx="0" cy="0" r="4.5" fill="#f6d365" filter="drop-shadow(0 0 6px #ff8a7a)"/>
+
+            <!-- Settled Cluster inside Hippocampus -->
+            <circle cx="180" cy="133" r="3" fill="#f6d365" opacity="0.9"/>
+            <circle cx="190" cy="136" r="3.5" fill="#ff8a7a" opacity="0.9"/>
+            <circle cx="198" cy="130" r="2.5" fill="#f6d365" opacity="0.9"/>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          The hippocampus rapidly indexes lived experiences as they happen, binding sights, sounds, and sequences into coherent episodic traces before neocortical sleep consolidation.
+        </p>
+        <div class="side-mechanism">
+          <strong>Biology:</strong> Episodic capture buffer &middot; Fast synaptogenesis &middot; Temporal binding
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider-col" aria-hidden="true">
+        <div class="divider-line"></div>
+        <div class="divider-glyph">&asymp;</div>
+      </div>
+
+      <!-- Digital Side (Right) -->
+      <div class="card-side side-digital">
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-digital"><span class="dot"></span> NeuroPACA Component</span>
+            <h2 id="s3-d-title" class="side-title">Episodic Event Stream</h2>
+          </div>
+          <span class="badge badge-built" title="Status: Built in NeuroPACA">
+            <svg class="badge-icon" viewBox="0 0 16 16"><path d="M3 8.5 L6.5 12 L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Built
+          </span>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Contradicting an old fact never deletes it; it simply closes its validity interval, preserving total truth.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Timestamped bi-temporal log cards floating upward and feeding directly into SQLite database memory graph">
+            <!-- Timeline Spine -->
+            <line x1="45" y1="15" x2="45" y2="195" stroke="rgba(45, 212, 191, 0.4)" stroke-width="2" stroke-dasharray="3 3"/>
+
+            <!-- Target Database / Memory Graph Destination (Top Right) -->
+            <g class="anim-digital" style="animation: s3_dbLatchPulse var(--cycle-dur) var(--ease-digital) infinite;" transform="translate(290, 48)">
+              <rect x="-35" y="-22" width="70" height="44" rx="8" fill="rgba(255, 255, 255, 0.95)" stroke="#2dd4bf" stroke-width="1.8" filter="drop-shadow(0 4px 10px rgba(45,212,191,0.25))"/>
+              <ellipse cx="0" cy="-12" rx="20" ry="5" fill="rgba(45, 212, 191, 0.3)" stroke="#0f766e" stroke-width="1"/>
+              <text x="0" y="5" text-anchor="middle" font-size="8.5" font-family="var(--font-mono)" font-weight="700" fill="#0d6859">episodes</text>
+              <text x="0" y="14" text-anchor="middle" font-size="7.5" font-family="var(--font-mono)" fill="#0f766e">.sqlite</text>
+            </g>
+
+            <!-- Connecting Line to DB -->
+            <path d="M 230 48 L 255 48" stroke="#2dd4bf" stroke-width="2" stroke-dasharray="2 2"/>
+
+            <!-- Log Stream Cards (Scrolling upward with mechanical precision) -->
+            <!-- Card 1 (Newest / Ingesting) -->
+            <g class="s3-log-card anim-digital" style="animation: s3_logCardStep 4.5s var(--ease-digital) infinite;" transform="translate(60, 28)">
+              <circle cx="-15" cy="18" r="4.5" fill="#2dd4bf" stroke="#ffffff" stroke-width="1.5"/>
+              <rect x="0" y="0" width="185" height="36" rx="7" fill="rgba(255, 255, 255, 0.94)" stroke="rgba(45, 212, 191, 0.8)" stroke-width="1.2" filter="drop-shadow(0 2px 6px rgba(45,212,191,0.15))"/>
+              <text x="10" y="15" font-size="9" font-family="var(--font-mono)" font-weight="700" fill="#0f766e">14:31:05 &middot; commit</text>
+              <text x="10" y="28" font-size="8.5" font-family="var(--font-mono)" fill="var(--text-slate)">&quot;v2 cognitive model&quot;</text>
+            </g>
+
+            <!-- Card 2 (Middle) -->
+            <g class="s3-log-card anim-digital" style="animation: s3_logCardStep 4.5s var(--ease-digital) 1.5s infinite;" transform="translate(60, 78)">
+              <circle cx="-15" cy="18" r="4" fill="#a5b4fc" stroke="#ffffff" stroke-width="1.5"/>
+              <rect x="0" y="0" width="185" height="36" rx="7" fill="rgba(255, 255, 255, 0.88)" stroke="rgba(165, 180, 252, 0.5)" stroke-width="1"/>
+              <text x="10" y="15" font-size="9" font-family="var(--font-mono)" font-weight="700" fill="#4338ca">14:24:18 &middot; edit_file</text>
+              <text x="10" y="28" font-size="8.5" font-family="var(--font-mono)" fill="var(--text-muted)">VISION.md [t_valid, &infin;)</text>
+            </g>
+
+            <!-- Card 3 (Bottom) -->
+            <g class="s3-log-card anim-digital" style="animation: s3_logCardStep 4.5s var(--ease-digital) 3.0s infinite;" transform="translate(60, 128)">
+              <circle cx="-15" cy="18" r="4" fill="#a5b4fc" stroke="#ffffff" stroke-width="1.5"/>
+              <rect x="0" y="0" width="185" height="36" rx="7" fill="rgba(255, 255, 255, 0.82)" stroke="rgba(165, 180, 252, 0.4)" stroke-width="1"/>
+              <text x="10" y="15" font-size="9" font-family="var(--font-mono)" font-weight="700" fill="#4338ca">14:20:02 &middot; focus_change</text>
+              <text x="10" y="28" font-size="8.5" font-family="var(--font-mono)" fill="var(--text-muted)">alacritty &rarr; neovim</text>
+            </g>
+
+            <!-- Bi-temporal Validity Tag -->
+            <g transform="translate(60, 180)">
+              <rect x="0" y="0" width="265" height="18" rx="5" fill="rgba(235, 250, 247, 0.8)" stroke="rgba(45, 212, 191, 0.4)"/>
+              <text x="132" y="12.5" text-anchor="middle" font-size="8.5" font-family="var(--font-mono)" fill="#0d6859">bi-temporal: invalidated, never overwritten</text>
+            </g>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          Every activity shift is written to an append-only SQLite log with validity intervals (<code>[t_valid, t_invalid)</code>). Stale facts are invalidated rather than erased &mdash; keeping historical truth completely intact.
+        </p>
+        <div class="side-mechanism">
+          <strong>Structure:</strong> <code>(subject, relation, object, [t_valid, t_invalid), t_seen)</code>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SECTION 4: SLEEP / DREAMING vs IDLE CONSOLIDATION & PRUNING
+         Badge: Dashed Amber Outline (Partial)
+         ==================================================================== -->
+    <section class="comparison-card" id="section-4" aria-labelledby="s4-h-title s4-d-title">
+      <!-- Human Side (Left) -->
+      <div class="card-side side-human">
+        <div class="ghost-numeral" aria-hidden="true">04</div>
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-human"><span class="dot"></span> Biological Original</span>
+            <h2 id="s4-h-title" class="side-title">Sleep / Dreaming Consolidation</h2>
+          </div>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;The brain dreams not to escape reality, but to prune trivial noise so essential truth survives.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Crescent moon with peacefully closed sleeping eye and wandering memory particles merging into dense consolidated nodes">
+            <!-- Night Sky Ambient Aura -->
+            <circle cx="180" cy="105" r="90" fill="rgba(246, 211, 101, 0.08)"/>
+
+            <!-- Crescent Moon -->
+            <path d="M 75 45 A 32 32 0 1 0 115 95 A 25 25 0 1 1 75 45 Z"
+                  fill="url(#moonGradient)" stroke="#f6d365" stroke-width="1.5" filter="drop-shadow(0 0 10px rgba(246,211,101,0.5))"/>
+
+            <!-- Peaceful Sleeping Closed Eye -->
+            <g transform="translate(180, 115)">
+              <!-- Curved Closed Eyelid -->
+              <path d="M -50 0 C -25 28, 25 28, 50 0" fill="none" stroke="#ff8a7a" stroke-width="3" stroke-linecap="round"/>
+              <!-- Gentle Eyelashes -->
+              <line x1="-35" y1="12" x2="-42" y2="24" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+              <line x1="-18" y1="18" x2="-20" y2="32" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+              <line x1="0" y1="20" x2="0" y2="35" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+              <line x1="18" y1="18" x2="20" y2="32" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+              <line x1="35" y1="12" x2="42" y2="24" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+            </g>
+
+            <!-- Converging Particles with fluid organic merge -->
+            <g class="anim-human" style="animation: s4_dreamParticlesMerge var(--cycle-dur) var(--ease-human-soft) infinite;">
+              <circle cx="210" cy="55" r="3.5" fill="#ff8a7a"/>
+              <circle cx="240" cy="115" r="4" fill="#f6d365"/>
+            </g>
+
+            <!-- Consolidated Golden Clusters -->
+            <circle cx="265" cy="60" r="7" fill="rgba(246, 211, 101, 0.4)" stroke="#f6d365" stroke-width="2"/>
+            <circle cx="265" cy="60" r="3" fill="#f6d365"/>
+
+            <circle cx="295" cy="95" r="6" fill="rgba(255, 138, 122, 0.4)" stroke="#ff8a7a" stroke-width="1.8"/>
+            <circle cx="295" cy="95" r="2.5" fill="#ff8a7a"/>
+
+            <defs>
+              <linearGradient id="moonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#fff5cc"/>
+                <stop offset="100%" stop-color="#f6d365"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          During slow-wave sleep, the brain replays and consolidates crucial daytime patterns into lasting schema, while systematically downscaling incidental synaptic connections to eliminate metabolic waste.
+        </p>
+        <div class="side-mechanism">
+          <strong>Biology:</strong> Synaptic homeostasis hypothesis (SHY) &middot; Memory replay &middot; Downscaling
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider-col" aria-hidden="true">
+        <div class="divider-line"></div>
+        <div class="divider-glyph">&asymp;</div>
+      </div>
+
+      <!-- Digital Side (Right) -->
+      <div class="card-side side-digital">
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-digital"><span class="dot"></span> NeuroPACA Component</span>
+            <h2 id="s4-d-title" class="side-title">Idle Consolidation & Decay</h2>
+          </div>
+          <span class="badge badge-partial" title="Status: Partial / Idle sweep built">
+            <svg class="badge-icon" viewBox="0 0 16 16"><path d="M8 2 L3 9 L8 9 L7 14 L13 7 L8 7 Z" fill="currentColor"/></svg>
+            Partial
+          </span>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;When you close the lid, NeuroPaca sweeps the graph: dead hubs dissolve and core connections crystallize.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Accelerated graph maintenance during idle cycle: core nodes consolidate and brighten while transient dead-hub node and weak edges dissolve away">
+            <!-- Idle Cycle Aura -->
+            <rect x="20" y="15" width="320" height="180" rx="12" fill="rgba(235, 250, 247, 0.55)" stroke="rgba(45, 212, 191, 0.35)" stroke-width="1"/>
+            <text x="35" y="34" font-size="9.5" font-family="var(--font-mono)" font-weight="700" fill="#0f766e">DAEMON IDLE PASS: L6 MAINTENANCE</text>
+
+            <!-- Consolidated Core Edge (Thickening & Shining) -->
+            <line class="s4-core-edge anim-digital" style="animation: s4_consolidateCore var(--cycle-dur) var(--ease-digital) infinite;"
+                  x1="90" y1="105" x2="210" y2="105" stroke="#2dd4bf" stroke-width="4" stroke-linecap="round"/>
+
+            <!-- Transient Edge to Dead Hub (Stepped fade away) -->
+            <line class="s4-dead-hub anim-digital" style="animation: s4_deadHubSteppedPrune var(--cycle-dur) var(--ease-digital-step) infinite;"
+                  x1="210" y1="105" x2="295" y2="60" stroke="#f87171" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+            <line class="s4-dead-hub anim-digital" style="animation: s4_deadHubSteppedPrune var(--cycle-dur) var(--ease-digital-step) infinite;"
+                  x1="90" y1="105" x2="295" y2="60" stroke="#f87171" stroke-width="1.2" stroke-dasharray="2 3"/>
+
+            <!-- Core Node 1: Primary Project -->
+            <g transform="translate(90, 105)">
+              <circle r="24" fill="#ffffff" stroke="#2dd4bf" stroke-width="2.5" filter="drop-shadow(0 2px 8px rgba(45,212,191,0.3))"/>
+              <circle r="8" fill="#2dd4bf"/>
+              <text x="0" y="36" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--text-slate)">core_proj</text>
+            </g>
+
+            <!-- Core Node 2: Main Editor -->
+            <g transform="translate(210, 105)">
+              <circle r="24" fill="#ffffff" stroke="#2dd4bf" stroke-width="2.5" filter="drop-shadow(0 2px 8px rgba(45,212,191,0.3))"/>
+              <circle r="8" fill="#2dd4bf"/>
+              <text x="0" y="36" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--text-slate)">editor</text>
+            </g>
+
+            <!-- Dead-Hub Node (Orphaned /tmp scratch pad) Pruning Away (Quantized Stepped disappearance) -->
+            <g class="s4-dead-hub anim-digital" style="animation: s4_deadHubSteppedPrune var(--cycle-dur) var(--ease-digital-step) infinite;" transform="translate(295, 60)">
+              <circle r="16" fill="rgba(254, 226, 226, 0.85)" stroke="#f87171" stroke-width="1.5"/>
+              <text x="0" y="4" text-anchor="middle" font-size="8.5" font-family="var(--font-mono)" fill="#b91c1c" font-weight="700">tmp_scr</text>
+              <text x="0" y="24" text-anchor="middle" font-size="8" font-family="var(--font-mono)" fill="#ef4444">[PRUNED]</text>
+            </g>
+
+            <!-- Status Tag -->
+            <g transform="translate(180, 172)">
+              <rect x="-85" y="-10" width="170" height="20" rx="10" fill="rgba(255, 255, 255, 0.92)" stroke="rgba(45, 212, 191, 0.6)"/>
+              <text x="0" y="3" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="#0d6859" font-weight="600">dead-hub removal &middot; entropy -38%</text>
+            </g>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          While you are away, NeuroPACA runs background maintenance: unused weights undergo half-life decay, noisy transient bridges dissolve, and isolated dead-hub nodes are cleanly pruned to keep retrieval nimble.
+        </p>
+        <div class="side-mechanism">
+          <strong>Status:</strong> L6 idle cycle live &middot; Deep reflection / dreaming in A-series roadmap
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SECTION 5: PREFRONTAL CORTEX vs ATTENTION & JUDGMENT GATE
+         Badge: Dotted Gray/Indigo Outline (Pipe exists / Planned)
+         ==================================================================== -->
+    <section class="comparison-card" id="section-5" aria-labelledby="s5-h-title s5-d-title">
+      <!-- Human Side (Left) -->
+      <div class="card-side side-human">
+        <div class="ghost-numeral" aria-hidden="true">05</div>
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-human"><span class="dot"></span> Biological Original</span>
+            <h2 id="s5-h-title" class="side-title">Prefrontal Cortex & Impulse Control</h2>
+          </div>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Intelligence is measured as much by what a mind decides not to say as what it speaks.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Frontal lobe profile with an executive inhibitory valve barrier dampening erratic neural impulses to protect focus">
+            <!-- Brain Silhouette with Frontal Lobe Emphasis -->
+            <path d="M 50 145 C 30 115, 30 65, 75 35 C 115 10, 220 10, 270 35 C 310 58, 325 105, 305 140 C 285 175, 235 180, 210 160 C 185 190, 105 190, 70 160 Z"
+                  fill="rgba(255, 255, 255, 0.72)" stroke="rgba(58, 58, 74, 0.3)" stroke-width="1.8"/>
+
+            <!-- Prefrontal Cortex Region Highlighted (Anterior lobe) -->
+            <path d="M 50 145 C 30 115, 30 65, 75 35 C 95 22, 125 22, 145 35 C 120 70, 115 110, 85 145 Z"
+                  fill="rgba(255, 138, 122, 0.28)" stroke="#ff8a7a" stroke-width="2.2"/>
+            <text x="80" y="85" font-size="11" font-weight="800" fill="#ea5845">PFC</text>
+
+            <!-- Executive Inhibitory Gate / Valve Shield Barrier (Organic pulse) -->
+            <path class="anim-human" style="animation: s5_pfcShieldPulse var(--cycle-dur) var(--ease-human) infinite;"
+                  d="M 135 35 C 120 75, 115 115, 95 155" fill="none" stroke="#ff8a7a" stroke-width="4" stroke-linecap="round"/>
+
+            <!-- Errant Stimuli / Distracting Impulses Deflecting Off PFC Shield -->
+            <g transform="translate(190, 95)">
+              <path d="M 50 -20 L 0 0" stroke="#f6d365" stroke-width="2.5" stroke-dasharray="4 2"/>
+              <path d="M 0 0 L 35 25" stroke="rgba(255, 138, 122, 0.6)" stroke-width="2" stroke-dasharray="3 3"/>
+              <circle cx="0" cy="0" r="4" fill="#f6d365"/>
+            </g>
+
+            <text x="180" y="175" text-anchor="middle" font-size="10.5" font-weight="750" fill="var(--text-slate)">INHIBITORY RESTRAINT</text>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          The prefrontal cortex acts as an executive gatekeeper, suppressing random impulses and screening incoming stimuli so deep concentration isn't derailed by every transient urge.
+        </p>
+        <div class="side-mechanism">
+          <strong>Biology:</strong> Top-down executive inhibition &middot; Cortical gating &middot; Impulse veto
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider-col" aria-hidden="true">
+        <div class="divider-line"></div>
+        <div class="divider-glyph">&asymp;</div>
+      </div>
+
+      <!-- Digital Side (Right) -->
+      <div class="card-side side-digital">
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-digital"><span class="dot"></span> NeuroPACA Component</span>
+            <h2 id="s5-d-title" class="side-title">Attention & Judgment Gate</h2>
+          </div>
+          <span class="badge badge-planned" title="Status: Pipe exists, judgment gate planned">
+            <svg class="badge-icon" viewBox="0 0 16 16"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="2 2"/></svg>
+            Pipe Exists
+          </span>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;A machine that interrupts whenever it has an insight feels frantic; restraint is what makes it feel alive.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Digital conduit with mechanical gate valve deflecting low-priority notification packets while allowing high-value insight through">
+            <!-- Pipeline Conduit Tunnel -->
+            <rect x="20" y="80" width="320" height="50" rx="8" fill="rgba(255, 255, 255, 0.75)" stroke="rgba(45, 212, 191, 0.4)" stroke-width="1.5"/>
+
+            <!-- Conduit Center Valve Seat -->
+            <rect x="185" y="70" width="10" height="70" rx="3" fill="#cbd5e1"/>
+
+            <!-- Mechanical Gate Valve (Rotates open crisply for high priority) -->
+            <g transform="translate(190, 80)">
+              <rect class="s5-gate-valve anim-digital" style="animation: s5_gateMechanicalSwing var(--cycle-dur) var(--ease-digital) infinite; transform-origin: top center;"
+                    x="-4" y="0" width="8" height="50" rx="3" fill="#0f766e" stroke="#ffffff" stroke-width="1"/>
+            </g>
+
+            <!-- Discard Rebound Chute (Lower deflection) -->
+            <path d="M 180 130 C 180 150, 160 170, 120 175" fill="none" stroke="rgba(248, 113, 113, 0.45)" stroke-width="2" stroke-dasharray="3 3"/>
+            <text x="110" y="188" text-anchor="middle" font-size="8.5" font-family="var(--font-mono)" fill="#ef4444">[DEFLECTED NOISE]</text>
+
+            <!-- Packet 1: Routine Nudge (Bouncing off closed gate with sharp mechanical rebound) -->
+            <g class="anim-digital" style="animation: s5_sharpBounceNoise var(--cycle-dur) var(--ease-digital) infinite;">
+              <rect x="-18" y="-10" width="36" height="20" rx="6" fill="#fee2e2" stroke="#f87171" stroke-width="1"/>
+              <text x="0" y="3" text-anchor="middle" font-size="8" font-family="var(--font-mono)" fill="#991b1b" font-weight="700">idle</text>
+            </g>
+
+            <!-- Packet 2: High Value Insight (Passes through when gate swings) -->
+            <g class="s5-priority-packet anim-digital" style="animation: s5_passPriorityPacket var(--cycle-dur) var(--ease-digital) infinite;">
+              <rect x="-35" y="-12" width="70" height="24" rx="7" fill="rgba(45, 212, 191, 0.25)" stroke="#0f766e" stroke-width="1.5"/>
+              <text x="0" y="3.5" text-anchor="middle" font-size="8.5" font-family="var(--font-mono)" fill="#0d6859" font-weight="700">test_fail!</text>
+            </g>
+
+            <!-- 9. FORMULA TYPESETTING WITH REAL BASELINE-SHIFTED TSPANS -->
+            <g transform="translate(180, 42)">
+              <rect x="-95" y="-13" width="190" height="24" rx="12" fill="rgba(255, 255, 255, 0.95)" stroke="rgba(165, 180, 252, 0.7)" stroke-width="1.2" filter="drop-shadow(0 2px 6px rgba(31,38,135,0.06))"/>
+              <text x="0" y="3" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="#334155" font-weight="600">
+                <tspan font-style="italic">speak</tspan>
+                <tspan dx="2">&hArr;</tspan>
+                <tspan dx="2" font-style="italic">p&#771;</tspan><tspan dx="1">&middot;</tspan><tspan font-style="italic">V</tspan>(<tspan font-style="italic">m</tspan>)
+                <tspan dx="2">&gt;</tspan>
+                <tspan dx="2" font-style="italic">C</tspan><tspan dy="3" font-size="75%">interrupt</tspan><tspan dy="-3">(<tspan font-style="italic">x</tspan>)</tspan>
+              </text>
+            </g>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          A Thompson-sampling bandit weighs notification value against an interruption cost ($C_{\text{interrupt}}$). During focus, the valve stays shut &mdash; notifications bounce harmlessly until you surface.
+        </p>
+        <div class="side-mechanism">
+          <strong>Status:</strong> Notification pipe built &middot; Thompson-sampling gate planned (VISION.md &sect;3.6)
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SECTION 6: MOUTH & HAND vs NOTIFICATION & SAFE-TIER ACTION
+         Badge: Solid Teal Outline (Restrained by design)
+         ==================================================================== -->
+    <section class="comparison-card" id="section-6" aria-labelledby="s6-h-title s6-d-title">
+      <!-- Human Side (Left) -->
+      <div class="card-side side-human">
+        <div class="ghost-numeral" aria-hidden="true">06</div>
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-human"><span class="dot"></span> Biological Original</span>
+            <h2 id="s6-h-title" class="side-title">Mouth Speaking & Hand Acting</h2>
+          </div>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Thought becomes real only when anchored in physical agency with sensory consequence.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Human vocal expression with blooming speech wave and intentional hand gesture demonstrating grounded agency">
+            <!-- Speaking Silhouette Profile (Left) -->
+            <path d="M 40 170 C 60 160, 68 140, 68 120 C 68 105, 55 95, 60 75 C 65 55, 90 40, 110 40"
+                  fill="none" stroke="#ff8a7a" stroke-width="2.5" stroke-linecap="round"/>
+            <!-- Lips Forming Speech -->
+            <path d="M 68 112 C 78 112, 84 116, 80 122 C 75 125, 68 123, 68 123" fill="none" stroke="#ff8a7a" stroke-width="2"/>
+
+            <!-- Speech Wave Blooming Outward (Organic resonance with spring) -->
+            <g class="s6-speech-bubble anim-human" style="animation: s6_speechWaveBloom var(--cycle-dur) var(--ease-human) infinite;" transform="translate(100, 105)">
+              <path d="M 0 0 C 20 -25, 65 -25, 85 0 C 95 15, 85 35, 60 35 L 20 45 L 25 32 C 5 28, -8 15, 0 0 Z"
+                    fill="rgba(255, 255, 255, 0.9)" stroke="#ff8a7a" stroke-width="1.8" filter="drop-shadow(0 3px 8px rgba(255,138,122,0.25))"/>
+              <line x1="28" y1="14" x2="28" y2="24" stroke="#f6d365" stroke-width="2" stroke-linecap="round"/>
+              <line x1="38" y1="9" x2="38" y2="29" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+              <line x1="48" y1="12" x2="48" y2="26" stroke="#f6d365" stroke-width="2" stroke-linecap="round"/>
+              <line x1="58" y1="15" x2="58" y2="22" stroke="#ff8a7a" stroke-width="2" stroke-linecap="round"/>
+            </g>
+
+            <!-- Deliberate Hand Gesture (Right) -->
+            <g class="anim-human" style="animation: s6_handDeliberateTap var(--cycle-dur) var(--ease-human) infinite;" transform="translate(245, 125)">
+              <path d="M 0 45 L 20 10 C 22 5, 28 5, 30 10 L 32 30 L 40 18 C 42 14, 48 15, 49 20 L 48 35 L 56 26 C 58 23, 64 25, 64 30 L 58 50 C 52 65, 30 70, 10 65 Z"
+                    fill="rgba(255, 255, 255, 0.88)" stroke="#ff8a7a" stroke-width="2" stroke-linejoin="round"/>
+              <circle cx="26" cy="7" r="8" fill="none" stroke="#f6d365" stroke-width="1.5" stroke-dasharray="2 2"/>
+            </g>
+
+            <text x="180" y="195" text-anchor="middle" font-size="10.5" font-weight="750" fill="#ea5845">INTENTIONAL MOTOR AGENCY</text>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          Human agency culminates in deliberate external execution &mdash; vocal cords sculpting acoustic speech, and hands acting through fine motor control backed by sensory tactile feedback.
+        </p>
+        <div class="side-mechanism">
+          <strong>Biology:</strong> Vocal motor articulation &middot; Proprioceptive feedback &middot; Somatic restraint
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="divider-col" aria-hidden="true">
+        <div class="divider-line"></div>
+        <div class="divider-glyph">&asymp;</div>
+      </div>
+
+      <!-- Digital Side (Right) -->
+      <div class="card-side side-digital">
+        <div class="side-header">
+          <div class="facet-meta">
+            <span class="facet-tag tag-digital"><span class="dot"></span> NeuroPACA Component</span>
+            <h2 id="s6-d-title" class="side-title">Notifications & Safe Actions</h2>
+          </div>
+          <span class="badge badge-built" title="Status: Safe-tier live, earned agency gated">
+            <svg class="badge-icon" viewBox="0 0 16 16"><path d="M3 8.5 L6.5 12 L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Restrained
+          </span>
+        </div>
+
+        <p class="side-pullquote">
+          &ldquo;Authority is never assumed on day one; every action is sandboxed until earned through trust.&rdquo;
+        </p>
+
+        <div class="stage-container">
+          <svg class="stage-svg" viewBox="0 0 360 210" role="img" aria-label="Desktop mock with incoming gentle notification banner and a prominent padlock safeguarding actions to safe-tier only">
+            <!-- Glass Desktop Device Frame -->
+            <rect x="25" y="15" width="310" height="180" rx="10" fill="rgba(255, 255, 255, 0.78)" stroke="rgba(45, 212, 191, 0.4)" stroke-width="1.5"/>
+
+            <!-- Window Header -->
+            <circle cx="42" cy="30" r="3.5" fill="#f87171"/>
+            <circle cx="53" cy="30" r="3.5" fill="#fcd34d"/>
+            <circle cx="64" cy="30" r="3.5" fill="#4ade80"/>
+            <text x="180" y="33" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)">neuropaca &middot; desktop</text>
+
+            <!-- Ambient Notification Toast (Mechanical slide-and-lock) -->
+            <g class="s6-toast anim-digital" style="animation: s6_toastMechanicalSlide var(--cycle-dur) var(--ease-digital) infinite;" transform="translate(45, 52)">
+              <rect x="0" y="0" width="270" height="52" rx="8" fill="rgba(255, 255, 255, 0.96)" stroke="#2dd4bf" stroke-width="1.5" filter="drop-shadow(0 6px 16px rgba(31,38,135,0.09))"/>
+              <circle cx="18" cy="26" r="6" fill="#2dd4bf"/>
+              <text x="32" y="21" font-size="10.5" font-family="var(--font-system)" font-weight="750" fill="var(--text-slate)">Welcome back</text>
+              <text x="32" y="37" font-size="9" font-family="var(--font-mono)" fill="#0f766e">Failing test: test_bridge_value ready?</text>
+              <rect x="220" y="16" width="38" height="20" rx="4" fill="rgba(45, 212, 191, 0.25)"/>
+              <text x="239" y="29.5" text-anchor="middle" font-size="8.5" font-family="var(--font-mono)" font-weight="700" fill="#0d6859">VIEW</text>
+            </g>
+
+            <!-- Padlocked Safe-Tier Action Mechanism (Mechanical precision shine) -->
+            <g transform="translate(180, 142)">
+              <rect x="-115" y="-22" width="230" height="42" rx="8" fill="rgba(235, 250, 247, 0.88)" stroke="rgba(165, 180, 252, 0.6)" stroke-width="1.2"/>
+
+              <g class="anim-digital" style="animation: s6_padlockPrecisionShine var(--cycle-dur) var(--ease-digital) infinite;" transform="translate(-85, -2)">
+                <rect x="-10" y="-3" width="20" height="15" rx="3" fill="#f6d365" stroke="#d97706" stroke-width="1.2"/>
+                <path d="M -6 -3 L -6 -8 C -6 -13, 6 -13, 6 -8 L 6 -3" fill="none" stroke="#d97706" stroke-width="2"/>
+                <circle cx="0" cy="4" r="2" fill="#78350f"/>
+              </g>
+
+              <text x="-65" y="-4" font-size="9.5" font-family="var(--font-mono)" font-weight="750" fill="#1e293b">TIER 1: SAFE-TIER ONLY</text>
+              <text x="-65" y="10" font-size="8.5" font-family="var(--font-mono)" fill="#0f766e">Draft &amp; read sandbox &middot; 0 egress</text>
+            </g>
+          </svg>
+        </div>
+
+        <p class="side-caption">
+          NeuroPACA reaches out only when earned, speaking through concise, grounded templates. Actions are hard-sandboxed behind an explicit safe-tier permission gate &mdash; no destructive writes, no network calls.
+        </p>
+        <div class="side-mechanism">
+          <strong>Restraint:</strong> Layer 7 Safety Gate &middot; Safe-tier read/propose &middot; Earned authority
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ====================================================================
+       10. FOOTER WITH COMPLETION BAR & UNIFIED LEGEND
+       ==================================================================== -->
+  <footer class="footer">
+    <!-- Horizontal Completion Status Bar -->
+    <div class="completion-bar-container">
+      <div class="completion-meta">
+        <span class="completion-title">VISION.md Implementation Status</span>
+        <span class="completion-stats">3 Built &middot; 2 Partial &middot; 1 Planned</span>
+      </div>
+      <div class="completion-bar" role="progressbar" aria-valuenow="67" aria-valuemin="0" aria-valuemax="100" aria-label="System implementation completion bar: 3 built, 2 partial, 1 planned">
+        <div class="bar-segment seg-built" style="width: 50%;" title="3 Built (50%)"></div>
+        <div class="bar-segment seg-partial" style="width: 33.33%;" title="2 Partial / Pipe Exists (33.3%)"></div>
+        <div class="bar-segment seg-planned" style="width: 16.67%;" title="1 Planned / Target (16.7%)"></div>
+      </div>
+    </div>
+
+    <!-- Unified Outline Chips Legend -->
+    <div class="legend-card">
+      <div class="legend-item">
+        <span class="badge badge-built">
+          <svg class="badge-icon" viewBox="0 0 16 16"><path d="M3 8.5 L6.5 12 L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Built
+        </span>
+        <span>Built in NeuroPACA</span>
+      </div>
+      <div class="legend-item">
+        <span class="badge badge-partial">
+          <svg class="badge-icon" viewBox="0 0 16 16"><path d="M8 2 L3 9 L8 9 L7 14 L13 7 L8 7 Z" fill="currentColor"/></svg>
+          Partial
+        </span>
+        <span>Partial / Pipe Exists</span>
+      </div>
+      <div class="legend-item">
+        <span class="badge badge-planned">
+          <svg class="badge-icon" viewBox="0 0 16 16"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="2 2"/></svg>
+          Planned
+        </span>
+        <span>Planned / Target</span>
+      </div>
+    </div>
+
+    <p class="footer-manifesto">
+      Status reflects VISION.md's architectural audit &middot; Single self-contained file &middot; Zero egress
+    </p>
+  </footer>
+
+</div>
+
+<!-- Vanilla JS: IntersectionObserver, Sticky Rail Tracking, Mobile Progress, Master Clock -->
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const cards = document.querySelectorAll('.comparison-card, .system-map-card');
+  const railDots = document.querySelectorAll('.rail-dot');
+  const mobileFill = document.getElementById('mobileProgressFill');
+
+  // 1. IntersectionObserver for Cards & Staggered Reveal
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-in-view');
+        } else {
+          entry.target.classList.remove('is-in-view');
+        }
+      });
+    }, {
+      threshold: 0.15,
+      rootMargin: '0px 0px -5% 0px'
+    });
+
+    cards.forEach(card => observer.observe(card));
+
+    // Rail Active Dot Observer
+    const railObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = entry.target.getAttribute('id');
+          railDots.forEach(dot => {
+            if (dot.getAttribute('data-target') === id) {
+              dot.classList.add('is-active');
+            } else {
+              dot.classList.remove('is-active');
+            }
+          });
+        }
+      });
+    }, {
+      threshold: 0.35,
+      rootMargin: '-10% 0px -40% 0px'
+    });
+
+    cards.forEach(card => railObserver.observe(card));
+  } else {
+    cards.forEach(card => card.classList.add('is-in-view'));
+  }
+
+  // 2. Mobile Scroll Progress Bar Listener (<700px)
+  window.addEventListener('scroll', () => {
+    if (window.innerWidth <= 700 && mobileFill) {
+      const winScroll = document.documentElement.scrollTop || document.body.scrollTop;
+      const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+      const scrolled = height > 0 ? (winScroll / height) * 100 : 0;
+      mobileFill.style.width = scrolled + '%';
+    }
+  }, { passive: true });
+
+  // 3. Synchronized Clock Driving CSS custom property (--t) via RAF
+  const CYCLE_MS = 4000;
+  let startEpoch = performance.now();
+
+  function runMasterClock(now) {
+    const elapsed = now - startEpoch;
+    const t = (elapsed % CYCLE_MS) / CYCLE_MS;
+    document.documentElement.style.setProperty('--t', t.toFixed(4));
+    requestAnimationFrame(runMasterClock);
+  }
+  requestAnimationFrame(runMasterClock);
+});
+</script>
+
+</body>
+</html>

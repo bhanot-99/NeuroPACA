@@ -1,5 +1,5 @@
 """
-Layer 1 — local semantic match (see ARCHITECTURE.md's decision pipeline).
+Layer 1 — local semantic match (see guide.md's decision pipeline).
 
 Only runs when Layer 0 (grammar/regex) finds no match. Encodes the utterance
 and every skill's example phrases into vectors with a local embedding model
@@ -31,7 +31,7 @@ from skills._app_resolver import resolve_app_name
 from skills._correction import token_overlap
 
 # ---------------------------------------------------------------------------
-# Tunable thresholds — see ARCHITECTURE.md open question #1. Starting values
+# Tunable thresholds — see guide.md open question #1. Starting values
 # from the pipeline diagram; tuned against real test utterances in Step 2.
 # ---------------------------------------------------------------------------
 

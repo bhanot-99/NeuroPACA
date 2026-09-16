@@ -1,6 +1,6 @@
 """
 Machine-scan tripwire (Open Interpreter's safe-mode pattern, adapted — see
-ARCHITECTURE.md's sources table). A cheap pattern check on a resolved
+guide.md's sources table). A cheap pattern check on a resolved
 command, run before showing any confirmation preview — catches an obviously
 destructive command even on a quick skim, rather than relying entirely on
 the human reading carefully.
@@ -8,7 +8,7 @@ the human reading carefully.
 This does NOT decide whether a command is gated — run_terminal (and the
 other 🔒 skills) are DANGEROUS by static tier assignment regardless of what
 this finds. It only decides how loudly the confirm-loop should warn within
-that gate, exactly as ARCHITECTURE.md specifies.
+that gate, exactly as guide.md specifies.
 """
 
 import re
