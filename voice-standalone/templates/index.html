@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroPaca Voice Gateway</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'ping-once': 'ping 0.8s cubic-bezier(0, 0, 0.2, 1) 1',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    ::-webkit-scrollbar-thumb { background: rgba(51, 65, 85, 0.8); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 1); }
+    .glass-card {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(51, 65, 85, 0.4);
+    }
+    @keyframes wave {
+      0%, 100% { height: 6px; }
+      50% { height: 24px; }
+    }
+    .wave-bar {
+      animation: wave 1.2s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-brand-500 selection:text-white">
+
+  <!-- Top Header Navigation -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Brand & Title -->
+      <div class="flex items-center space-x-3">
+        <div class="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="font-bold text-lg tracking-tight text-white">NeuroPaca</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">Gateway v1.0</span>
+          </div>
+          <p class="text-xs text-slate-400">Deterministic Fast-Path & Safety-Gated Voice Platform</p>
+        </div>
+      </div>
+
+      <!-- Live Status Badges -->
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        
+        <!-- WebSocket Status -->
+        <div id="ws-badge" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-700">
+          <span id="ws-dot" class="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="ws-text" class="text-slate-300">Connecting...</span>
+        </div>
+
+        <!-- Daemon Service Status -->
+        <div id="daemon-badge" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-700">
+          <span id="daemon-dot" class="h-2 w-2 rounded-full bg-slate-500"></span>
+          <span id="daemon-text" class="text-slate-300">Daemon: Checking...</span>
+        </div>
+
+        <!-- Battery Status -->
+        <div id="battery-badge" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-700">
+          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <span id="battery-text" class="text-slate-300">Battery: --</span>
+        </div>
+
+        <!-- Live Model Indicator -->
+        <div class="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-indigo-950/60 border border-indigo-800/40 text-indigo-300 font-mono">
+          <span class="h-1.5 w-1.5 rounded-full bg-indigo-400"></span>
+          <span>gemini-2.5-flash-native-audio</span>
+        </div>
+
+        <!-- Refresh Button -->
+        <button onclick="fetchStatus()" title="Refresh System Status" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto w-full flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 md:p-6">
+    
+    <!-- Left Sidebar: Controls, Telemetry & Quick Triggers (4 Cols on LG) -->
+    <aside class="lg:col-span-4 flex flex-col space-y-5">
+      
+      <!-- System Sliders Card -->
+      <div class="glass-card rounded-2xl p-5 shadow-xl">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-sm tracking-wide text-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            </svg>
+            System Fast Controls
+          </h2>
+          <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Layer 0 (0.01ms)</span>
+        </div>
+
+        <!-- Volume Control Slider -->
+        <div class="space-y-2 mb-4">
+          <div class="flex justify-between text-xs text-slate-300">
+            <span class="flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+              </svg>
+              Speaker Volume
+            </span>
+            <span id="volume-val" class="font-mono text-indigo-300 font-semibold">65%</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <input type="range" id="volume-slider" min="0" max="100" value="65" 
+              class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500" 
+              oninput="updateVolumeLabel(this.value)" onchange="applyVolume(this.value)" />
+            <button onclick="applyVolume(0)" class="text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">Mute</button>
+          </div>
+        </div>
+
+        <!-- Brightness Control Slider -->
+        <div class="space-y-2">
+          <div class="flex justify-between text-xs text-slate-300">
+            <span class="flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              Screen Brightness
+            </span>
+            <span id="brightness-val" class="font-mono text-amber-300 font-semibold">50%</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <input type="range" id="brightness-slider" min="5" max="100" value="50" 
+              class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500" 
+              oninput="updateBrightnessLabel(this.value)" onchange="applyBrightness(this.value)" />
+            <button onclick="applyBrightness(100)" class="text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">Max</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Quick Action Command Chips -->
+      <div class="glass-card rounded-2xl p-5 shadow-xl">
+        <h2 class="font-semibold text-sm tracking-wide text-slate-200 mb-3 flex items-center gap-2">
+          <svg class="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          Quick Skill Triggers
+        </h2>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="sendQuickCommand('what is the battery status')" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition flex items-center gap-1.5">
+            <span>🔋</span> Battery Status
+          </button>
+          <button onclick="sendQuickCommand('what is my ip address')" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition flex items-center gap-1.5">
+            <span>🌐</span> Local IP
+          </button>
+          <button onclick="sendQuickCommand('list files')" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition flex items-center gap-1.5">
+            <span>📂</span> List Files
+          </button>
+          <button onclick="sendQuickCommand('what is git status')" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition flex items-center gap-1.5">
+            <span>🌿</span> Git Status
+          </button>
+          <button onclick="sendQuickCommand('who is Alan Turing')" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition flex items-center gap-1.5">
+            <span>📖</span> Wiki Fastpath
+          </button>
+          <button onclick="triggerDangerousTest()" class="text-xs px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 hover:text-rose-100 transition flex items-center gap-1.5 font-medium">
+            <span>⚠️</span> Trigger Dangerous Gate
+          </button>
+        </div>
+      </div>
+
+      <!-- Safety & Routing Architecture Badge Card -->
+      <div class="glass-card rounded-2xl p-5 shadow-xl space-y-3">
+        <h2 class="font-semibold text-sm tracking-wide text-slate-200 flex items-center gap-2">
+          <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+          Policy Engine & Precedence
+        </h2>
+        
+        <div class="space-y-2 text-xs">
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+              <span class="font-mono font-medium">Layer 0 Regex</span>
+            </div>
+            <span class="text-slate-400">~0.013 ms</span>
+          </div>
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-cyan-400"></span>
+              <span class="font-mono font-medium">Layer 1 Semantic</span>
+            </div>
+            <span class="text-slate-400">~10.70 ms</span>
+          </div>
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-amber-400"></span>
+              <span class="font-mono font-medium">Wikipedia Fastpath</span>
+            </div>
+            <span class="text-slate-400">~250 ms</span>
+          </div>
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-violet-400"></span>
+              <span class="font-mono font-medium">Gemini 2.5 LLM</span>
+            </div>
+            <span class="text-slate-400">Streaming</span>
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+          <span>Execution Chokepoint:</span>
+          <span class="font-mono text-indigo-300">dispatch.execute_skill</span>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Right Area: Real-Time Execution Timeline & Conversation (8 Cols on LG) -->
+    <section class="lg:col-span-8 flex flex-col glass-card rounded-2xl shadow-xl overflow-hidden min-h-[600px] max-h-[calc(100vh-140px)]">
+      
+      <!-- Timeline Header -->
+      <div class="p-4 border-b border-slate-800/80 bg-slate-900/60 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <div class="h-3 w-3 rounded-full bg-emerald-400"></div>
+          <h3 class="font-semibold text-sm text-slate-200">Execution Timeline & Chat</h3>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button onclick="clearTimeline()" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition">
+            Clear Feed
+          </button>
+        </div>
+      </div>
+
+      <!-- Messages & Execution Cards Feed -->
+      <div id="timeline" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+        
+        <!-- Welcome Banner -->
+        <div class="p-4 rounded-xl bg-gradient-to-r from-indigo-950/40 via-slate-900/60 to-purple-950/40 border border-indigo-500/20 text-xs text-slate-300 space-y-2">
+          <div class="flex items-center justify-between font-semibold text-indigo-300">
+            <span class="flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              NeuroPaca Voice Gateway Ready
+            </span>
+            <span class="font-mono text-[10px] text-slate-400">Phase 3 WebSocket Stream</span>
+          </div>
+          <p>
+            Connected to local Python dispatch chokepoint. Commands route through Layer 0 grammar match, Layer 1 semantic embeddings, Wikipedia fast-path, or Gemini LLM intent. 
+            All actions pass through 3-tier safety gating and write to audit logs.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- Bottom Audio / Text Input Bar -->
+      <div class="p-4 border-t border-slate-800/80 bg-slate-900/80 backdrop-blur-sm">
+        
+        <!-- Voice Recording State Indicator (Hidden by default) -->
+        <div id="recording-indicator" class="hidden mb-3 p-3 rounded-xl bg-rose-950/60 border border-rose-600/50 flex items-center justify-between animate-pulse">
+          <div class="flex items-center space-x-3">
+            <div class="h-3 w-3 rounded-full bg-rose-500 animate-ping"></div>
+            <span class="text-xs font-semibold text-rose-300">Listening to microphone... Speak now</span>
+          </div>
+          <div class="flex items-center space-x-1">
+            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.1s"></div>
+            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.3s"></div>
+            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.2s"></div>
+            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.4s"></div>
+          </div>
+          <button onclick="stopRecording()" class="text-xs px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-medium transition">
+            Stop & Send
+          </button>
+        </div>
+
+        <!-- Input Form -->
+        <form id="chat-form" onsubmit="handleFormSubmit(event)" class="flex items-center gap-2">
+          
+          <!-- Microphone Button -->
+          <button type="button" id="mic-btn" onclick="toggleRecording()" 
+            class="p-3 rounded-xl bg-slate-800 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-300 hover:text-white transition flex-shrink-0 relative group"
+            title="Click to Record Voice (STT)">
+            <svg id="mic-icon" class="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
+            </svg>
+          </button>
+
+          <!-- Text Input Field -->
+          <input type="text" id="chat-input" placeholder="Type a command (e.g. 'set volume to 75%', 'git status', 'who is Ada Lovelace')..." 
+            class="flex-1 bg-slate-950/80 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition" 
+            autocomplete="off" />
+
+          <!-- Submit / Send Button -->
+          <button type="submit" id="send-btn" 
+            class="p-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition shadow-lg shadow-indigo-600/20 flex-shrink-0 flex items-center justify-center">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        </form>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Interactive DANGEROUS Safety Confirmation Modal -->
+  <div id="safety-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-rose-600/50 rounded-2xl shadow-2xl max-w-xl w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200">
+      
+      <!-- Modal Header -->
+      <div class="flex items-start space-x-3">
+        <div class="h-10 w-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center flex-shrink-0">
+          <svg class="w-6 h-6 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-bold text-white tracking-tight">HIGH-RISK OPERATION INTERCEPTED</h3>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">Tier: DANGEROUS</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">The Policy Engine intercepted an action requiring explicit manual verification.</p>
+        </div>
+      </div>
+
+      <!-- Skill & Target Details -->
+      <div class="space-y-3">
+        <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+          <div class="text-[11px] text-slate-400 font-mono">Skill Name: <span id="modal-skill-name" class="text-rose-400 font-semibold">run_terminal</span></div>
+          <div class="text-[11px] text-slate-400 font-mono">Original Arguments: <span id="modal-skill-args" class="text-slate-300"></span></div>
+        </div>
+
+        <!-- Policy Warnings -->
+        <div id="modal-warnings-container" class="space-y-1">
+          <div class="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Safety Warnings:
+          </div>
+          <ul id="modal-warnings-list" class="text-xs text-slate-300 list-disc list-inside space-y-1 pl-1">
+            <li>Command can modify files or execute arbitrary code.</li>
+          </ul>
+        </div>
+
+        <!-- Editable Command Input -->
+        <div class="space-y-1.5">
+          <label class="text-xs font-medium text-slate-300 flex justify-between">
+            <span>Command Preview / Editor:</span>
+            <span id="modal-editable-tag" class="text-[10px] text-slate-500">(Editable)</span>
+          </label>
+          <textarea id="modal-command-edit" rows="3" 
+            class="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 font-mono text-xs text-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent resize-none"></textarea>
+          <p class="text-[10px] text-slate-400">You may edit the exact string above before authorizing execution, or cancel to abort.</p>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex items-center justify-end space-x-3 pt-3 border-t border-slate-800">
+        <button id="modal-cancel-btn" onclick="resolveConfirmation(false)" 
+          class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition border border-slate-700">
+          Cancel & Abort (Esc)
+        </button>
+        <button id="modal-approve-btn" onclick="resolveConfirmation(true)" 
+          class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/30 transition flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          Authorize & Run (Enter)
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- JavaScript Client Application -->
+  <script>
+    let ws = null;
+    let wsReconnectTimeout = null;
+    let activeConfirmId = null;
+
+    // Web Audio Recording Variables
+    let audioContext = null;
+    let mediaStream = null;
+    let scriptProcessor = null;
+    let audioBuffers = [];
+    let isRecording = false;
+
+    // Initialize on DOM ready
+    window.addEventListener('DOMContentLoaded', () => {
+      initWebSocket();
+      fetchStatus();
+      setInterval(fetchStatus, 10000); // refresh status every 10s
+
+      // Modal keybinds
+      window.addEventListener('keydown', (e) => {
+        const modal = document.getElementById('safety-modal');
+        if (!modal.classList.contains('hidden')) {
+          if (e.key === 'Escape') {
+            resolveConfirmation(false);
+          } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            resolveConfirmation(true);
+          }
+        }
+      });
+    });
+
+    // -----------------------------------------------------------------
+    // WebSocket Connection Management
+    // -----------------------------------------------------------------
+    function initWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
+
+      updateWSBadge('connecting', 'Connecting...');
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        updateWSBadge('connected', 'Gateway Connected');
+        if (wsReconnectTimeout) {
+          clearTimeout(wsReconnectTimeout);
+          wsReconnectTimeout = null;
+        }
+      };
+
+      ws.onclose = () => {
+        updateWSBadge('disconnected', 'Disconnected');
+        // Auto reconnect every 3s
+        if (!wsReconnectTimeout) {
+          wsReconnectTimeout = setTimeout(initWebSocket, 3000);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        ws.close();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleWebSocketMessage(msg);
+        } catch (e) {
+          console.error('Failed to parse WS message:', event.data, e);
+        }
+      };
+    }
+
+    function updateWSBadge(state, text) {
+      const dot = document.getElementById('ws-dot');
+      const label = document.getElementById('ws-text');
+      label.innerText = text;
+
+      dot.className = 'h-2 w-2 rounded-full ';
+      if (state === 'connected') {
+        dot.className += 'bg-emerald-400';
+      } else if (state === 'connecting') {
+        dot.className += 'bg-amber-400 animate-pulse';
+      } else {
+        dot.className += 'bg-rose-500';
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Message Dispatcher
+    // -----------------------------------------------------------------
+    function handleWebSocketMessage(msg) {
+      switch (msg.type) {
+        case 'transcription':
+          appendUserMessage(msg.text);
+          break;
+
+        case 'tool_executed':
+          appendToolExecutionCard(msg);
+          break;
+
+        case 'needs_confirmation':
+          showConfirmationModal(msg);
+          break;
+
+        case 'chat_message':
+          appendAssistantMessage(msg.text, msg.elapsed_ms);
+          break;
+
+        case 'error':
+          appendErrorMessage(msg.message);
+          break;
+
+        default:
+          console.log('WS event:', msg);
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Timeline Card Renderers
+    // -----------------------------------------------------------------
+    function appendUserMessage(text) {
+      const timeline = document.getElementById('timeline');
+      const div = document.createElement('div');
+      div.className = 'flex items-start justify-end space-x-3 text-xs';
+      div.innerHTML = `
+        <div class="bg-indigo-600/90 text-white px-4 py-2.5 rounded-2xl rounded-tr-none shadow-md max-w-lg">
+          <p class="font-normal">${escapeHtml(text)}</p>
+        </div>
+        <div class="h-7 w-7 rounded-full bg-indigo-500 flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0">
+          U
+        </div>
+      `;
+      timeline.appendChild(div);
+      scrollToBottom();
+    }
+
+    function appendAssistantMessage(text, elapsedMs) {
+      const timeline = document.getElementById('timeline');
+      const div = document.createElement('div');
+      div.className = 'flex items-start space-x-3 text-xs';
+      const timeStr = elapsedMs ? `<span class="font-mono text-[10px] text-slate-400">${elapsedMs.toFixed(1)}ms</span>` : '';
+      div.innerHTML = `
+        <div class="h-7 w-7 rounded-full bg-violet-600 flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0">
+          AI
+        </div>
+        <div class="bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-2xl rounded-tl-none shadow-md max-w-2xl space-y-1">
+          <div class="flex justify-between items-center text-[10px] text-violet-300 font-semibold">
+            <span>Conversational Response</span>
+            ${timeStr}
+          </div>
+          <p class="leading-relaxed whitespace-pre-wrap">${escapeHtml(text)}</p>
+        </div>
+      `;
+      timeline.appendChild(div);
+      scrollToBottom();
+    }
+
+    function appendToolExecutionCard(data) {
+      const timeline = document.getElementById('timeline');
+      const div = document.createElement('div');
+      div.className = 'flex items-start space-x-3 text-xs';
+
+      const tier = data.tier || 'SAFE';
+      let tierBadgeClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+      if (tier === 'REVIEW') {
+        tierBadgeClass = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+      } else if (tier === 'DANGEROUS') {
+        tierBadgeClass = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+      }
+
+      const layer = data.matched_layer || 'Chokepoint';
+      let layerBadge = `<span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px]">${layer.toUpperCase()}</span>`;
+      if (layer === 'layer0') {
+        layerBadge = `<span class="px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40 text-emerald-300 font-mono text-[10px]">LAYER 0 (REGEX)</span>`;
+      } else if (layer === 'layer1') {
+        layerBadge = `<span class="px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/40 text-cyan-300 font-mono text-[10px]">LAYER 1 (SEMANTIC)</span>`;
+      } else if (layer === 'wiki') {
+        layerBadge = `<span class="px-2 py-0.5 rounded bg-amber-950/60 border border-amber-800/40 text-amber-300 font-mono text-[10px]">WIKI FASTPATH</span>`;
+      }
+
+      const latency = data.elapsed_ms !== undefined ? `${data.elapsed_ms.toFixed(2)} ms` : '--';
+      const outputText = data.output || '(No text output)';
+
+      div.innerHTML = `
+        <div class="h-7 w-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-indigo-400 flex-shrink-0">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-none p-4 shadow-xl max-w-2xl w-full space-y-2.5">
+          <!-- Card Header -->
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-slate-100">${escapeHtml(data.skill || 'Unknown Skill')}</span>
+              <span class="px-2 py-0.5 rounded border text-[10px] font-mono uppercase ${tierBadgeClass}">${tier}</span>
+            </div>
+            <div class="flex items-center space-x-2">
+              ${layerBadge}
+              <span class="font-mono text-[11px] text-slate-400">${latency}</span>
+            </div>
+          </div>
+
+          <!-- Args (if any) -->
+          ${data.args && Object.keys(data.args).length > 0 ? `
+            <div class="text-[11px] text-slate-400 font-mono bg-slate-950/60 p-2 rounded-lg border border-slate-800/50">
+              <span class="text-slate-500">args:</span> ${escapeHtml(JSON.stringify(data.args))}
+            </div>
+          ` : ''}
+
+          <!-- Output Box -->
+          <div class="bg-slate-950 rounded-xl p-3 border border-slate-800/80 font-mono text-[11px] text-slate-200 overflow-x-auto whitespace-pre-wrap">
+${escapeHtml(outputText)}
+          </div>
+        </div>
+      `;
+      timeline.appendChild(div);
+      scrollToBottom();
+    }
+
+    function appendErrorMessage(msg) {
+      const timeline = document.getElementById('timeline');
+      const div = document.createElement('div');
+      div.className = 'p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 text-xs text-rose-300 flex items-center gap-2';
+      div.innerHTML = `
+        <svg class="w-4 h-4 text-rose-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>${escapeHtml(msg)}</span>
+      `;
+      timeline.appendChild(div);
+      scrollToBottom();
+    }
+
+    function clearTimeline() {
+      const timeline = document.getElementById('timeline');
+      timeline.innerHTML = '';
+    }
+
+    function scrollToBottom() {
+      const timeline = document.getElementById('timeline');
+      timeline.scrollTop = timeline.scrollHeight;
+    }
+
+    // -----------------------------------------------------------------
+    // Form & Input Handling
+    // -----------------------------------------------------------------
+    function handleFormSubmit(e) {
+      e.preventDefault();
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      appendUserMessage(text);
+      input.value = '';
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'chat',
+          message: text,
+        }));
+      } else {
+        appendErrorMessage('WebSocket is disconnected. Please wait for reconnection.');
+      }
+    }
+
+    function sendQuickCommand(cmd) {
+      const input = document.getElementById('chat-input');
+      input.value = cmd;
+      document.getElementById('chat-form').dispatchEvent(new Event('submit'));
+    }
+
+    function triggerDangerousTest() {
+      // Triggers run_terminal with a test command to show the policy modal
+      const cmd = "run echo 'Testing Policy Engine DANGEROUS Gating' in terminal";
+      sendQuickCommand(cmd);
+    }
+
+    // -----------------------------------------------------------------
+    // Sliders & System Fast-Controls
+    // -----------------------------------------------------------------
+    function updateVolumeLabel(val) {
+      document.getElementById('volume-val').innerText = `${val}%`;
+    }
+
+    function updateBrightnessLabel(val) {
+      document.getElementById('brightness-val').innerText = `${val}%`;
+    }
+
+    async function applyVolume(val) {
+      updateVolumeLabel(val);
+      sendQuickCommand(`set volume to ${val}%`);
+    }
+
+    async function applyBrightness(val) {
+      updateBrightnessLabel(val);
+      sendQuickCommand(`set brightness to ${val}%`);
+    }
+
+    // -----------------------------------------------------------------
+    // DANGEROUS Safety Confirmation Modal
+    // -----------------------------------------------------------------
+    function showConfirmationModal(data) {
+      activeConfirmId = data.confirm_id;
+      document.getElementById('modal-skill-name').innerText = data.skill;
+      document.getElementById('modal-skill-args').innerText = JSON.stringify(data.args || {});
+
+      // Warnings
+      const warningsList = document.getElementById('modal-warnings-list');
+      warningsList.innerHTML = '';
+      const warnings = data.warnings || ['Action requires explicit confirmation.'];
+      warnings.forEach(w => {
+        const li = document.createElement('li');
+        li.innerText = w;
+        warningsList.appendChild(li);
+      });
+
+      // Preview & Edit
+      const cmdEdit = document.getElementById('modal-command-edit');
+      cmdEdit.value = data.preview || JSON.stringify(data.args);
+      cmdEdit.readOnly = !data.editable;
+      document.getElementById('modal-editable-tag').innerText = data.editable ? '(Editable)' : '(Read-only)';
+
+      // Show Modal
+      const modal = document.getElementById('safety-modal');
+      modal.classList.remove('hidden');
+      cmdEdit.focus();
+    }
+
+    function resolveConfirmation(approved) {
+      const modal = document.getElementById('safety-modal');
+      modal.classList.add('hidden');
+
+      if (!activeConfirmId) return;
+      const cmdEdit = document.getElementById('modal-command-edit');
+      const editedValue = approved ? cmdEdit.value.trim() : null;
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'confirm_response',
+          confirm_id: activeConfirmId,
+          approved: approved,
+          edited: editedValue,
+        }));
+      }
+
+      activeConfirmId = null;
+    }
+
+    // -----------------------------------------------------------------
+    // Web Audio Recording & STT Streaming
+    // -----------------------------------------------------------------
+    async function toggleRecording() {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStream = stream;
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(stream);
+
+        // Buffer size 4096, 1 input channel, 1 output channel
+        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+        audioBuffers = [];
+
+        scriptProcessor.onaudioprocess = (e) => {
+          if (!isRecording) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          audioBuffers.push(new Float32Array(inputData));
+        };
+
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+
+        isRecording = true;
+        document.getElementById('recording-indicator').classList.remove('hidden');
+        document.getElementById('mic-icon').classList.add('text-rose-500');
+      } catch (err) {
+        console.error('Microphone access error:', err);
+        appendErrorMessage('Microphone access denied or unavailable: ' + err.message);
+      }
+    }
+
+    async function stopRecording() {
+      if (!isRecording) return;
+      isRecording = false;
+
+      document.getElementById('recording-indicator').classList.add('hidden');
+      document.getElementById('mic-icon').classList.remove('text-rose-500');
+
+      if (scriptProcessor) scriptProcessor.disconnect();
+      if (audioContext) await audioContext.close();
+      if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+
+      // Flatten buffers into mono 16-bit PCM WAV
+      const totalLength = audioBuffers.reduce((acc, b) => acc + b.length, 0);
+      const mergedSamples = new Float32Array(totalLength);
+      let offset = 0;
+      for (const buf of audioBuffers) {
+        mergedSamples.set(buf, offset);
+        offset += buf.length;
+      }
+
+      if (totalLength === 0) return;
+
+      const wavBuffer = encodeWAV(mergedSamples, 16000);
+      const b64Audio = arrayBufferToBase64(wavBuffer);
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'audio',
+          audio_data: b64Audio,
+        }));
+      }
+    }
+
+    function encodeWAV(samples, sampleRate) {
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+
+      function writeString(v, off, str) {
+        for (let i = 0; i < str.length; i++) {
+          v.setUint8(off + i, str.charCodeAt(i));
+        }
+      }
+
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true); // Byte rate
+      view.setUint16(32, 2, true); // Block align
+      view.setUint16(34, 16, true); // 16-bit
+      writeString(view, 36, 'data');
+      view.setUint32(40, samples.length * 2, true);
+
+      // Write PCM samples
+      let idx = 44;
+      for (let i = 0; i < samples.length; i++) {
+        let s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(idx, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        idx += 2;
+      }
+
+      return buffer;
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary);
+    }
+
+    // -----------------------------------------------------------------
+    // REST Status API
+    // -----------------------------------------------------------------
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update Daemon Badge
+        const daemonDot = document.getElementById('daemon-dot');
+        const daemonText = document.getElementById('daemon-text');
+        if (data.daemon_active) {
+          daemonDot.className = 'h-2 w-2 rounded-full bg-emerald-400';
+          daemonText.innerText = 'Daemon: Active';
+        } else {
+          daemonDot.className = 'h-2 w-2 rounded-full bg-slate-500';
+          daemonText.innerText = 'Daemon: Inactive';
+        }
+
+        // Update Battery Badge
+        const batteryText = document.getElementById('battery-text');
+        batteryText.innerText = `Battery: ${data.battery || '--'}`;
+
+      } catch (e) {
+        console.error('Failed to fetch status:', e);
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  </script>
+</body>
+</html>
