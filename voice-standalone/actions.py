@@ -24,10 +24,13 @@ import os
 import random
 import re
 import shutil
+import smtplib
 import socket
 import subprocess
 import urllib.parse
 import urllib.request
+import email.utils
+from email.message import EmailMessage
 
 import pypdf
 
@@ -1475,6 +1478,96 @@ def list_todos() -> None:
     print("[list_todos] " + "; ".join(f"{i + 1}. {t}" for i, t in enumerate(todos)))
 
 
+def _get_mail_credentials() -> tuple[str, str]:
+    """Retrieves mail user and password via environment or system secret-tool."""
+    user = os.environ.get("NEUROPACA_MAIL_USER", "bhanot1054@gmail.com")
+    pwd = os.environ.get("NEUROPACA_MAIL_PASSWORD")
+    if not pwd:
+        try:
+            res = subprocess.run(
+                ["secret-tool", "lookup", "service", "neuropaca-mail", "account", user],
+                capture_output=True, text=True, timeout=3.0
+            )
+            pwd = res.stdout.strip()
+        except Exception:
+            pwd = ""
+    return user, pwd
+
+
+def read_latest_emails(count: int = 5) -> None:
+    """Reads latest email messages from the local correspondence spool."""
+    spool_candidates = [
+        os.path.expanduser("~/NeuroPaca/data/plugins/mail/spool/messages.jsonl"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "plugins", "mail", "spool", "messages.jsonl"),
+    ]
+    spool_file = next((p for p in spool_candidates if os.path.exists(p)), None)
+
+    if not spool_file:
+        print("[email] No email spool found at data/plugins/mail/spool/messages.jsonl.")
+        return
+
+    messages = []
+    try:
+        with open(spool_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        messages.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except Exception as e:
+        print(f"[email] Could not read email spool: {e}")
+        return
+
+    if not messages:
+        print("[email] No emails found in spool.")
+        return
+
+    inbound = [m for m in messages if m.get("direction") == "inbound"] or messages
+    recent = inbound[-count:]
+    recent.reverse()
+
+    summaries = []
+    for i, m in enumerate(recent, 1):
+        raw_sender = m.get("sender") or m.get("sender_address") or "Unknown"
+        name, addr = email.utils.parseaddr(raw_sender)
+        sender_display = name or addr or "Unknown"
+        subject = m.get("subject")
+        date_str = m.get("date", "")
+        if "T" in date_str:
+            date_str = date_str.split("T")[0]
+        if subject and subject.strip():
+            summaries.append(f"{i}. From {sender_display}: {subject.strip()} ({date_str})")
+        else:
+            summaries.append(f"{i}. From {sender_display} ({date_str})")
+
+    print(f"[email] Latest {len(recent)} messages:\n" + "\n".join(summaries))
+
+
+def send_email(to: str, subject: str = "Voice Assistant Message", body: str = "") -> None:
+    """Sends an email using configured SMTP credentials via SSL on smtp.gmail.com:465."""
+    user, pwd = _get_mail_credentials()
+    if not user or not pwd:
+        print("[send_email] Error: Mail credentials not found in secret-tool or NEUROPACA_MAIL_PASSWORD.")
+        return
+
+    msg = EmailMessage()
+    msg["From"] = user
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body or "(No message body)")
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+            server.login(user, pwd)
+            server.send_message(msg)
+        print(f"[send_email] Successfully sent email to {to} with subject '{subject}'.")
+    except Exception as e:
+        print(f"[send_email] Failed to send email: {e}")
+
+
+
 # ===========================================================================
 # ─── Category J — Assistant meta/fallback ───────────────────────────────────
 # ===========================================================================
@@ -1750,9 +1843,11 @@ DISPATCH: dict[str, object] = {
     "open_camera_app":      lambda args: open_camera_app(**args),
     "change_wallpaper":     lambda args: change_wallpaper(**args),
     "browse_local_media":   lambda args: browse_local_media(**args),
-    # ── Category G (minimal) ──────────────────────────────────────────────
+    # ── Category G ────────────────────────────────────────────────────────
     "add_todo":             lambda args: add_todo(**args),
     "list_todos":           lambda args: list_todos(**args),
+    "read_latest_emails":   lambda args: read_latest_emails(**args),
+    "send_email":           lambda args: send_email(**args),
     # ── Category J ────────────────────────────────────────────────────────
     "sleep_stop_listening": lambda args: sleep_stop_listening(**args),
     "wake_back_up":         lambda args: wake_back_up(**args),

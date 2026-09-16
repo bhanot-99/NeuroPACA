@@ -23,6 +23,7 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bkill\s+-9\b|\bkill\s+-(?:sigkill|SIGKILL)\b", re.IGNORECASE), "unconditional kill -9"),
     (re.compile(r":\(\)\s*\{.*\};\s*:", re.IGNORECASE), "fork bomb pattern"),
     (re.compile(r"\bchmod\s+-R\s+777\b", re.IGNORECASE), "recursive world-writable permissions"),
+    (re.compile(r"^To:\s*", re.IGNORECASE), "External network action: will dispatch an email via SMTP to external recipient"),
 ]
 
 

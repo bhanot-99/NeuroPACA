@@ -40,12 +40,15 @@ _EDITABLE_ARG: dict[str, str] = {
     "force_quit": "app_name",
     "kill_process": "name",
     "restart_service": "service",
+    "send_email": "body",
 }
 
 
 def preview_text(skill_name: str, args: dict) -> str:
     if skill_name == "run_terminal":
         return args.get("command", "")
+    if skill_name == "send_email":
+        return f"To: {args.get('to')}\nSubject: {args.get('subject')}\n\n{args.get('body')}"
     if not args:
         return skill_name
     return f"{skill_name}(" + ", ".join(f"{k}={v!r}" for k, v in args.items()) + ")"

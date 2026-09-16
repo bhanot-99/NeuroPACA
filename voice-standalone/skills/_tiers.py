@@ -34,7 +34,7 @@ searches, and media playback.
 DANGEROUS: frozenset[str] = frozenset({
     "shutdown", "restart", "logout", "force_quit", "rename_file", "move_file",
     "delete_file", "empty_trash", "kill_process", "install_updates",
-    "restart_service", "run_terminal",
+    "restart_service", "run_terminal", "send_email",
 })
 
 REVIEW: frozenset[str] = frozenset({

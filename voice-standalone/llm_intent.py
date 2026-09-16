@@ -95,6 +95,27 @@ _TOOLS = [
             "required": ["name"],
         },
     ),
+    types.FunctionDeclaration(
+        name="read_latest_emails",
+        description="Read the latest incoming email messages or check unread inbox messages.",
+        parameters={
+            "type": "object",
+            "properties": {"count": {"type": "integer", "description": "Number of recent emails to read (default 5)"}},
+        },
+    ),
+    types.FunctionDeclaration(
+        name="send_email",
+        description="Send an email to a specified recipient with a subject and message body via SMTP.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address"},
+                "subject": {"type": "string", "description": "Email subject line"},
+                "body": {"type": "string", "description": "The message body text to send"},
+            },
+            "required": ["to", "subject", "body"],
+        },
+    ),
 ]
 
 _TOOL = types.Tool(function_declarations=_TOOLS)
