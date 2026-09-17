@@ -211,15 +211,15 @@ def _call_openai_compatible_api(
         "Authorization": f"Bearer {api_key}",
         "User-Agent": "NeuroPaca/1.0",
     }
+    messages = []
+    if provider != "nvidia":
+        messages.append({"role": "system", "content": _SYSTEM_INSTRUCTION})
+    messages.append({"role": "user", "content": text})
+
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_INSTRUCTION},
-            {"role": "user", "content": text},
-        ],
+        "messages": messages,
         "tools": _OPENAI_TOOLS,
-        "tool_choice": "auto",
-        "temperature": 0.2,
     }
     req = urllib.request.Request(
         url,
