@@ -144,14 +144,15 @@ def _speak(text: str, lang: str | None = None) -> None:
     if lang is None:
         lang = _detect_lang(text)
     try:
-        tts.speak(text, lang=lang)
-    except TypeError:
+        audio_bus.set_speaking_state(True)
         try:
+            tts.speak(text, lang=lang)
+        except TypeError:
             tts.speak(text)
-        except Exception as exc:
-            print(f"[tts error] {exc}")
     except Exception as exc:
         print(f"[tts error] {exc}")
+    finally:
+        audio_bus.set_speaking_state(False)
 
 
 def _ensure_fifo() -> None:

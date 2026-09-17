@@ -45,6 +45,50 @@ def _speak_bg(text: str) -> None:
         except Exception as e:
             print(f"[tts warning] {e}")
 
+
+async def _stream_tts_audio(websocket: WebSocket, text: str, lang: str = "en"):
+    """Splits text into clauses and streams 22050Hz 16-bit PCM chunks to the WebSocket client."""
+    if tts is None or not text.strip():
+        return
+    clauses = tts.split_into_clauses(text)
+    if not clauses:
+        return
+
+    from audio_bus import audio_bus
+    audio_bus.set_speaking_state(True)
+    try:
+        for c_idx, clause in enumerate(clauses):
+            if not audio_bus.is_speaking():
+                break
+            is_last_clause = (c_idx == len(clauses) - 1)
+
+            def _gen():
+                return list(tts.synthesize_stream(clause, lang=lang))
+
+            chunks = await asyncio.to_thread(_gen)
+            for ch_idx, (pcm, sr, is_last_chunk) in enumerate(chunks):
+                if not audio_bus.is_speaking():
+                    break
+                if not pcm:
+                    continue
+                b64_pcm = base64.b64encode(pcm).decode("ascii")
+                try:
+                    await websocket.send_json({
+                        "type": "audio_chunk",
+                        "pcm_b64": b64_pcm,
+                        "sample_rate": sr,
+                        "channels": 1,
+                        "is_first": (c_idx == 0 and ch_idx == 0),
+                        "is_last": (is_last_clause and is_last_chunk),
+                    })
+                except Exception:
+                    return
+    except Exception as exc:
+        print(f"[ws stream error] {exc}")
+    finally:
+        audio_bus.set_speaking_state(False)
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
@@ -63,6 +107,13 @@ async def startup_event():
         await asyncio.to_thread(semantic_match._ensure_index_built)
     except Exception as e:
         print(f"[warning] Semantic matcher warmup failed: {e}")
+
+    # Warm up persistent TTS worker
+    try:
+        if tts is not None:
+            await asyncio.to_thread(tts.warm_up)
+    except Exception as e:
+        print(f"[warning] TTS warmup failed: {e}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -181,6 +232,16 @@ async def websocket_chat_endpoint(websocket: WebSocket):
     """Full-duplex WebSocket endpoint for text chat, voice audio, and interactive tool gating."""
     await websocket.accept()
     client_id = str(uuid.uuid4())[:8]
+    loop = asyncio.get_running_loop()
+    from audio_bus import audio_bus
+
+    def _on_vad_barge_in():
+        try:
+            asyncio.run_coroutine_threadsafe(websocket.send_json({"type": "audio_flush"}), loop)
+        except Exception:
+            pass
+
+    audio_bus.on_barge_in(_on_vad_barge_in)
 
     try:
         while True:
@@ -252,6 +313,10 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                         "text": user_text,
                     })
             else:
+                if isinstance(data, dict) and data.get("type") == "barge_in":
+                    from audio_bus import audio_bus
+                    audio_bus.trigger_barge_in()
+                    continue
                 user_text = data.get("message", "").strip()
 
             if not user_text:
@@ -346,7 +411,6 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     continue
 
                 output_text = res.get("output", "").strip() or f"Executed {skill_name}."
-                asyncio.create_task(asyncio.to_thread(_speak_bg, output_text))
                 await websocket.send_json({
                     "type": "tool_executed",
                     "skill": skill_name,
@@ -357,6 +421,8 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     "output": output_text,
                     "elapsed_ms": elapsed_ms,
                 })
+                # Stream PCM audio chunks to WebSocket client in real-time
+                asyncio.create_task(_stream_tts_audio(websocket, output_text))
                 continue
 
             # -------------------------------------------------------------
@@ -371,16 +437,43 @@ async def websocket_chat_endpoint(websocket: WebSocket):
             try:
                 from google import genai
                 client = genai.Client(api_key=config.GEMINI_API_KEY)
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=config.INTENT_MODEL,
-                    contents=user_text,
-                )
-                response_text = response.text or "I did not understand that request."
-                asyncio.create_task(asyncio.to_thread(_speak_bg, response_text))
+                accumulated_text = ""
+                clause_buffer = ""
+
+                def _stream_gemini():
+                    return client.models.generate_content_stream(
+                        model=config.INTENT_MODEL,
+                        contents=user_text,
+                    )
+
+                stream = await asyncio.to_thread(_stream_gemini)
+                for chunk in stream:
+                    delta = chunk.text or ""
+                    if not delta:
+                        continue
+                    accumulated_text += delta
+                    clause_buffer += delta
+
+                    await websocket.send_json({
+                        "type": "chat_chunk",
+                        "delta": delta,
+                        "text": accumulated_text,
+                    })
+
+                    # Check for completed clauses to start audio rendering early
+                    if tts:
+                        clauses = tts.split_into_clauses(clause_buffer)
+                        if len(clauses) > 1:
+                            ready_clause = clauses[0]
+                            clause_buffer = " ".join(clauses[1:])
+                            asyncio.create_task(_stream_tts_audio(websocket, ready_clause))
+
+                if clause_buffer.strip() and tts:
+                    asyncio.create_task(_stream_tts_audio(websocket, clause_buffer.strip()))
+
                 await websocket.send_json({
                     "type": "chat_message",
-                    "text": response_text,
+                    "text": accumulated_text or "I did not understand that request.",
                     "elapsed_ms": (time.perf_counter() - t_start) * 1000,
                 })
             except Exception as exc:
@@ -392,6 +485,8 @@ async def websocket_chat_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    finally:
+        audio_bus.remove_barge_in(_on_vad_barge_in)
 
 
 @app.websocket("/ws/audio")

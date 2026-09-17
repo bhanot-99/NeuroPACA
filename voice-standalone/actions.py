@@ -19,9 +19,11 @@ COSMIC / Wayland notes for Category B executors:
 """
 
 import datetime
+import io
 import json
 import os
 import random
+import sys
 import re
 import shutil
 import smtplib

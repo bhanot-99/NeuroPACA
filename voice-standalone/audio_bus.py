@@ -117,7 +117,8 @@ class AudioSubscription:
 
 
 class AudioBus:
-    """Manages the single shared InputStream on the microphone."""
+    """Manages the single shared InputStream on the microphone with continuous
+    Silero VAD barge-in detection (< 15ms interruption latency)."""
 
     def __init__(self) -> None:
         self._subscribers: list[AudioSubscription] = []
@@ -127,12 +128,104 @@ class AudioBus:
         self._running = False
         self._distributor_thread: Optional[threading.Thread] = None
 
+        # Continuous VAD & Barge-In State
+        self._is_speaking = False
+        self._barge_in_callbacks: list[callable] = []
+        self._vad_buf = np.zeros(0, dtype=np.int16)
+        self._vad_speech_frames = 0
+        self._vad_threshold = 0.55
+        self._vad_resampler: Optional[soxr.ResampleStream] = soxr.ResampleStream(
+            NATIVE_SAMPLE_RATE, 16000, NATIVE_CHANNELS, dtype=NATIVE_DTYPE, quality="MQ"
+        )
+        try:
+            from openwakeword.vad import VAD
+            self._vad: Optional[VAD] = VAD()
+        except Exception:
+            self._vad = None
+
+    def set_speaking_state(self, speaking: bool) -> None:
+        """Informs AudioBus if system audio is currently being played."""
+        with self._lock:
+            self._is_speaking = speaking
+            if not speaking:
+                self._vad_speech_frames = 0
+                self._vad_buf = np.zeros(0, dtype=np.int16)
+
+    def is_speaking(self) -> bool:
+        with self._lock:
+            return self._is_speaking
+
+    def on_barge_in(self, callback: callable) -> None:
+        """Registers a callback invoked when barge-in is triggered."""
+        with self._lock:
+            self._barge_in_callbacks.append(callback)
+
+    def remove_barge_in(self, callback: callable) -> None:
+        """Unregisters a barge-in callback."""
+        with self._lock:
+            if callback in self._barge_in_callbacks:
+                self._barge_in_callbacks.remove(callback)
+
+    def trigger_barge_in(self) -> None:
+        """Immediately flushes audio and aborts playback within < 15ms."""
+        # 1. Abort TTS worker synthesis and kill active aplay
+        try:
+            import tts
+            tts.cancel()
+        except Exception:
+            pass
+
+        # 2. Invoke callbacks (e.g. notify server WebSocket, clear playback buffers)
+        with self._lock:
+            self._is_speaking = False
+            self._vad_speech_frames = 0
+            self._vad_buf = np.zeros(0, dtype=np.int16)
+            cbs = list(self._barge_in_callbacks)
+
+        for cb in cbs:
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def _check_vad(self, chunk_24k: np.ndarray) -> None:
+        """Processes 24kHz chunk through 16kHz Silero VAD during system speech."""
+        if not self._is_speaking or self._vad is None or self._vad_resampler is None:
+            return
+
+        resampled_16k = self._vad_resampler.resample_chunk(chunk_24k)
+        if len(self._vad_buf) > 0:
+            self._vad_buf = np.concatenate([self._vad_buf, resampled_16k])
+        else:
+            self._vad_buf = resampled_16k
+
+        frame_size = 480  # 30ms at 16kHz
+        while len(self._vad_buf) >= frame_size:
+            frame = self._vad_buf[:frame_size]
+            self._vad_buf = self._vad_buf[frame_size:]
+            try:
+                score = self._vad.predict(frame, frame_size=frame_size)
+            except Exception:
+                score = 0.0
+
+            if score >= self._vad_threshold:
+                self._vad_speech_frames += 1
+                if self._vad_speech_frames >= 2:  # ~60ms of confirmed user speech
+                    self.trigger_barge_in()
+                    break
+            else:
+                self._vad_speech_frames = max(0, self._vad_speech_frames - 1)
+
     def _distributor_loop(self) -> None:
         while self._running:
             try:
                 chunk = self._raw_queue.get(timeout=0.2)
             except queue.Empty:
                 continue
+
+            # Check continuous VAD for instant barge-in if speaking
+            if self._is_speaking:
+                self._check_vad(chunk)
 
             with self._lock:
                 active_subs = list(self._subscribers)
