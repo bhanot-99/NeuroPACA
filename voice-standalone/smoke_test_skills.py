@@ -526,6 +526,23 @@ test_atomic_preservation("search for tom and jerry")
 test_atomic_preservation("send email to test@example.com with subject Hi and message see you then")
 test_atomic_preservation("add a to-do buy milk and eggs")
 
+# Verb-aware boundary detection check: atomic prefix guard terminates at secondary action conjunction
+def test_compound_split_raw(utterance: str, expected_subs: list[str]) -> None:
+    global PASS, FAIL
+    subs = split_compound_utterance(utterance)
+    if subs == expected_subs:
+        PASS += 1
+        _results.append(f"  ✓  [compound verb-aware]  {utterance!r} → {subs}")
+    else:
+        FAIL += 1
+        _results.append(f"  ✗  [compound verb-aware] EXPECTED {expected_subs} but got {subs}  →  {utterance!r}")
+
+test_compound_split_raw(
+    "Search for Tom and Jerry and send an email to Alice",
+    ["Search for Tom and Jerry", "send an email to Alice"],
+)
+
+
 # ---------------------------------------------------------------------------
 # ─── Category N — Multi-Provider API Cascade & Quota Tracker ───────────────
 # ---------------------------------------------------------------------------

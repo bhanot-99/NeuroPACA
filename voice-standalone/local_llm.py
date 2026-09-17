@@ -96,7 +96,7 @@ _ANSWER_PROMPT = (
 )
 
 
-def _call(prompt: str, fmt=None, timeout: float = 20.0) -> str:
+def _call(prompt: str, fmt=None, timeout: float = 35.0) -> str:
     body = {"model": get_active_model(), "prompt": prompt, "stream": False, "options": {"num_gpu": 0}}
     if fmt is not None:
         body["format"] = fmt

@@ -57,7 +57,17 @@ async def _stream_tts_audio(
     """Splits text into clauses and streams 16-bit PCM chunks (Piper: 22050Hz, Kokoro: 24000Hz) to client."""
     if tts is None or not text.strip():
         return
-    clauses = tts.split_into_clauses(text)
+    cleaned_full = tts.clean_for_speech(text)
+    if not cleaned_full:
+        return
+
+    # Upfront engine selection:
+    # a) Calculate the TOTAL word count of the entire response FIRST (or skill type) before starting clause streaming.
+    # b) Lock the engine choice ('piper' vs 'kokoro') for the ENTIRE response session.
+    # c) NEVER allow switching engines mid-sentence between clauses during an active stream.
+    locked_engine = engine or tts.select_engine(cleaned_full, skill_name=skill_name, lang=lang)
+
+    clauses = tts.split_into_clauses(cleaned_full)
     if not clauses:
         return
 
@@ -70,7 +80,7 @@ async def _stream_tts_audio(
             is_last_clause = (c_idx == len(clauses) - 1)
 
             def _gen():
-                return list(tts.synthesize_stream(clause, lang=lang, engine=engine, skill_name=skill_name))
+                return list(tts.synthesize_stream(clause, lang=lang, engine=locked_engine, skill_name=skill_name))
 
             chunks = await asyncio.to_thread(_gen)
             for ch_idx, (pcm, sr, is_last_chunk) in enumerate(chunks):
@@ -86,7 +96,7 @@ async def _stream_tts_audio(
                         "sample_rate": sr,
                         "channels": 1,
                         "is_first": (c_idx == 0 and ch_idx == 0),
-                        "is_last": (is_last_clause and is_last_chunk),
+                        "is_last": (is_last_clause and (is_last_chunk or ch_idx == len(chunks) - 1)),
                     })
                 except Exception:
                     return

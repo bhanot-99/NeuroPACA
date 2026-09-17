@@ -55,7 +55,7 @@ CONVERSATIONAL_SKILLS = frozenset({
 
 
 # Precompiled regular expressions for ultra-fast clean_for_speech (< 0.1ms)
-_RE_ACTION_TAG = re.compile(r"^\s*\[[a-zA-Z0-9_\-]+\]\s*")
+_RE_ACTION_TAG = re.compile(r"^\[.*?\]\s*")
 _RE_ACRONYM = re.compile(r"\(([A-Z]{1,5})\)")
 _RE_CODE_BLOCK = re.compile(r"```[\s\S]*?```")
 _RE_INLINE_CODE = re.compile(r"`([^`]+)`")
@@ -95,8 +95,10 @@ def clean_for_speech(text: str) -> str:
     URLs, file paths, raw JSON, action tags, converting symbols, and normalizing abbreviations."""
     if not text:
         return ""
-    # Strip leading action tags like [answer], [ip], [battery], [conversation]
-    text = _RE_ACTION_TAG.sub("", text)
+    # Ensure leading bracketed action tags like [answer], [ip], [battery] are stripped cleanly
+    text = re.sub(r"^\[.*?\]\s*", "", text.strip()).lstrip()
+    if not text:
+        return ""
     # Normalize parenthetical acronyms e.g. (EI) -> , EI,
     text = _RE_ACRONYM.sub(r", \1, ", text)
     # Omit multi-line code blocks
@@ -451,10 +453,25 @@ def speak(
     """Synchronous speech execution via the persistent warm worker."""
     if not text:
         return
+    cleaned = clean_for_speech(text)
+    if not cleaned:
+        return
     if lang is None or lang == "en":
-        detected = detect_lang(text)
+        detected = detect_lang(cleaned)
         lang = detected if detected != "en" else "en"
-    _client.speak(text, lang=lang, engine=engine, skill_name=skill_name)
+
+    # Upfront engine selection:
+    # a) Calculate the TOTAL word count of the entire response FIRST (or skill type) before starting clause streaming.
+    # b) Lock the engine choice ('piper' vs 'kokoro') for the ENTIRE response session.
+    # c) NEVER allow switching engines mid-sentence between clauses during an active stream.
+    locked_engine = engine or select_engine(cleaned, skill_name=skill_name, lang=lang)
+
+    clauses = split_into_clauses(cleaned)
+    if len(clauses) > 1:
+        for clause in clauses:
+            _client.speak(clause, lang=lang, engine=locked_engine, skill_name=skill_name)
+    else:
+        _client.speak(cleaned, lang=lang, engine=locked_engine, skill_name=skill_name)
 
 
 def cancel() -> None:
@@ -471,11 +488,17 @@ def synthesize_stream(
     """Yields (raw_pcm_bytes, sample_rate, is_last) tuples in real-time as chunks render."""
     if not text:
         return
+    cleaned = clean_for_speech(text)
+    if not cleaned:
+        return
     if lang is None or lang == "en":
-        detected = detect_lang(text)
+        detected = detect_lang(cleaned)
         lang = detected if detected != "en" else "en"
 
-    for chunk in _client.synthesize_chunks(text, lang=lang, engine=engine, skill_name=skill_name):
+    # Upfront engine selection: lock engine choice for this stream session
+    locked_engine = engine or select_engine(cleaned, skill_name=skill_name, lang=lang)
+
+    for chunk in _client.synthesize_chunks(cleaned, lang=lang, engine=locked_engine, skill_name=skill_name):
         b64_audio = chunk.get("pcm_b64", "")
         pcm = base64.b64decode(b64_audio) if b64_audio else b""
         sr = chunk.get("sample_rate", 22050)

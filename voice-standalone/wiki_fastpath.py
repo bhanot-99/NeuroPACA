@@ -31,7 +31,7 @@ _SEARCH_URL = "https://en.wikipedia.org/w/api.php"
 _SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{}"
 
 _TOPIC_PATTERN = re.compile(
-    r"^\s*(?:what(?:'s| is)|who(?:'s| is)|tell me about)\s+(.+?)\s*\??\s*$",
+    r"^\s*(?:what(?:'s| is| was)|who(?:'s| is| was)|tell me about)\s+(.+?)\s*\??\s*$",
     re.IGNORECASE,
 )
 

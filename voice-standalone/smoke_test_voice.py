@@ -276,6 +276,72 @@ def benchmark_websocket_streaming():
         record_result(False, "WebSocket Streaming Test", str(exc))
 
 
+def benchmark_regression_engine_lock():
+    print("\n--- 6. Regression Test: Mid-Stream Engine Lock & Tag Stripping ---")
+    test_input = "[answer] Oh huge congratulations! Three months of studying is no joke, I am so proud of you. Time to celebrate!"
+
+    # 1. Verify clean_for_speech strips leading action tag cleanly and leaves no leading whitespace
+    cleaned = tts.clean_for_speech(test_input)
+    assert not cleaned.startswith("[answer]"), f"Tag [answer] was not stripped: {cleaned!r}"
+    assert not cleaned.startswith(" "), f"Leading whitespace remains: {cleaned!r}"
+    assert cleaned.startswith("Oh huge congratulations!"), f"Unexpected cleaned text: {cleaned!r}"
+    record_result(True, "Robust Action Tag Stripping (No Leading Bracket or Whitespace)")
+
+    # 2. Verify upfront engine selection on full text (18+ words -> kokoro)
+    total_words = len(cleaned.split())
+    assert total_words >= 10, f"Expected total words >= 10, got {total_words}"
+    locked_engine = tts.select_engine(cleaned)
+    assert locked_engine == "kokoro", f"Expected kokoro for total text, got {locked_engine}"
+
+    # 3. Verify clause splitting and that isolated clauses would have chosen piper (<10 words)
+    clauses = tts.split_into_clauses(cleaned)
+    assert len(clauses) >= 2, f"Expected multiple clauses, got {len(clauses)}"
+    for idx, clause in enumerate(clauses):
+        isolated_choice = tts.select_engine(clause)
+        # All individual clauses in this utterance are < 10 words, which previously triggered mid-stream flip to Piper!
+        assert isolated_choice == "piper", f"Clause {idx} ({len(clause.split())} words) was expected to be <10 words (piper in isolation), got {isolated_choice}"
+
+    # 4. Verify streaming simulation through _stream_tts_audio with locked engine
+    from server import _stream_tts_audio
+
+    class MockWebSocket:
+        def __init__(self):
+            self.messages = []
+        async def send_json(self, msg):
+            self.messages.append(msg)
+
+    mock_ws = MockWebSocket()
+    tts.warm_up(wait_for_conversational=True)
+
+    # Stream the full response
+    asyncio.run(_stream_tts_audio(mock_ws, test_input))
+
+    audio_chunks = [m for m in mock_ws.messages if m.get("type") == "audio_chunk"]
+    assert len(audio_chunks) > 0, "No audio chunks produced"
+
+    # Verify that every single chunk has sample_rate == 24000 (Kokoro)
+    sample_rates = set(m.get("sample_rate") for m in audio_chunks)
+    assert sample_rates == {24000}, f"Expected all chunks to use sample_rate=24000 (Kokoro), got {sample_rates}"
+
+    # Verify that no audio_flush event was sent
+    flush_events = [m for m in mock_ws.messages if m.get("type") == "audio_flush"]
+    assert len(flush_events) == 0, f"Unexpected audio_flush events received: {len(flush_events)}"
+
+    # Verify total non-empty PCM audio bytes across all clauses
+    total_bytes = sum(len(base64.b64decode(m["pcm_b64"])) for m in audio_chunks if m.get("pcm_b64"))
+    assert total_bytes > 0, "Total generated audio bytes is 0"
+
+    # Verify that audio_bus speaking state returned to False (no hanging state or cancel triggered)
+    assert not audio_bus.is_speaking(), "audio_bus should not be speaking after stream completion"
+
+    sr_val = next(iter(sample_rates))
+    record_result(
+        True,
+        "Regression: Single Engine Locked Across All Clauses (No Cancellation/Truncation)",
+        f"{len(clauses)} clauses locked to '{locked_engine}', {len(audio_chunks)} chunks @ {sr_val}Hz, {total_bytes} bytes PCM",
+    )
+
+
 def main():
     print("=" * 70)
     print(" NEUROPACA VOICE PIPELINE: ULTRA-LOW LATENCY VERIFICATION")
@@ -288,6 +354,7 @@ def main():
     benchmark_ttfa()
     benchmark_barge_in()
     benchmark_websocket_streaming()
+    benchmark_regression_engine_lock()
 
     print("\n" + "=" * 70)
     print(" BENCHMARK SUMMARY")
