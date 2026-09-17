@@ -394,6 +394,21 @@ expect_match("hi", "small_talk")
 expect_match("good morning", "small_talk")
 expect_match("what's up", "small_talk")
 expect_match("who are you", "small_talk")
+expect_match("Hello my name is Jatin, how are you doing?", "small_talk")
+expect_match("my name is Jatin", "small_talk")
+expect_match("hi my name is Chatin", "small_talk")
+expect_match("how are you doing", "small_talk")
+
+# ---------------------------------------------------------------------------
+# ─── Category J — Assistant meta & status ──────────────────────────────────
+# ---------------------------------------------------------------------------
+
+print("\n=== J — Assistant meta & status ===")
+
+expect_match("Report version status", "report_version_status")
+expect_match("System health", "report_version_status")
+expect_match("system status", "report_version_status")
+expect_match("what version are you running", "report_version_status")
 
 # ---------------------------------------------------------------------------
 # ─── False-positive traps ──────────────────────────────────────────────────
@@ -421,6 +436,15 @@ if name_check != "google_search":
 else:
     FAIL += 1
     _results.append("  ✗  'how are you' triggered google_search!")
+
+# Regression: 'Hello my name is Jatin, how are you doing?' must route to small_talk and NEVER report_version_status
+name_jatin, args_jatin = match_skill("Hello my name is Jatin, how are you doing?")
+if name_jatin == "small_talk" and "Jatin" in args_jatin.get("reply", ""):
+    PASS += 1
+    _results.append("  ✓  'Hello my name is Jatin, how are you doing?' routes to small_talk (not report_version_status)")
+else:
+    FAIL += 1
+    _results.append(f"  ✗  'Hello my name is Jatin, how are you doing?' misrouted to [{name_jatin}]!")
 
 # Step 4 added F14 restart_service — must be THAT skill, not A12 restart.
 expect_match("restart the nginx service", "restart_service", "should not match A12 restart")

@@ -31,3 +31,19 @@ def set_last_response(text: str) -> None:
 
 def get_last_response() -> str | None:
     return _last_response
+
+
+_user_name: str | None = None
+
+
+def set_user_name(name: str | None) -> None:
+    global _user_name
+    if name and name.strip():
+        _user_name = name.strip()
+    elif name is None:
+        _user_name = None
+
+
+def get_user_name() -> str | None:
+    return _user_name
+

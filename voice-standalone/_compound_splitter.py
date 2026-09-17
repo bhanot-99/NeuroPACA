@@ -32,7 +32,14 @@ _ATOMIC_PREFIX_REGEX = re.compile(
     r"calculate\s+|"
     r"compute\s+|"
     r"define\s+|"
-    r"spell\s+"
+    r"spell\s+|"
+    r"hello\s+|"
+    r"hi\s+|"
+    r"hey\s+|"
+    r"greetings\s+|"
+    r"good\s+(?:morning|afternoon|evening)\s+|"
+    r"my\s+name\s+is\s+|"
+    r"how\s+are\s+you"
     r")",
     re.IGNORECASE,
 )

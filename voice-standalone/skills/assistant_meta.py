@@ -38,10 +38,8 @@ def _match_wake_back_up(text: str) -> dict | None:
 
 def _match_report_version_status(text: str) -> dict | None:
     if re.search(
-        r"\bwhat\s+version\s+are\s+you\s+running\b"
-        r"|\bare\s+you\s+working\s+(?:properly|ok|okay)\b"
-        r"|\bassistant\s+status\b"
-        r"|\bhow\s+are\s+you\s+doing\b",
+        r"\b(?:report\s+(?:version|status|health)|system\s+(?:status|health)|build\s+status|version\s+info|what\s+version(?:\s+are\s+you\s+running)?|assistant\s+status)\b"
+        r"|\bare\s+you\s+working\s+(?:properly|ok|okay)\b",
         text, re.IGNORECASE
     ):
         return {}

@@ -103,6 +103,30 @@ class TestSmallTalkFastPath(unittest.TestCase):
         name3, _ = match_skill("who are you")
         self.assertEqual(name3, "small_talk")
 
+    def test_greeting_with_name_and_how_are_you(self):
+        from skills._session_state import set_user_name, get_user_name
+        set_user_name(None)
+        name, args = match_skill("Hello my name is Jatin, how are you doing?")
+        self.assertEqual(name, "small_talk")
+        self.assertNotEqual(name, "report_version_status")
+        self.assertIsNotNone(args)
+        self.assertIn("Jatin", args.get("reply", ""))
+        self.assertIn("doing well", args.get("reply", ""))
+        self.assertEqual(get_user_name(), "Jatin")
+
+    def test_report_version_status_and_system_health(self):
+        name1, _ = match_skill("Report version status")
+        self.assertEqual(name1, "report_version_status")
+
+        name2, _ = match_skill("System health")
+        self.assertEqual(name2, "report_version_status")
+
+        name3, _ = match_skill("what version are you running")
+        self.assertEqual(name3, "report_version_status")
+
+        name4, _ = match_skill("system status")
+        self.assertEqual(name4, "report_version_status")
+
     def test_non_conversational_sentences_not_matched(self):
         self.assertIsNone(_match_small_talk("open visual studio code"))
         self.assertIsNone(_match_small_talk("set volume to 60"))

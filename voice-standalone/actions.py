@@ -1780,9 +1780,11 @@ def cancel_action() -> None:
 # ─── Category K — Small-talk & conversation ────────────────────────────────
 # ===========================================================================
 
-def small_talk(reply: str = "I'm doing well, thank you! How can I help you?") -> None:
+def small_talk(reply: str = "I'm doing well, thank you! How can I help you?", user_name: str | None = None) -> None:
     """Responds directly with a friendly conversational reply.
     Synthesizes and speaks it via tts.speak()."""
+    if user_name:
+        _session_state.set_user_name(user_name)
     print(reply)
     if not isinstance(sys.stdout, io.StringIO):
         try:
