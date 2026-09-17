@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
+from _compound_splitter import split_compound_utterance
 import config
 import dispatch
 import llm_intent
@@ -323,6 +324,89 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                 continue
 
             t_start = time.perf_counter()
+
+            # Deterministic Compound Command Pre-Processor
+            sub_commands = split_compound_utterance(user_text)
+            if len(sub_commands) > 1:
+                outputs = []
+                for sub_cmd in sub_commands:
+                    t_cmd_start = time.perf_counter()
+                    sub_layer = None
+                    sub_skill = None
+                    sub_args = {}
+
+                    # Step 1: Layer 0 Deterministic Grammar Match
+                    n0, a0 = skills.match_skill(sub_cmd)
+                    if n0 is not None:
+                        sub_layer = "layer0"
+                        sub_skill, sub_args = n0, a0
+
+                    # Step 2: Layer 1 Semantic Vector Match
+                    if sub_skill is None:
+                        try:
+                            n1, a1 = await asyncio.to_thread(semantic_match.match, sub_cmd)
+                            if n1 is not None:
+                                sub_layer = "layer1"
+                                sub_skill, sub_args = n1, a1
+                        except Exception:
+                            pass
+
+                    # Step 3: Wikipedia Fast-Path Lookup
+                    if sub_skill is None:
+                        try:
+                            wiki_hit = await asyncio.to_thread(wiki_fastpath.lookup, sub_cmd)
+                            if wiki_hit is not None:
+                                sub_layer = "wiki"
+                                q, a, u = wiki_hit
+                                sub_skill = "answer_question"
+                                sub_args = {"question": q, "answer": a, "url": u}
+                        except Exception:
+                            pass
+
+                    # Step 4: Layer 2 LLM Intent Fallback (Cascade)
+                    if sub_skill is None and config.LLM_FALLBACK_ENABLED:
+                        try:
+                            nl, al = await asyncio.to_thread(llm_intent.resolve_intent, sub_cmd)
+                            if nl is not None:
+                                sub_layer = "llm"
+                                sub_skill, sub_args = nl, al
+                        except Exception:
+                            pass
+
+                    if sub_skill is not None:
+                        tier = _tiers.tier_of(sub_skill)
+                        res = await asyncio.to_thread(
+                            dispatch.execute_skill,
+                            sub_skill,
+                            sub_args,
+                            text=sub_cmd,
+                        )
+                        cmd_elapsed_ms = (time.perf_counter() - t_cmd_start) * 1000
+                        out_text = res.get("output", "").strip() or f"Executed {sub_skill}."
+                        await websocket.send_json({
+                            "type": "tool_executed",
+                            "skill": sub_skill,
+                            "args": sub_args,
+                            "tier": tier,
+                            "matched_layer": sub_layer,
+                            "outcome": "executed",
+                            "output": out_text,
+                            "elapsed_ms": cmd_elapsed_ms,
+                        })
+                        outputs.append(out_text)
+                    else:
+                        outputs.append(f"No action for '{sub_cmd}'")
+
+                if outputs:
+                    consolidated = "; ".join(outputs)
+                    await websocket.send_json({
+                        "type": "chat_message",
+                        "text": consolidated,
+                        "elapsed_ms": (time.perf_counter() - t_start) * 1000,
+                    })
+                    asyncio.create_task(_stream_tts_audio(websocket, consolidated))
+                continue
+
             matched_layer = None
             skill_name = None
             skill_args = {}

@@ -22,8 +22,16 @@ SAMPLE_RATE = 16000
 # tier this API key has (Nano Banana is image generation despite the name;
 # the Gemma models on this key are 26B-31B, larger, not smaller), and it
 # benchmarked as accurate as full flash on real intent-resolution cases
-# while giving noticeably more natural/conversational answer phrasing.
 INTENT_MODEL = "gemini-flash-lite-latest"
+
+# Multi-Provider Cascade Options (llm_intent.py)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", os.environ.get("NVIDIA_NIM_API_KEY", ""))
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-nemotron-70b-instruct")
+
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 
 # Layer-2 LLM intent fallback (llm_intent.py) — ON by default as of
 # 2026-09-16 (was off since this flag was added). llm_intent.py is a real

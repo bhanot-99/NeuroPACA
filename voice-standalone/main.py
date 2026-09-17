@@ -4,6 +4,7 @@ _process_guard.ensure_libgomp_preloaded()
 import os
 import tempfile
 
+from _compound_splitter import split_compound_utterance
 import config
 import dispatch
 import llm_intent
@@ -75,6 +76,68 @@ def main() -> None:
             continue
 
         try:
+            sub_commands = split_compound_utterance(text)
+            if len(sub_commands) > 1:
+                outputs = []
+                for sub_cmd in sub_commands:
+                    name, args = skills.match_skill(sub_cmd)
+                    if name is not None:
+                        print(f"[layer0] {name}({args})")
+                    else:
+                        if layer1_available:
+                            name, args = semantic_match.match(sub_cmd)
+                        if name is not None:
+                            print(f"[layer1] {name}({args})")
+                        else:
+                            wiki_hit = wiki_fastpath.lookup(sub_cmd)
+                            if wiki_hit is not None:
+                                question, answer, url = wiki_hit
+                                name, args = "answer_question", {"question": question, "answer": answer, "url": url}
+                                print(f"[wiki] {name}({args})")
+                            elif config.LLM_FALLBACK_ENABLED:
+                                name, args = llm_intent.resolve_intent(sub_cmd)
+                                if name is None:
+                                    print(f"No matching action for '{sub_cmd}'.")
+                                    continue
+                                print(f"[llm] {name}({args})")
+                            else:
+                                print(f"No matching action for '{sub_cmd}'.")
+                                continue
+
+                    if _session_state.is_asleep() and name != "wake_back_up":
+                        print("[asleep] (ignoring — say 'wake up' to resume)")
+                        continue
+
+                    result = dispatch.execute_skill(
+                        name, args, text=sub_cmd,
+                        on_review=lambda name, args: print(f"[REVIEW] about to run: {name}({args})"),
+                    )
+
+                    if result["outcome"] == "needs_confirmation":
+                        tier, pause = result["tier"], result["pause"]
+                        print(f"[{tier}] {pause['preview']}")
+                        for warning in pause["warnings"]:
+                            print(f"  ⚠ machine-scan: {warning}")
+                        if pause["editable"]:
+                            edit = input("Press Enter to run as-is, type a replacement, or 'n' to cancel: ")
+                            sent = "" if edit.strip().lower() == "n" else (edit if edit else None)
+                        else:
+                            confirm = input("Run this? [Y/n]: ")
+                            sent = "" if confirm.strip().lower() == "n" else None
+                        result = dispatch.finish_confirm(result["generator"], sent, name=name, args=args, text=sub_cmd, tier=tier)
+                        if result["outcome"] == "cancelled":
+                            print("[cancelled]")
+                            continue
+
+                    out = result["output"].strip() or f"Ran: {name}"
+                    outputs.append(out)
+
+                if outputs:
+                    consolidated = "; ".join(outputs)
+                    print(consolidated)
+                    _speak(consolidated)
+                continue
+
             name, args = skills.match_skill(text)
             if name is not None:
                 print(f"[layer0] {name}({args})")

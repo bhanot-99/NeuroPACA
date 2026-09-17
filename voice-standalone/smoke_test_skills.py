@@ -442,6 +442,90 @@ else:
     _results[-1] = "  ✓  " + _results[-1]
 
 # ---------------------------------------------------------------------------
+# ─── Category M — Compound Commands Pre-Processor ──────────────────────────
+# ---------------------------------------------------------------------------
+print("\n=== M — Compound Commands & Multi-Action Utterances ===")
+from _compound_splitter import split_compound_utterance
+
+def test_compound(utterance: str, expected_sub_skills: list[str]) -> None:
+    global PASS, FAIL
+    subs = split_compound_utterance(utterance)
+    matched_skills = [match_skill(s)[0] for s in subs]
+    if matched_skills == expected_sub_skills:
+        PASS += 1
+        _results.append(f"  ✓  [compound]  {utterance!r} → {matched_skills}")
+    else:
+        FAIL += 1
+        _results.append(f"  ✗  [compound] EXPECTED {expected_sub_skills} but got {matched_skills}  →  {utterance!r}")
+
+test_compound("set volume to 90% and brightness to 90%", ["set_volume", "set_brightness"])
+test_compound("turn off wifi then lock screen", ["toggle_wifi", "lock_screen"])
+test_compound("battery status; current time", ["battery_status", "get_time"])
+
+# Atomic query preservation checks (must not be split)
+def test_atomic_preservation(utterance: str) -> None:
+    global PASS, FAIL
+    subs = split_compound_utterance(utterance)
+    if subs == [utterance]:
+        PASS += 1
+        _results.append(f"  ✓  [atomic preservation]  {utterance!r} preserved as single command")
+    else:
+        FAIL += 1
+        _results.append(f"  ✗  [atomic preservation] was mistakenly split: {subs}  →  {utterance!r}")
+
+test_atomic_preservation("search for tom and jerry")
+test_atomic_preservation("send email to test@example.com with subject Hi and message see you then")
+test_atomic_preservation("add a to-do buy milk and eggs")
+
+# ---------------------------------------------------------------------------
+# ─── Category N — Multi-Provider API Cascade & Quota Tracker ───────────────
+# ---------------------------------------------------------------------------
+print("\n=== N — Multi-Provider API Cascade & Quota Tracker ===")
+import quota_tracker
+import llm_intent
+from unittest.mock import patch
+
+# Test quota tracker marking and reset
+quota_tracker.reset_quota("gemini")
+if not quota_tracker.is_exhausted("gemini"):
+    PASS += 1
+    _results.append("  ✓  quota_tracker: 'gemini' initially not exhausted")
+else:
+    FAIL += 1
+    _results.append("  ✗  quota_tracker: 'gemini' reported exhausted after reset")
+
+quota_tracker.mark_exhausted("gemini", "simulated 429 rate limit")
+if quota_tracker.is_exhausted("gemini"):
+    PASS += 1
+    _results.append("  ✓  quota_tracker: 'gemini' successfully marked exhausted")
+else:
+    FAIL += 1
+    _results.append("  ✗  quota_tracker: 'gemini' failed to mark exhausted")
+
+quota_tracker.reset_quota("gemini")
+if not quota_tracker.is_exhausted("gemini"):
+    PASS += 1
+    _results.append("  ✓  quota_tracker: 'gemini' successfully reset")
+else:
+    FAIL += 1
+    _results.append("  ✗  quota_tracker: 'gemini' still exhausted after reset")
+
+# Test failover cascade logic
+quota_tracker.mark_exhausted("gemini", "simulated 429")
+with patch("llm_intent._call_openai_compatible_api") as mock_groq:
+    mock_groq.return_value = ("set_volume", {"percent": 75})
+    with patch("llm_intent.GROQ_API_KEY", "test_key"):
+        skill, args = llm_intent.resolve_intent("set the volume to 75")
+        if skill == "set_volume" and args == {"percent": 75}:
+            PASS += 1
+            _results.append("  ✓  llm_intent cascade: bypassed exhausted Gemini and resolved via Groq")
+        else:
+            FAIL += 1
+            _results.append(f"  ✗  llm_intent cascade failed: got ({skill}, {args})")
+
+quota_tracker.reset_quota("gemini")
+
+# ---------------------------------------------------------------------------
 # ─── Summary ───────────────────────────────────────────────────────────────
 # ---------------------------------------------------------------------------
 

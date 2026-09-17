@@ -37,6 +37,7 @@ import soundfile as sf
 from openwakeword.model import Model
 from openwakeword.vad import VAD
 
+from _compound_splitter import split_compound_utterance
 from audio_bus import audio_bus
 import config
 import dispatch
@@ -196,6 +197,71 @@ def _process_command(wav_path: str, layer1_available: bool) -> None:
         return
 
     try:
+        sub_commands = split_compound_utterance(text)
+        if len(sub_commands) > 1:
+            outputs = []
+            for sub_cmd in sub_commands:
+                matched_layer = "layer0"
+                name, args = skills.match_skill(sub_cmd)
+                if name is None and layer1_available:
+                    matched_layer = "layer1"
+                    name, args = semantic_match.match(sub_cmd)
+                if name is None:
+                    wiki_hit = wiki_fastpath.lookup(sub_cmd)
+                    if wiki_hit is not None:
+                        matched_layer = "wiki"
+                        question, answer, url = wiki_hit
+                        name, args = "answer_question", {"question": question, "answer": answer, "url": url}
+                if name is None and config.LLM_FALLBACK_ENABLED:
+                    matched_layer = "llm"
+                    name, args = llm_intent.resolve_intent(sub_cmd)
+
+                if name is None:
+                    outputs.append(f"No matching action for '{sub_cmd}'")
+                    continue
+
+                if _session_state.is_asleep() and name != "wake_back_up":
+                    _notify("Voice Assistant", "(asleep — say 'wake up' to resume)",
+                             speak_text="Asleep. Say wake up to resume.")
+                    return
+
+                if matched_layer == "llm" or name in (
+                    "google_search", "youtube_search", "wikipedia_search",
+                    "duckduckgo_search", "speed_test", "define_word"
+                ):
+                    _speak("Let me check.")
+
+                result = dispatch.execute_skill(
+                    name, args, text=sub_cmd,
+                    on_review=lambda name, args: _notify(f"About to run: {name}", str(args), speak_text=f"About to run {name}."),
+                )
+
+                if result["outcome"] == "needs_confirmation":
+                    tier, pause = result["tier"], result["pause"]
+                    warning_text = ("\n⚠ " + "; ".join(pause["warnings"])) if pause["warnings"] else ""
+                    _notify(
+                        f"Confirm: {pause['preview']}",
+                        f"Click the tray within 10s to run it.{warning_text}",
+                        speak_text=f"Please confirm: {pause['preview']}",
+                    )
+                    confirmed = _manual_toggle_event.wait(timeout=10)
+                    if confirmed:
+                        _manual_toggle_event.clear()
+                    result = dispatch.finish_confirm(
+                        result["generator"], None if confirmed else "",
+                        name=name, args=args, text=sub_cmd, tier=tier,
+                    )
+                    if result["outcome"] == "cancelled":
+                        outputs.append(f"Cancelled: {name}")
+                        continue
+
+                out = result["output"].strip() or f"Ran: {name}"
+                outputs.append(out)
+
+            consolidated = "; ".join(outputs) if outputs else "No matching actions."
+            _notify(f"Heard: {text}", consolidated)
+            return
+
         matched_layer = "layer0"
         name, args = skills.match_skill(text)
         if name is None and layer1_available:

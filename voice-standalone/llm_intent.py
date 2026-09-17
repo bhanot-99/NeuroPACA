@@ -1,55 +1,57 @@
 """
+llm_intent.py — Multi-Provider LLM Failover Cascade & Intent Resolution Router.
+
 Layer-2 fallback: only reached once Layer 0 (regex) and Layer 1 (local
 semantic match) have both already failed to resolve an utterance, and
 config.LLM_FALLBACK_ENABLED is on.
 
-Cascade, in order:
-  1. Gemini (config.INTENT_MODEL, a flash-lite tier — checked directly
-     against this API key's live model list, 2026-09-16: flash-lite is the
-     smallest text-generation tier Google offers here, "Nano Banana" is
-     image generation despite the name, and the Gemma models on this key
-     are larger, not smaller). One call does double duty: pick a tool if
-     the utterance is a command, or just answer directly in plain text if
-     it's a genuine question — verified directly that the SDK reliably
-     returns a text part instead of a function_call in that case, not
-     assumed.
-  2. On ANY Gemini failure (quota 429, a deprecated/removed model like the
-     gemini-2.5-flash 404 this project already hit once, network issues —
-     caught broadly on purpose, not just 429) — fall through to
-     local_llm.py's Qwen2.5-1.5B cascade instead of just giving up.
-     A 429 specifically also gets remembered via quota_tracker so the rest
-     of today's utterances skip straight past Gemini instead of paying a
-     network round-trip to fail again each time.
+Cascade Architecture (Strict Order):
+  1. Primary: Google Gemini API (gemini-flash-lite-latest / gemini-2.5-flash)
+  2. Secondary Fallback: Groq Cloud API (llama-3.3-70b-versatile / qwen-2.5-coder-32b)
+  3. Tertiary Fallback: NVIDIA NIM API (meta/llama-3.1-nemotron-70b-instruct)
+  4. Ultimate Local Fallback (100% Offline): Local Ollama instance (qwen2.5:3b-instruct / 1.5b)
 
-Benchmarked directly before choosing gemini-flash-lite-latest as the
-primary and Qwen2.5-1.5B (not 3B — measured slower AND less accurate) as
-the local fallback; see guide.md for the full numbers.
+Central Security Chokepoint:
+  All tool calls proposed by any provider return a standardized (tool_name, args) tuple
+  which is fed directly into dispatch.execute_skill, ensuring policy classification
+  (SAFE / REVIEW / DANGEROUS) and audit logging are strictly enforced.
 """
 
-from google import genai
-from google.genai import types
-from google.genai import errors
+import json
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional, Tuple
 
+from google import genai
+from google.genai import errors, types
+
+import config
 import local_llm
 import quota_tracker
-from config import GEMINI_API_KEY, INTENT_MODEL
+from config import (
+    GEMINI_API_KEY,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    INTENT_MODEL,
+    NVIDIA_API_KEY,
+    NVIDIA_MODEL,
+)
 
-_client = genai.Client(api_key=GEMINI_API_KEY)
-
-_TOOLS = [
-    types.FunctionDeclaration(
-        name="open_app",
-        description="Launch a desktop application by name, e.g. firefox, code, spotify.",
-        parameters={
+# Shared tool schema definitions
+_TOOL_SPECS: List[Dict[str, Any]] = [
+    {
+        "name": "open_app",
+        "description": "Launch a desktop application by name, e.g. firefox, code, spotify.",
+        "parameters": {
             "type": "object",
             "properties": {"app_name": {"type": "string"}},
             "required": ["app_name"],
         },
-    ),
-    types.FunctionDeclaration(
-        name="web_search",
-        description="Search Google or YouTube in the default browser.",
-        parameters={
+    },
+    {
+        "name": "web_search",
+        "description": "Search Google or YouTube in the default browser.",
+        "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
@@ -57,48 +59,47 @@ _TOOLS = [
             },
             "required": ["query", "site"],
         },
-    ),
-    types.FunctionDeclaration(
-        name="set_volume",
-        description="Set system output volume to an exact percentage (0-100).",
-        parameters={
+    },
+    {
+        "name": "set_volume",
+        "description": "Set system output volume to an exact percentage (0-100).",
+        "parameters": {
             "type": "object",
             "properties": {"percent": {"type": "integer"}},
             "required": ["percent"],
         },
-    ),
-    types.FunctionDeclaration(
-        name="set_brightness",
-        description="Set screen brightness to an exact percentage (0-100).",
-        parameters={
+    },
+    {
+        "name": "set_brightness",
+        "description": "Set screen brightness to an exact percentage (0-100).",
+        "parameters": {
             "type": "object",
             "properties": {"percent": {"type": "integer"}},
             "required": ["percent"],
         },
-    ),
-    types.FunctionDeclaration(
-        name="run_terminal",
-        description="Run an arbitrary shell command on the user's Linux machine.",
-        parameters={
+    },
+    {
+        "name": "run_terminal",
+        "description": "Run an arbitrary shell command on the user's Linux machine.",
+        "parameters": {
             "type": "object",
             "properties": {"command": {"type": "string"}},
             "required": ["command"],
         },
-    ),
-    types.FunctionDeclaration(
-        name="read_pdf",
-        description="Read a PDF file by name from the user's common folders (Downloads, "
-                     "Documents, Desktop, etc.) and return its extracted text.",
-        parameters={
+    },
+    {
+        "name": "read_pdf",
+        "description": "Read a PDF file by name from the user's common folders (Downloads, Documents, Desktop, etc.) and return its extracted text.",
+        "parameters": {
             "type": "object",
             "properties": {"name": {"type": "string"}},
             "required": ["name"],
         },
-    ),
-    types.FunctionDeclaration(
-        name="read_latest_emails",
-        description="Read or search email messages from inbox, filter by sender or query, or read full content of a specific email by index.",
-        parameters={
+    },
+    {
+        "name": "read_latest_emails",
+        "description": "Read or search email messages from inbox, filter by sender or query, or read full content of a specific email by index.",
+        "parameters": {
             "type": "object",
             "properties": {
                 "count": {"type": "integer", "description": "Number of recent emails to read (default 5)"},
@@ -107,11 +108,11 @@ _TOOLS = [
                 "index": {"type": "integer", "description": "1-based index of a specific email to read in full (e.g. 1 for latest, 2 for 2nd recent)"},
             },
         },
-    ),
-    types.FunctionDeclaration(
-        name="send_email",
-        description="Send an email to a specified recipient with a subject and message body via SMTP.",
-        parameters={
+    },
+    {
+        "name": "send_email",
+        "description": "Send an email to a specified recipient with a subject and message body via SMTP.",
+        "parameters": {
             "type": "object",
             "properties": {
                 "to": {"type": "string", "description": "Recipient email address"},
@@ -120,10 +121,32 @@ _TOOLS = [
             },
             "required": ["to", "subject", "body"],
         },
-    ),
+    },
 ]
 
-_TOOL = types.Tool(function_declarations=_TOOLS)
+# Google Gemini tool declarations
+_GEMINI_TOOLS = [
+    types.FunctionDeclaration(
+        name=s["name"],
+        description=s["description"],
+        parameters=s["parameters"],
+    )
+    for s in _TOOL_SPECS
+]
+_GEMINI_TOOL_CONFIG = types.Tool(function_declarations=_GEMINI_TOOLS)
+
+# OpenAI-compatible tool specifications (Groq, NVIDIA NIM)
+_OPENAI_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": s["name"],
+            "description": s["description"],
+            "parameters": s["parameters"],
+        },
+    }
+    for s in _TOOL_SPECS
+]
 
 _SYSTEM_INSTRUCTION = (
     "You turn a spoken command into exactly one tool call when the command "
@@ -136,22 +159,139 @@ _SYSTEM_INSTRUCTION = (
     "nothing."
 )
 
+_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-def _resolve_via_gemini(text: str) -> tuple[str | None, dict | None]:
+
+# ===========================================================================
+# ─── Provider 1: Google Gemini API (Primary) ───────────────────────────────
+# ===========================================================================
+
+def _resolve_via_gemini(text: str) -> Tuple[Optional[str], Optional[dict]]:
+    if _client is None:
+        return None, None
     response = _client.models.generate_content(
         model=INTENT_MODEL,
         contents=[_SYSTEM_INSTRUCTION, text],
-        config=types.GenerateContentConfig(tools=[_TOOL]),
+        config=types.GenerateContentConfig(tools=[_GEMINI_TOOL_CONFIG]),
     )
+    if not response.candidates or not response.candidates[0].content:
+        return None, None
+
     for part in response.candidates[0].content.parts:
         if part.function_call:
-            return part.function_call.name, dict(part.function_call.args)
+            return part.function_call.name, dict(part.function_call.args or {})
         if part.text and part.text.strip():
             return "answer_question", {"question": text, "answer": part.text.strip()}
     return None, None
 
 
-def _resolve_via_local(text: str) -> tuple[str | None, dict | None]:
+# ===========================================================================
+# ─── Generic OpenAI-Compatible Caller (Groq / NVIDIA NIM) ───────────────────
+# ===========================================================================
+
+def _call_openai_compatible_api(
+    url: str,
+    api_key: str,
+    model: str,
+    text: str,
+    provider: str,
+    timeout: float = 12.0,
+) -> Tuple[Optional[str], Optional[dict]]:
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_INSTRUCTION},
+            {"role": "user", "content": text},
+        ],
+        "tools": _OPENAI_TOOLS,
+        "tool_choice": "auto",
+        "temperature": 0.2,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            quota_tracker.mark_exhausted(provider, f"429 Rate Limit: {exc.reason}")
+        elif exc.code >= 500:
+            quota_tracker.mark_exhausted(provider, f"{exc.code} Server Error")
+        raise
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        quota_tracker.mark_exhausted(provider, f"Network/Timeout: {exc}")
+        raise
+
+    choices = data.get("choices", [])
+    if not choices:
+        return None, None
+    msg = choices[0].get("message", {})
+    tool_calls = msg.get("tool_calls")
+    if tool_calls and len(tool_calls) > 0:
+        tc = tool_calls[0]
+        fn = tc.get("function", {})
+        fname = fn.get("name")
+        raw_args = fn.get("arguments", "{}")
+        try:
+            fargs = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+        except Exception:
+            fargs = {}
+        return fname, fargs
+
+    content = msg.get("content", "").strip()
+    if content:
+        return "answer_question", {"question": text, "answer": content}
+    return None, None
+
+
+# ===========================================================================
+# ─── Provider 2: Groq Cloud API (Secondary Fallback) ───────────────────────
+# ===========================================================================
+
+def _resolve_via_groq(text: str) -> Tuple[Optional[str], Optional[dict]]:
+    if not GROQ_API_KEY:
+        return None, None
+    if quota_tracker.is_exhausted("groq"):
+        return None, None
+    return _call_openai_compatible_api(
+        url="https://api.groq.com/openai/v1/chat/completions",
+        api_key=GROQ_API_KEY,
+        model=GROQ_MODEL,
+        text=text,
+        provider="groq",
+    )
+
+
+# ===========================================================================
+# ─── Provider 3: NVIDIA NIM API (Tertiary Fallback) ────────────────────────
+# ===========================================================================
+
+def _resolve_via_nvidia(text: str) -> Tuple[Optional[str], Optional[dict]]:
+    if not NVIDIA_API_KEY:
+        return None, None
+    if quota_tracker.is_exhausted("nvidia"):
+        return None, None
+    return _call_openai_compatible_api(
+        url="https://integrate.api.nvidia.com/v1/chat/completions",
+        api_key=NVIDIA_API_KEY,
+        model=NVIDIA_MODEL,
+        text=text,
+        provider="nvidia",
+    )
+
+
+# ===========================================================================
+# ─── Provider 4: Local Ollama (Ultimate Offline Fallback) ───────────────────
+# ===========================================================================
+
+def _resolve_via_local(text: str) -> Tuple[Optional[str], Optional[dict]]:
     tool, args = local_llm.classify(text)
     if tool is None:
         return None, None
@@ -163,14 +303,40 @@ def _resolve_via_local(text: str) -> tuple[str | None, dict | None]:
     return tool, args
 
 
-def resolve_intent(text: str) -> tuple[str | None, dict | None]:
-    if not quota_tracker.is_exhausted_today():
+# ===========================================================================
+# ─── Router Cascade ────────────────────────────────────────────────────────
+# ===========================================================================
+
+def resolve_intent(text: str) -> Tuple[Optional[str], Optional[dict]]:
+    """Resolves an utterance through the multi-provider cascade with automatic failover.
+    Order: Gemini -> Groq -> NVIDIA NIM -> Local Ollama (Qwen2.5-3B)."""
+    # 1. Primary: Google Gemini API
+    if not quota_tracker.is_exhausted("gemini") and GEMINI_API_KEY:
         try:
-            return _resolve_via_gemini(text)
+            name, args = _resolve_via_gemini(text)
+            if name is not None:
+                return name, args
         except errors.APIError as exc:
             if exc.code == 429:
-                quota_tracker.mark_exhausted()
-            # Any Gemini failure (quota, a deprecated model, network) falls
-            # through to the local model rather than giving up — same
-            # "degrade, don't dead-end" reasoning as the quota case.
+                quota_tracker.mark_exhausted("gemini", str(exc))
+        except Exception as exc:
+            quota_tracker.mark_exhausted("gemini", str(exc))
+
+    # 2. Secondary Fallback: Groq Cloud API
+    try:
+        name, args = _resolve_via_groq(text)
+        if name is not None:
+            return name, args
+    except Exception as exc:
+        quota_tracker.mark_exhausted("groq", str(exc))
+
+    # 3. Tertiary Fallback: NVIDIA NIM API
+    try:
+        name, args = _resolve_via_nvidia(text)
+        if name is not None:
+            return name, args
+    except Exception as exc:
+        quota_tracker.mark_exhausted("nvidia", str(exc))
+
+    # 4. Ultimate Local Fallback (100% Offline): Local Ollama
     return _resolve_via_local(text)

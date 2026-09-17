@@ -27,12 +27,39 @@ fallback — Gemini is still the primary path every time quota allows it.
 import json
 import urllib.request
 
-MODEL = "qwen2.5:1.5b-instruct-q4_K_M"
+import os
+
+DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b-instruct")
+FALLBACK_MODEL = "qwen2.5:1.5b-instruct-q4_K_M"
 _OLLAMA_URL = "http://localhost:11434/api/generate"
+
+_active_model: str | None = None
+
+def get_active_model() -> str:
+    global _active_model
+    if _active_model is not None:
+        return _active_model
+    try:
+        req = urllib.request.Request("http://localhost:11434/api/tags")
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            data = json.loads(resp.read())
+            models = [m.get("name", "") for m in data.get("models", [])]
+            if any(DEFAULT_MODEL in m for m in models):
+                _active_model = DEFAULT_MODEL
+            elif any(FALLBACK_MODEL in m for m in models):
+                _active_model = FALLBACK_MODEL
+            elif models:
+                _active_model = models[0]
+            else:
+                _active_model = DEFAULT_MODEL
+    except Exception:
+        _active_model = DEFAULT_MODEL
+    return _active_model
 
 _TOOL_NAMES = [
     "open_app", "web_search", "set_volume", "set_brightness",
-    "run_terminal", "answer_question", "none",
+    "run_terminal", "read_pdf", "read_latest_emails", "send_email",
+    "answer_question", "none",
 ]
 
 _CLASSIFY_SCHEMA = {
@@ -50,6 +77,9 @@ _CLASSIFY_PROMPT = """You turn a spoken command into a tool call. Available tool
 - set_volume(percent: integer)
 - set_brightness(percent: integer)
 - run_terminal(command: string)
+- read_pdf(name: string)
+- read_latest_emails(count: integer, sender: string, query: string, index: integer)
+- send_email(to: string, subject: string, body: string)
 - answer_question() - use this when the user is asking a genuine factual/
   conversational question rather than giving a command. Leave args empty;
   the answer itself is generated separately.
@@ -65,7 +95,7 @@ _ANSWER_PROMPT = (
 
 
 def _call(prompt: str, fmt=None, timeout: float = 20.0) -> str:
-    body = {"model": MODEL, "prompt": prompt, "stream": False, "options": {"num_gpu": 0}}
+    body = {"model": get_active_model(), "prompt": prompt, "stream": False, "options": {"num_gpu": 0}}
     if fmt is not None:
         body["format"] = fmt
     req = urllib.request.Request(
