@@ -336,10 +336,11 @@ expect_match("what happened today in history", "today_in_history")
 expect_match("on this day in history", "today_in_history")
 expect_match("today in history", "today_in_history")
 
-# C01 google_search (broadest, last — should catch general searches)
+# C01 google_search (explicit keywords only)
 expect_match("search for python tutorials", "google_search")
 expect_match("google the best coffee shops", "google_search")
 expect_match("search the web for Linux tips", "google_search")
+expect_match("look up quantum physics on google", "google_search")
 # These should NOT be stolen by google_search — they match more specific ones
 expect_match("search for music on youtube", "youtube_search",
              "youtube before google — key ordering test")
@@ -381,6 +382,20 @@ expect_match("send email to test@example.com with subject Hi and message hello",
 expect_match("send an email to team@company.com saying please review", "send_email")
 
 # ---------------------------------------------------------------------------
+# ─── Category K — Small-talk & conversation ────────────────────────────────
+# ---------------------------------------------------------------------------
+
+print("\n=== K — Small-talk & conversation ===")
+
+expect_match("how are you", "small_talk")
+expect_match("hello how are you", "small_talk")
+expect_match("hello", "small_talk")
+expect_match("hi", "small_talk")
+expect_match("good morning", "small_talk")
+expect_match("what's up", "small_talk")
+expect_match("who are you", "small_talk")
+
+# ---------------------------------------------------------------------------
 # ─── False-positive traps ──────────────────────────────────────────────────
 # ---------------------------------------------------------------------------
 
@@ -392,11 +407,20 @@ expect_match("open code", "open_app")
 # Using an app that's NOT installed to confirm the resolver correctly returns None:
 expect_no_match("open firefox", "firefox not installed — resolver should return None, not guess")
 
-# Random sentences should NOT match anything
+# Random sentences and non-action questions should NOT match anything in Layer 0
 expect_no_match("I want to eat some pizza", "random sentence")
-expect_no_match("hello how are you", "greeting")
 expect_no_match("tell me a joke", "not in scope yet")
 expect_no_match("play some music", "not in scope for C1")
+expect_no_match("what is emotional intelligence", "general question without search keywords")
+
+# Regression: 'how are you' must never trigger google_search
+name_check, _ = match_skill("how are you")
+if name_check != "google_search":
+    PASS += 1
+    _results.append("  ✓  'how are you' does NOT trigger google_search")
+else:
+    FAIL += 1
+    _results.append("  ✗  'how are you' triggered google_search!")
 
 # Step 4 added F14 restart_service — must be THAT skill, not A12 restart.
 expect_match("restart the nginx service", "restart_service", "should not match A12 restart")

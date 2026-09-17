@@ -280,23 +280,10 @@ def _match_today_in_history(text: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# C01 — google_search  (broadest pattern → last in registry)
+# C01 — google_search  (explicit keywords only → last in registry)
 # ---------------------------------------------------------------------------
 
-def _match_google_search(text: str) -> dict | None:
-    m = re.search(
-        r"\b(?:google|search(?:\s+for)?)\s+(.+)"
-        r"|\bsearch\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.+)",
-        text, re.IGNORECASE
-    )
-    if not m:
-        return None
-    query = next((g for g in m.groups() if g), "").strip().rstrip(".")
-    if not query:
-        return None
-    # Don't steal queries already claimed by specific-site matchers — they've
-    # already run before this point in the scan order below.
-    return {"query": query}
+from skills.search import _match_google_search
 
 
 # ---------------------------------------------------------------------------

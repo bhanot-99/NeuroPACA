@@ -758,13 +758,15 @@ def answer_question(question: str, answer: str, url: str | None = None) -> None:
     """Speaks a real conversational answer (generated upstream — either
     wiki_fastpath.py's Wikipedia lookup, or the Gemini/Qwen cascade in
     llm_intent.py; this executor doesn't generate anything itself, just
-    delivers what was already produced) AND still opens a page for the
-    same question, so "what is python" gets both a spoken answer and a
-    page to read more on, not one instead of the other. Opens the actual
-    Wikipedia article when the answer came from there (url passed in);
-    otherwise falls back to a plain Google search for the question."""
+    delivers what was already produced).
+
+    Decoupled from browser launching:
+    Synthesizes and speaks the answer directly. Only launches a browser
+    tab (xdg-open) if the user explicitly included the words 'search' or
+    'google' in their command."""
     print(f"[answer] {answer}")
-    _open_url(url or f"https://www.google.com/search?q={urllib.parse.quote_plus(question)}")
+    if re.search(r"\b(?:search|google)\b", question or "", re.IGNORECASE):
+        _open_url(url or f"https://www.google.com/search?q={urllib.parse.quote_plus(question)}")
 
 
 # ── C05  define_word ────────────────────────────────────────────────────────
@@ -1773,6 +1775,25 @@ def cancel_action() -> None:
 
 
 # ===========================================================================
+# ─── Category K — Small-talk & conversation ────────────────────────────────
+# ===========================================================================
+
+def small_talk(reply: str = "I'm doing well, thank you! How can I help you?") -> None:
+    """Responds directly with a friendly conversational reply.
+    Synthesizes and speaks it via tts.speak()."""
+    print(reply)
+    if not isinstance(sys.stdout, io.StringIO):
+        try:
+            import tts
+            tts.speak(reply)
+        except Exception:
+            pass
+
+
+conversation = small_talk
+
+
+# ===========================================================================
 # ─── Category L — System maintenance ────────────────────────────────────────
 # ===========================================================================
 
@@ -2029,6 +2050,9 @@ DISPATCH: dict[str, object] = {
     "report_version_status": lambda args: report_version_status(**args),
     "repeat_last_response": lambda args: repeat_last_response(**args),
     "cancel_action":        lambda args: cancel_action(**args),
+    # ── Category K ────────────────────────────────────────────────────────
+    "small_talk":           lambda args: small_talk(**args),
+    "conversation":         lambda args: conversation(**args),
     # ── Category L ────────────────────────────────────────────────────────
     "battery_health":       lambda args: battery_health(**args),
     "clear_app_cache":      lambda args: clear_app_cache(**args),

@@ -30,6 +30,7 @@ ones (see the comments inside each module for the rationale).
 from skills.app_window import SKILLS as _B_SKILLS
 from skills.assistant_meta import SKILLS as _J_SKILLS
 from skills.communication import SKILLS as _H_SKILLS
+from skills.conversation import SKILLS as _K_SKILLS
 from skills.devtools import SKILLS as _F_SKILLS
 from skills.files import SKILLS as _E_SKILLS
 from skills.maintenance import SKILLS as _L_SKILLS
@@ -38,14 +39,15 @@ from skills.productivity import SKILLS as _G_SKILLS
 from skills.system_control import SKILLS as _A_SKILLS
 from skills.web_knowledge import SKILLS as _C1_SKILLS
 
-# Flat ordered list: J → A → B → E → F → D → G → H → L → C1
+# Flat ordered list: J → K → A → B → E → F → D → G → H → L → C1
 # J's meta-commands run first (should win over any other interpretation);
+# K's small-talk / greetings run second for zero-latency casual response;
 # A and B have tight keyword anchors and run early; E's file-specific and
 # F's dev-tool "search"/"check" phrasing must be checked before C1's broadest
 # fallback (google_search) ever gets a chance to steal them. D/G/H/L placed
 # before C1 too and verified empirically, not assumed, to be collision-free.
 _ALL_SKILLS = (
-    _J_SKILLS + _A_SKILLS + _B_SKILLS + _E_SKILLS + _F_SKILLS
+    _J_SKILLS + _K_SKILLS + _A_SKILLS + _B_SKILLS + _E_SKILLS + _F_SKILLS
     + _D_SKILLS + _G_SKILLS + _H_SKILLS + _L_SKILLS + _C1_SKILLS
 )
 
