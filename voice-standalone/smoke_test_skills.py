@@ -265,6 +265,22 @@ expect_match("reopen last closed app", "reopen_last_closed")
 expect_match("restore previous window", "reopen_last_closed")
 
 # ---------------------------------------------------------------------------
+# ─── Category E — Files & filesystem ───────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+print("\n=== E — Files & filesystem ===")
+
+expect_match("List all the folders I have on desktop", "list_desktop_folders")
+expect_match("list desktop folders", "list_desktop_folders")
+expect_match("show desktop files", "list_desktop_folders")
+expect_match("what folders are on my desktop", "list_desktop_folders")
+expect_match("ls desktop", "list_desktop_folders")
+expect_match("find a file called report.txt", "find_file")
+expect_match("open the file notes.md", "open_file")
+expect_match("open my documents folder", "open_folder")
+expect_match("list files in downloads", "list_files")
+
+# ---------------------------------------------------------------------------
 # ─── Category C1 — Web search & general knowledge ──────────────────────────
 # ---------------------------------------------------------------------------
 
@@ -445,6 +461,15 @@ if name_jatin == "small_talk" and "Jatin" in args_jatin.get("reply", ""):
 else:
     FAIL += 1
     _results.append(f"  ✗  'Hello my name is Jatin, how are you doing?' misrouted to [{name_jatin}]!")
+
+# Regression: 'List all the folders I have on desktop' must NEVER trigger open_launcher
+name_desk, _ = match_skill("List all the folders I have on desktop")
+if name_desk != "open_launcher":
+    PASS += 1
+    _results.append("  ✓  'List all the folders I have on desktop' does NOT trigger open_launcher")
+else:
+    FAIL += 1
+    _results.append("  ✗  'List all the folders I have on desktop' triggered open_launcher!")
 
 # Step 4 added F14 restart_service — must be THAT skill, not A12 restart.
 expect_match("restart the nginx service", "restart_service", "should not match A12 restart")

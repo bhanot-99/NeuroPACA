@@ -59,6 +59,7 @@ def get_active_model() -> str:
 _TOOL_NAMES = [
     "open_app", "web_search", "set_volume", "set_brightness",
     "run_terminal", "read_pdf", "read_latest_emails", "send_email",
+    "list_desktop_folders",
     "answer_question", "none",
 ]
 
@@ -80,6 +81,7 @@ _CLASSIFY_PROMPT = """You turn a spoken command into a tool call. Available tool
 - read_pdf(name: string)
 - read_latest_emails(count: integer, sender: string, query: string, index: integer)
 - send_email(to: string, subject: string, body: string)
+- list_desktop_folders() - list the folders and files on the user's desktop
 - answer_question() - use this when the user is asking a genuine factual/
   conversational question rather than giving a command. Leave args empty;
   the answer itself is generated separately.

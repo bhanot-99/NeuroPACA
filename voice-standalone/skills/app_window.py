@@ -152,7 +152,7 @@ def _match_switch_workspace(text: str) -> dict | None:
 
 def _match_show_desktop(text: str) -> dict | None:
     if re.search(
-        r"\bshow\s+(?:the\s+)?desktop\b"
+        r"\bshow\s+(?:the\s+)?desktop\b(?!\s+(?:files|folders|directories|items|contents)\b)"
         r"|\bminimize\s+all\s+(?:windows|apps|applications)?\b"
         r"|\bhide\s+all\s+(?:windows|apps|applications)\b",
         text, re.IGNORECASE

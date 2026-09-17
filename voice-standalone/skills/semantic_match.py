@@ -35,15 +35,12 @@ from skills._correction import token_overlap
 # from the pipeline diagram; tuned against real test utterances in Step 2.
 # ---------------------------------------------------------------------------
 
-# Tuned against real, independently-worded test utterances (smoke_test_semantic.py):
-# correct-and-unambiguous matches scored 0.71-0.93, so 0.82 rejected genuine
-# paraphrases outright. 0.75 keeps every measured false-accept-free while
-# recovering most of the false rejects. The handful of remaining failures
-# were genuine argmax collisions between semantically close skills (e.g.
-# volume_up outscoring volume_down) that no threshold value fixes — those
-# needed better, more distinguishing example phrases instead (see below).
-HIGH_THRESHOLD = 0.75
-LOW_THRESHOLD = 0.55
+# Strict minimum similarity threshold for Layer 1 vector matching:
+# If top vector match score is below 0.82, reject skill execution and fall
+# back to Central Hub Router / LLM cascade.
+MIN_CONFIDENCE = 0.82
+HIGH_THRESHOLD = MIN_CONFIDENCE
+LOW_THRESHOLD = 0.65
 
 _MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
@@ -92,8 +89,20 @@ SKILL_EXAMPLES: dict[str, list[str]] = {
     "show_desktop": ["clear everything off my screen", "get all the windows out of the way"],
     "maximize_window": ["make this window take up the whole screen", "fill the screen with this window"],
     "reopen_last_closed": ["bring back the window I just closed", "undo closing that app"],
-    "open_launcher": ["show me all my apps", "bring up the app grid"],
+    "open_launcher": [
+        "open application menu",
+        "launch app grid",
+        "open program launcher",
+        "show application drawer",
+    ],
     "open_app": ["can you start the file manager for me", "launch my mail application", "launch a fresh text editor window"],
+    "list_desktop_folders": [
+        "show desktop folders",
+        "what folders are on my desktop",
+        "list files on desktop",
+        "what do I have on desktop",
+        "check my desktop directory",
+    ],
 
     # --- Category C1: Web search & general knowledge ---
     "google_search": ["look up the best pasta recipe", "find information about black holes"],
@@ -300,6 +309,7 @@ SKILL_EXTRACTOR: dict[str, Callable[[str], dict | None]] = {
     "timezone_conversion": _trailing_location,
     "unit_conversion": _whole_text_query,
     "calculator": _trailing_expression,
+    "list_desktop_folders": _no_args,
 }
 
 

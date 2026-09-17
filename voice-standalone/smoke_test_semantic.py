@@ -137,10 +137,24 @@ def run() -> None:
     print(f"  False accepts (fired on nothing):    {len(false_accepts)}")
     print(f"  Wrong skill (matched the wrong one):  {len(wrong_skill)}")
     print("=" * 70)
-    if false_accepts:
-        print("FALSE ACCEPTS are the dangerous failure mode (wrong action executes):")
-        for text, name in false_accepts:
-            print(f"  {text!r} -> {name}")
+    # -----------------------------------------------------------------------
+    # Regression Test: "List all the folders I have on desktop"
+    # Must NOT trigger open_launcher; must resolve to list_desktop_folders or LLM fallback
+    # -----------------------------------------------------------------------
+    print()
+    print("=" * 70)
+    print("REGRESSION TESTS")
+    print("=" * 70)
+    test_phrase = "List all the folders I have on desktop"
+    l0_name, _ = skills.match_skill(test_phrase)
+    l1_name, _ = semantic_match.match(test_phrase)
+    assert l0_name != "open_launcher", f"Layer 0 misrouted {test_phrase!r} to open_launcher!"
+    assert l1_name != "open_launcher", f"Layer 1 misrouted {test_phrase!r} to open_launcher!"
+    resolved_to = l0_name or l1_name or "LLM fallback"
+    print(f"  ✓  {test_phrase!r} does NOT trigger open_launcher (resolved to: {resolved_to})")
+    assert resolved_to in ("list_desktop_folders", "LLM fallback"), (
+        f"Expected list_desktop_folders or LLM fallback, got {resolved_to}"
+    )
 
 
 if __name__ == "__main__":

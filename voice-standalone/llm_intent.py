@@ -122,6 +122,14 @@ _TOOL_SPECS: List[Dict[str, Any]] = [
             "required": ["to", "subject", "body"],
         },
     },
+    {
+        "name": "list_desktop_folders",
+        "description": "List the folders and directories located on the user's Desktop (~/Desktop).",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 # Google Gemini tool declarations

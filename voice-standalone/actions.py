@@ -929,6 +929,26 @@ def list_files(folder: str) -> None:
     print(f"[list_files] {path}: {', '.join(entries) if entries else '(empty)'}")
 
 
+def list_desktop_folders() -> None:
+    """Safely inspects ~/Desktop, listing subfolders and files, and prints a clean summary."""
+    desktop_path = os.path.expanduser("~/Desktop")
+    if not os.path.isdir(desktop_path):
+        print("[list_desktop_folders] ~/Desktop directory not found.")
+        return
+    try:
+        all_entries = sorted(e for e in os.listdir(desktop_path) if not e.startswith("."))
+        folders = [e for e in all_entries if os.path.isdir(os.path.join(desktop_path, e))]
+        if folders:
+            summary = f"Folders on Desktop: {', '.join(folders)}."
+        elif all_entries:
+            summary = f"No subfolders on Desktop, found files: {', '.join(all_entries)}."
+        else:
+            summary = "Your Desktop is empty."
+        print(f"[list_desktop_folders] {summary}")
+    except OSError as exc:
+        print(f"[list_desktop_folders] Could not read Desktop: {exc}")
+
+
 # ── E05  create_folder ───────────────────────────────────────────────────────
 
 def create_folder(name: str) -> None:
@@ -2003,6 +2023,7 @@ DISPATCH: dict[str, object] = {
     "open_file":            lambda args: open_file(**args),
     "open_folder":          lambda args: open_folder(**args),
     "list_files":           lambda args: list_files(**args),
+    "list_desktop_folders": lambda args: list_desktop_folders(**args),
     "create_folder":        lambda args: create_folder(**args),
     "rename_file":          lambda args: rename_file(**args),
     "copy_file":            lambda args: copy_file(**args),

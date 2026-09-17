@@ -237,6 +237,18 @@ def _match_open_file_manager_at(text: str) -> dict | None:
     return {"folder": folder}
 
 
+def _match_list_desktop_folders(text: str) -> dict | None:
+    if re.search(
+        r"\b(?:list|show|get|display)\s+(?:all\s+(?:the\s+)?)?(?:folders|directories|files)\s+(?:(?:i\s+have\s+)?on\s+(?:my\s+)?desktop|in\s+(?:my\s+)?desktop)\b"
+        r"|\b(?:list|show|what)\s+(?:desktop\s+(?:folders|files|directories)|(?:folders|files|directories)\s+(?:are\s+)?on\s+(?:my\s+)?desktop)\b"
+        r"|\b(?:ls|dir)\s+desktop\b"
+        r"|\bdesktop\s+(?:folders|files|directories)\b",
+        text, re.IGNORECASE,
+    ):
+        return {}
+    return None
+
+
 SKILLS: list[tuple[str, Callable[[str], dict | None]]] = [
     # Multi-arg (source/dest) patterns first — distinctive "X to Y" shape.
     ("rename_file", _match_rename_file),
@@ -248,6 +260,7 @@ SKILLS: list[tuple[str, Callable[[str], dict | None]]] = [
     ("find_file", _match_find_file),
     ("open_file_manager_at", _match_open_file_manager_at),
     ("open_recent_downloads", _match_open_recent_downloads),
+    ("list_desktop_folders", _match_list_desktop_folders),
     ("list_files", _match_list_files),
     ("create_folder", _match_create_folder),
     ("delete_file", _match_delete_file),
