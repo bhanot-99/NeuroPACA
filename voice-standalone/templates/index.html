@@ -301,20 +301,23 @@
       <div class="p-4 border-t border-slate-800/80 bg-slate-900/80 backdrop-blur-sm">
         
         <!-- Voice Recording State Indicator (Hidden by default) -->
-        <div id="recording-indicator" class="hidden mb-3 p-3 rounded-xl bg-rose-950/60 border border-rose-600/50 flex items-center justify-between animate-pulse">
+        <div id="recording-indicator" class="hidden mb-3 p-3 rounded-xl bg-emerald-950/60 border border-emerald-600/50 flex items-center justify-between transition-all">
           <div class="flex items-center space-x-3">
-            <div class="h-3 w-3 rounded-full bg-rose-500 animate-ping"></div>
-            <span class="text-xs font-semibold text-rose-300">Listening to microphone... Speak now</span>
+            <div id="rec-dot" class="h-3 w-3 rounded-full bg-emerald-400 animate-ping"></div>
+            <span id="rec-text" class="text-xs font-semibold text-emerald-300">Listening... Speak naturally (Auto-send on silence)</span>
           </div>
-          <div class="flex items-center space-x-1">
-            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.1s"></div>
-            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.3s"></div>
-            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.2s"></div>
-            <div class="w-1 bg-rose-400 rounded-full wave-bar" style="animation-delay: 0.4s"></div>
+          <div id="rec-waves" class="flex items-center space-x-1">
+            <div class="w-1 bg-emerald-400 rounded-full wave-bar" style="animation-delay: 0.1s"></div>
+            <div class="w-1 bg-emerald-400 rounded-full wave-bar" style="animation-delay: 0.3s"></div>
+            <div class="w-1 bg-emerald-400 rounded-full wave-bar" style="animation-delay: 0.2s"></div>
+            <div class="w-1 bg-emerald-400 rounded-full wave-bar" style="animation-delay: 0.4s"></div>
           </div>
-          <button onclick="stopRecording()" class="text-xs px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-medium transition">
-            Stop & Send
-          </button>
+          <div class="flex items-center space-x-2">
+            <span id="rec-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Auto-Detect</span>
+            <button type="button" onclick="cancelRecording()" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition border border-slate-700">
+              Cancel (Esc)
+            </button>
+          </div>
         </div>
 
         <!-- Input Form -->
@@ -565,7 +568,11 @@
             resolveConfirmation(true);
           }
         } else if (e.key === 'Escape') {
-          triggerBargeIn();
+          if (isRecording) {
+            cancelRecording();
+          } else {
+            triggerBargeIn();
+          }
         }
       });
     });
@@ -639,11 +646,20 @@
           flushPcmAudioQueue();
           break;
 
+        case 'trailing_prompt':
+          handleTrailingPrompt(msg);
+          break;
+
+        case 'chat_stream_start':
+          setVoiceState('idle');
+          break;
+
         case 'chat_chunk':
           updateStreamingAssistantMessage(msg.delta, msg.text);
           break;
 
         case 'chat_message':
+          setVoiceState('idle');
           finalizeAssistantMessage(msg.text, msg.elapsed_ms);
           break;
 
@@ -652,14 +668,17 @@
           break;
 
         case 'tool_executed':
+          setVoiceState('idle');
           appendToolExecutionCard(msg);
           break;
 
         case 'needs_confirmation':
+          setVoiceState('idle');
           showConfirmationModal(msg);
           break;
 
         case 'error':
+          setVoiceState('idle');
           appendErrorMessage(msg.message);
           break;
 
@@ -959,67 +978,233 @@ ${escapeHtml(outputText)}
     }
 
     // -----------------------------------------------------------------
-    // Web Audio Recording & STT Streaming
+    // Web Audio VAD, Silence Endpointing & Auto-Send State Machine
     // -----------------------------------------------------------------
+    let voiceState = 'idle'; // 'idle' | 'listening' | 'waiting' | 'processing'
+    let extensionTimer = null;
+    let speechDetected = false;
+    let silenceStartTimestamp = null;
+    let speechStartTimestamp = null;
+    const SILENCE_DURATION_THRESHOLD_MS = 1300; // 1.3s silence endpoint (between 1.2s and 1.5s)
+    const SPEECH_RMS_THRESHOLD = 0.015;
+
+    function setVoiceState(state, message) {
+      voiceState = state;
+      const micBtn = document.getElementById('mic-btn');
+      const micIcon = document.getElementById('mic-icon');
+      const indicator = document.getElementById('recording-indicator');
+      const dot = document.getElementById('rec-dot');
+      const label = document.getElementById('rec-text');
+      const waveContainer = document.getElementById('rec-waves');
+      const waveBars = waveContainer ? waveContainer.querySelectorAll('.wave-bar') : [];
+      const badge = document.getElementById('rec-badge');
+
+      if (state === 'idle') {
+        if (indicator) indicator.classList.add('hidden');
+        if (micBtn) {
+          micBtn.className = 'p-3 rounded-xl bg-slate-800 hover:bg-indigo-600/30 border border-slate-700 hover:border-indigo-500/50 text-slate-300 hover:text-white transition flex-shrink-0 relative group';
+        }
+        if (micIcon) {
+          micIcon.className = 'w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform';
+        }
+        return;
+      }
+
+      if (indicator) indicator.classList.remove('hidden');
+
+      if (state === 'listening') {
+        // Green / Pulsing: Actively detecting/listening to speech
+        if (indicator) indicator.className = 'mb-3 p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/50 flex items-center justify-between text-emerald-300 transition-all';
+        if (dot) dot.className = 'h-3 w-3 rounded-full bg-emerald-400 animate-ping';
+        if (label) label.innerText = message || 'Listening... Speak naturally (Auto-send on silence)';
+        waveBars.forEach(b => {
+          b.className = 'w-1 bg-emerald-400 rounded-full wave-bar';
+        });
+        if (badge) {
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+          badge.innerText = 'Listening';
+        }
+        if (micBtn) {
+          micBtn.className = 'p-3 rounded-xl bg-emerald-500/20 border-2 border-emerald-500 text-emerald-400 animate-pulse shadow-lg shadow-emerald-500/30 flex-shrink-0 relative transition';
+        }
+        if (micIcon) {
+          micIcon.className = 'w-5 h-5 text-emerald-400';
+        }
+      } else if (state === 'waiting') {
+        // Yellow / Waiting: Silence detected (~1.2s), auto-analyzing/buffering
+        if (indicator) indicator.className = 'mb-3 p-3 rounded-xl bg-amber-950/60 border border-amber-500/50 flex items-center justify-between text-amber-300 transition-all';
+        if (dot) dot.className = 'h-3 w-3 rounded-full bg-amber-400 animate-pulse';
+        if (label) label.innerText = message || 'Silence detected (~1.3s), auto-analyzing...';
+        waveBars.forEach(b => {
+          b.className = 'w-1 bg-amber-400 rounded-full wave-bar';
+        });
+        if (badge) {
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30';
+          badge.innerText = 'Buffering';
+        }
+        if (micBtn) {
+          micBtn.className = 'p-3 rounded-xl bg-amber-500/20 border-2 border-amber-500 text-amber-400 animate-pulse shadow-lg shadow-amber-500/30 flex-shrink-0 relative transition';
+        }
+        if (micIcon) {
+          micIcon.className = 'w-5 h-5 text-amber-400';
+        }
+      } else if (state === 'processing') {
+        // Blue: Executing/processing command
+        if (indicator) indicator.className = 'mb-3 p-3 rounded-xl bg-blue-950/60 border border-blue-500/50 flex items-center justify-between text-blue-300 transition-all';
+        if (dot) dot.className = 'h-3 w-3 rounded-full bg-blue-400 animate-ping';
+        if (label) label.innerText = message || 'Processing command...';
+        waveBars.forEach(b => {
+          b.className = 'w-1 bg-blue-400 rounded-full';
+        });
+        if (badge) {
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30';
+          badge.innerText = 'Processing';
+        }
+        if (micBtn) {
+          micBtn.className = 'p-3 rounded-xl bg-blue-500/20 border-2 border-blue-500 text-blue-400 shadow-lg shadow-blue-500/30 flex-shrink-0 relative transition';
+        }
+        if (micIcon) {
+          micIcon.className = 'w-5 h-5 text-blue-400 animate-spin';
+        }
+      }
+    }
+
+    function handleTrailingPrompt(msg) {
+      appendAssistantMessage(msg.prompt);
+      // Auto-open microphone for hands-free 3.0s extension
+      startRecording({ promptExtension: true, timeoutMs: (msg.extension_timeout || 3.0) * 1000 });
+    }
+
     async function toggleRecording() {
       if (isRecording) {
-        stopRecording();
+        cancelRecording();
       } else {
         startRecording();
       }
     }
 
-    async function startRecording() {
+    async function startRecording(options = {}) {
       triggerBargeIn();
+      if (isRecording) {
+        cancelRecording();
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaStream = stream;
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         const source = audioContext.createMediaStreamSource(stream);
 
-        // Buffer size 4096, 1 input channel, 1 output channel
+        // Buffer size 4096 (approx 256ms at 16kHz)
         scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
         audioBuffers = [];
+        isRecording = true;
+        speechDetected = false;
+        silenceStartTimestamp = null;
+        speechStartTimestamp = null;
+
+        const defaultMsg = options.promptExtension 
+          ? 'Listening for extension... (Speak or wait 3s)' 
+          : 'Listening... Speak naturally (Auto-send on silence)';
+        setVoiceState('listening', defaultMsg);
 
         scriptProcessor.onaudioprocess = (e) => {
           if (!isRecording) return;
           const inputData = e.inputBuffer.getChannelData(0);
           audioBuffers.push(new Float32Array(inputData));
+
+          // Calculate RMS volume level
+          let sumSquares = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sumSquares += inputData[i] * inputData[i];
+          }
+          const rms = Math.sqrt(sumSquares / inputData.length);
+          const now = Date.now();
+
+          if (rms >= SPEECH_RMS_THRESHOLD) {
+            // Speech active
+            if (!speechDetected) {
+              speechDetected = true;
+              speechStartTimestamp = now;
+            }
+            silenceStartTimestamp = null; // Reset continuous silence
+            if (voiceState !== 'listening') {
+              setVoiceState('listening', 'Detecting speech... Speak naturally');
+            }
+          } else {
+            // Below threshold: silence
+            if (speechDetected) {
+              if (!silenceStartTimestamp) {
+                silenceStartTimestamp = now;
+              } else if (now - silenceStartTimestamp >= SILENCE_DURATION_THRESHOLD_MS) {
+                // Continuous silence exceeded 1.3 seconds!
+                silenceStartTimestamp = null;
+                autoFinalizeAndSend();
+              }
+            }
+          }
         };
 
         source.connect(scriptProcessor);
         scriptProcessor.connect(audioContext.destination);
 
-        isRecording = true;
-        document.getElementById('recording-indicator').classList.remove('hidden');
-        document.getElementById('mic-icon').classList.add('text-rose-500');
+        // If in extension mode, auto-timeout if user speaks nothing
+        if (options.promptExtension) {
+          extensionTimer = setTimeout(() => {
+            if (isRecording && !speechDetected) {
+              cancelRecording();
+            }
+          }, (options.timeoutMs || 3000) + 150);
+        }
       } catch (err) {
         console.error('Microphone access error:', err);
         appendErrorMessage('Microphone access denied or unavailable: ' + err.message);
+        cancelRecording();
       }
     }
 
-    async function stopRecording() {
+    async function autoFinalizeAndSend() {
       if (!isRecording) return;
       isRecording = false;
 
-      document.getElementById('recording-indicator').classList.add('hidden');
-      document.getElementById('mic-icon').classList.remove('text-rose-500');
+      if (extensionTimer) {
+        clearTimeout(extensionTimer);
+        extensionTimer = null;
+      }
 
-      if (scriptProcessor) scriptProcessor.disconnect();
-      if (audioContext) await audioContext.close();
-      if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+      // Yellow/Waiting: Silence detected (~1.2s), auto-analyzing/buffering
+      setVoiceState('waiting', 'Silence detected (~1.3s), auto-analyzing...');
+
+      // Small 150ms buffering delay for visual feedback, then Blue (processing)
+      await new Promise(r => setTimeout(r, 150));
+      setVoiceState('processing', 'Executing command...');
+
+      if (scriptProcessor) {
+        try { scriptProcessor.disconnect(); } catch(e) {}
+        scriptProcessor = null;
+      }
+      if (audioContext) {
+        try { await audioContext.close(); } catch(e) {}
+        audioContext = null;
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
 
       // Flatten buffers into mono 16-bit PCM WAV
       const totalLength = audioBuffers.reduce((acc, b) => acc + b.length, 0);
+      if (totalLength === 0) {
+        setVoiceState('idle');
+        return;
+      }
+
       const mergedSamples = new Float32Array(totalLength);
       let offset = 0;
       for (const buf of audioBuffers) {
         mergedSamples.set(buf, offset);
         offset += buf.length;
       }
-
-      if (totalLength === 0) return;
 
       const wavBuffer = encodeWAV(mergedSamples, 16000);
       const b64Audio = arrayBufferToBase64(wavBuffer);
@@ -1029,7 +1214,34 @@ ${escapeHtml(outputText)}
           type: 'audio',
           audio_data: b64Audio,
         }));
+      } else {
+        appendErrorMessage('WebSocket is disconnected. Please wait for reconnection.');
+        setVoiceState('idle');
       }
+    }
+
+    function cancelRecording() {
+      isRecording = false;
+      speechDetected = false;
+      silenceStartTimestamp = null;
+      if (extensionTimer) {
+        clearTimeout(extensionTimer);
+        extensionTimer = null;
+      }
+      if (scriptProcessor) {
+        try { scriptProcessor.disconnect(); } catch(e) {}
+        scriptProcessor = null;
+      }
+      if (audioContext) {
+        try { audioContext.close(); } catch(e) {}
+        audioContext = null;
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+      audioBuffers = [];
+      setVoiceState('idle');
     }
 
     function encodeWAV(samples, sampleRate) {

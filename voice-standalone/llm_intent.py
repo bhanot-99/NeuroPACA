@@ -18,6 +18,7 @@ Central Security Chokepoint:
 """
 
 import json
+import re
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
@@ -348,3 +349,73 @@ def resolve_intent(text: str) -> Tuple[Optional[str], Optional[dict]]:
 
     # 4. Ultimate Local Fallback (100% Offline): Local Ollama
     return _resolve_via_local(text)
+
+
+# ===========================================================================
+# ─── Intent Completeness & Silence Endpointing Analysis ───────────────────
+# ===========================================================================
+
+# Punctuation pattern for trailing ellipses or dangling comma
+_TRAILING_PUNCT_REGEX = re.compile(r"(\.{2,}|…|,)\s*$")
+
+# Conjunctions, prepositions, and hesitation markers that indicate incomplete utterance
+_TRAILING_CONJUNCTIONS = {
+    "and", "or", "um", "uh", "er", "ah", "with", "to", "then", "like", "also", "plus"
+}
+
+
+def is_trailing_utterance(text: str) -> bool:
+    """Returns True if the transcribed query appears incomplete or trailing.
+
+    Detects:
+      - Trailing hesitations: "um", "uh", "er", "ah"
+      - Dangling conjunctions: "and", "or", "then", "plus", "also"
+      - Dangling prepositions: "with", "to"
+      - Trailing ellipsis (...) or comma (,)
+    """
+    if not text or not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _TRAILING_PUNCT_REGEX.search(stripped):
+        return True
+    cleaned = re.sub(r"[^\w\s]", "", stripped).strip().lower()
+    words = cleaned.split()
+    if not words:
+        return False
+    return words[-1] in _TRAILING_CONJUNCTIONS
+
+
+def clean_trailing_utterance(text: str) -> str:
+    """Strips trailing punctuation, conjunctions, and hesitations from an utterance."""
+    if not text or not isinstance(text, str):
+        return ""
+    cur = text.strip()
+    cur = _TRAILING_PUNCT_REGEX.sub("", cur).strip()
+    words = cur.split()
+    while words:
+        clean_last = re.sub(r"[^\w]", "", words[-1]).lower()
+        if clean_last in _TRAILING_CONJUNCTIONS:
+            words.pop()
+        else:
+            break
+    return " ".join(words).strip()
+
+
+def check_intent_completeness(text: str) -> Dict[str, Any]:
+    """Analyzes a transcribed query for completion status.
+
+    Returns:
+      - is_complete (bool): True if finished and ready to dispatch immediately.
+      - trailing (bool): True if utterance ends in trailing conjunctions/hesitations.
+      - clean_text (str): Utterance with trailing incomplete elements stripped.
+    """
+    trailing = is_trailing_utterance(text)
+    clean = clean_trailing_utterance(text) if trailing else (text.strip() if text else "")
+    return {
+        "is_complete": not trailing,
+        "trailing": trailing,
+        "clean_text": clean,
+    }
+

@@ -325,6 +325,72 @@ async def websocket_chat_endpoint(websocket: WebSocket):
 
             t_start = time.perf_counter()
 
+            # -------------------------------------------------------------
+            # Completeness Check & Trailing Intent Extension
+            # -------------------------------------------------------------
+            if llm_intent.is_trailing_utterance(user_text):
+                prompt_msg = "Is that all, or is there anything else?"
+                comp_info = llm_intent.check_intent_completeness(user_text)
+                base_clean = comp_info["clean_text"]
+
+                await websocket.send_json({
+                    "type": "trailing_prompt",
+                    "prompt": prompt_msg,
+                    "original_text": user_text,
+                    "clean_text": base_clean,
+                    "extension_timeout": 3.0,
+                })
+
+                # Stream audio of the trailing prompt via Piper TTS
+                await _stream_tts_audio(websocket, prompt_msg)
+
+                # Keep listening window open for a 3s extension
+                follow_up_text = ""
+                try:
+                    fu_data = await asyncio.wait_for(websocket.receive_json(), timeout=3.0)
+                    fu_type = fu_data.get("type")
+                    if fu_type == "audio":
+                        fu_b64 = fu_data.get("audio_data", "")
+                        if fu_b64:
+                            raw_fu = base64.b64decode(fu_b64)
+                            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf_fu:
+                                tf_fu.write(raw_fu)
+                                tf_fu_path = tf_fu.name
+                            try:
+                                follow_up_text = await asyncio.to_thread(stt.transcribe, tf_fu_path)
+                            finally:
+                                if os.path.exists(tf_fu_path):
+                                    os.unlink(tf_fu_path)
+                            if follow_up_text:
+                                await websocket.send_json({
+                                    "type": "transcription",
+                                    "text": follow_up_text,
+                                })
+                    elif fu_type == "chat":
+                        follow_up_text = fu_data.get("message", "").strip()
+                    elif fu_type == "barge_in":
+                        from audio_bus import audio_bus
+                        audio_bus.trigger_barge_in()
+                except asyncio.TimeoutError:
+                    follow_up_text = ""
+
+                if follow_up_text:
+                    cleaned_fu = follow_up_text.strip().lower().rstrip(".?!")
+                    if cleaned_fu in {"no", "no that's all", "that's all", "thats all", "nothing else", "that is all", "nope", "no thank you", "no thanks", "nothing", "all"}:
+                        user_text = base_clean
+                    else:
+                        user_text = f"{base_clean} {follow_up_text}".strip()
+                else:
+                    user_text = base_clean
+
+                if not user_text:
+                    await websocket.send_json({
+                        "type": "chat_message",
+                        "text": "I didn't catch that. Please tell me what you would like to do.",
+                        "elapsed_ms": (time.perf_counter() - t_start) * 1000,
+                    })
+                    continue
+
             # Deterministic Compound Command Pre-Processor
             sub_commands = split_compound_utterance(user_text)
             if len(sub_commands) > 1:
