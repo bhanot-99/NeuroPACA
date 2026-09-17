@@ -8,7 +8,7 @@ config.LLM_FALLBACK_ENABLED is on.
 Cascade Architecture (Strict Order):
   1. Primary: Google Gemini API (gemini-flash-lite-latest / gemini-2.5-flash)
   2. Secondary Fallback: Groq Cloud API (llama-3.3-70b-versatile / qwen-2.5-coder-32b)
-  3. Tertiary Fallback: NVIDIA NIM API (meta/llama-3.1-nemotron-70b-instruct)
+  3. Tertiary Fallback: NVIDIA NIM API (nvidia/nemotron-3.5-lightning-30b-a3b)
   4. Ultimate Local Fallback (100% Offline): Local Ollama instance (qwen2.5:3b-instruct / 1.5b)
 
 Central Security Chokepoint:
