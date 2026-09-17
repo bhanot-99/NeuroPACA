@@ -29,7 +29,10 @@ import socket
 import subprocess
 import urllib.parse
 import urllib.request
+import email.header
 import email.utils
+import html
+import imaplib
 from email.message import EmailMessage
 
 import pypdf
@@ -1494,55 +1497,226 @@ def _get_mail_credentials() -> tuple[str, str]:
     return user, pwd
 
 
-def read_latest_emails(count: int = 5) -> None:
-    """Reads latest email messages from the local correspondence spool."""
-    spool_candidates = [
-        os.path.expanduser("~/NeuroPaca/data/plugins/mail/spool/messages.jsonl"),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "plugins", "mail", "spool", "messages.jsonl"),
-    ]
-    spool_file = next((p for p in spool_candidates if os.path.exists(p)), None)
-
-    if not spool_file:
-        print("[email] No email spool found at data/plugins/mail/spool/messages.jsonl.")
-        return
-
-    messages = []
+def _decode_mime_header(header_val: str | None) -> str:
+    if not header_val:
+        return ""
     try:
-        with open(spool_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        messages.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-    except Exception as e:
-        print(f"[email] Could not read email spool: {e}")
+        parts = email.header.decode_header(header_val)
+        decoded = []
+        for piece, charset in parts:
+            if isinstance(piece, bytes):
+                enc = charset or "utf-8"
+                try:
+                    decoded.append(piece.decode(enc, errors="replace"))
+                except (LookupError, UnicodeDecodeError):
+                    decoded.append(piece.decode("utf-8", errors="replace"))
+            else:
+                decoded.append(str(piece))
+        return " ".join("".join(decoded).split())
+    except Exception:
+        return str(header_val).strip()
+
+
+def _extract_email_body_and_snippet(msg: email.message.Message) -> tuple[str, str]:
+    """Extracts clean text body and a 100-character snippet from an email.Message."""
+    body = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            ctype = part.get_content_type()
+            cdisp = str(part.get("Content-Disposition", "")).lower()
+            if ctype == "text/plain" and "attachment" not in cdisp:
+                payload = part.get_payload(decode=True)
+                if payload:
+                    body = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                    break
+        if not body:
+            for part in msg.walk():
+                ctype = part.get_content_type()
+                cdisp = str(part.get("Content-Disposition", "")).lower()
+                if ctype == "text/html" and "attachment" not in cdisp:
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        raw_html = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                        body = re.sub(r"<[^>]+>", " ", raw_html)
+                        break
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            raw_text = payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+            if msg.get_content_type() == "text/html":
+                body = re.sub(r"<[^>]+>", " ", raw_text)
+            else:
+                body = raw_text
+
+    cleaned_body = " ".join(html.unescape(body).split()).strip()
+    if not cleaned_body:
+        cleaned_body = "(No readable text body)"
+    snippet = cleaned_body[:100] + ("..." if len(cleaned_body) > 100 else "")
+    return cleaned_body, snippet
+
+
+def _fetch_live_emails(
+    user: str,
+    pwd: str,
+    count: int = 5,
+    sender: str | None = None,
+    query: str | None = None,
+    fetch_limit: int = 5,
+) -> list[dict]:
+    """Connects to live IMAP, selects INBOX, filters out deleted messages, and fetches matching messages."""
+    emails: list[dict] = []
+    with imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=15) as mail:
+        mail.login(user, pwd)
+        status, _ = mail.select("INBOX", readonly=True)
+        if status != "OK":
+            raise RuntimeError("Could not select INBOX on mail server.")
+
+        search_criteria = ["(UNDELETED)"]
+        if sender:
+            clean_s = sender.replace('"', '').strip()
+            if clean_s:
+                search_criteria.append(f'FROM "{clean_s}"')
+        if query:
+            clean_q = query.replace('"', '').strip()
+            if clean_q:
+                search_criteria.append(f'TEXT "{clean_q}"')
+
+        typ, data = mail.search(None, *search_criteria)
+        if typ != "OK" or not data or not data[0]:
+            if sender or query:
+                # Fallback to general search if server does not support compound search
+                typ, data = mail.search(None, "(UNDELETED)")
+
+        msg_ids = data[0].split() if (data and data[0]) else []
+        if not msg_ids:
+            return []
+
+        # Take candidates from end (most recent)
+        take_count = max(fetch_limit * 3, 20)
+        candidate_ids = msg_ids[-take_count:] if len(msg_ids) > take_count else msg_ids
+        candidate_ids = list(reversed(candidate_ids))
+
+        for mid in candidate_ids:
+            if len(emails) >= fetch_limit:
+                break
+            t, d = mail.fetch(mid, "(FLAGS BODY.PEEK[])")
+            if t != "OK" or not d or not d[0]:
+                continue
+
+            # Check flags — skip any message marked \Deleted
+            flags_raw = d[0][0] if isinstance(d[0], tuple) else b""
+            if b"\\Deleted" in flags_raw or b"\\DELETED" in flags_raw:
+                continue
+
+            raw_bytes = d[0][1] if isinstance(d[0], tuple) and len(d[0]) > 1 else None
+            if not raw_bytes or not isinstance(raw_bytes, bytes):
+                continue
+
+            msg = email.message_from_bytes(raw_bytes)
+            raw_from = _decode_mime_header(msg.get("From"))
+            name, addr = email.utils.parseaddr(raw_from)
+            sender_display = f"{name} <{addr}>" if (name and addr) else (raw_from or "Unknown")
+
+            # Local sender filter verify
+            if sender and sender.lower() not in raw_from.lower():
+                continue
+
+            subj = _decode_mime_header(msg.get("Subject")) or "(No Subject)"
+            date_val = msg.get("Date", "")
+            try:
+                dt = email.utils.parsedate_to_datetime(date_val)
+                date_str = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                date_str = date_val.split("+")[0].strip() if "+" in date_val else date_val
+
+            body_text, snippet = _extract_email_body_and_snippet(msg)
+
+            # Local query filter verify
+            if query and query.lower() not in (subj.lower() + " " + body_text.lower()):
+                continue
+
+            emails.append({
+                "id": mid.decode() if isinstance(mid, bytes) else str(mid),
+                "sender": sender_display,
+                "sender_raw": raw_from,
+                "subject": subj,
+                "date": date_str,
+                "snippet": snippet,
+                "body": body_text,
+            })
+
+    return emails
+
+
+def read_latest_emails(
+    count: int = 5,
+    sender: str | None = None,
+    query: str | None = None,
+    index: int | None = None,
+    full_body: bool = False,
+) -> None:
+    """Live IMAP synchronization and email reader with rich formatting,
+    deleted message filtering, sender search, and specific index extraction."""
+    user, pwd = _get_mail_credentials()
+    if not user or not pwd:
+        print("[email] Error: Mail credentials not found in secret-tool or NEUROPACA_MAIL_PASSWORD.")
         return
 
-    if not messages:
-        print("[email] No emails found in spool.")
+    fetch_limit = count
+    if index is not None and index > 0:
+        fetch_limit = max(count, index)
+
+    try:
+        emails = _fetch_live_emails(
+            user=user,
+            pwd=pwd,
+            count=count,
+            sender=sender,
+            query=query,
+            fetch_limit=fetch_limit,
+        )
+    except Exception as exc:
+        print(f"[email] Live IMAP connection failed: {exc}")
         return
 
-    inbound = [m for m in messages if m.get("direction") == "inbound"] or messages
-    recent = inbound[-count:]
-    recent.reverse()
-
-    summaries = []
-    for i, m in enumerate(recent, 1):
-        raw_sender = m.get("sender") or m.get("sender_address") or "Unknown"
-        name, addr = email.utils.parseaddr(raw_sender)
-        sender_display = name or addr or "Unknown"
-        subject = m.get("subject")
-        date_str = m.get("date", "")
-        if "T" in date_str:
-            date_str = date_str.split("T")[0]
-        if subject and subject.strip():
-            summaries.append(f"{i}. From {sender_display}: {subject.strip()} ({date_str})")
+    if not emails:
+        if sender:
+            print(f"[email] No emails found from '{sender}'.")
+        elif query:
+            print(f"[email] No emails found matching '{query}'.")
         else:
-            summaries.append(f"{i}. From {sender_display} ({date_str})")
+            print("[email] No emails found in INBOX.")
+        return
 
-    print(f"[email] Latest {len(recent)} messages:\n" + "\n".join(summaries))
+    # Specific index requested (e.g. index=2 for "2nd recent email")
+    if index is not None:
+        if index < 1 or index > len(emails):
+            print(f"[email] Invalid email index #{index}. Only {len(emails)} matching email(s) found.")
+            return
+
+        target = emails[index - 1]
+        print(
+            f"[email] Email #{index} of {len(emails)}:\n"
+            f"From: {target['sender']}\n"
+            f"Date: {target['date']}\n"
+            f"Subject: {target['subject']}\n\n"
+            f"Body:\n{target['body']}"
+        )
+        return
+
+    # Default list presentation with rich formatting
+    display_count = min(len(emails), count)
+    filter_desc = f" from '{sender}'" if sender else (f" matching '{query}'" if query else "")
+    print(f"[email] Found {len(emails)} email(s){filter_desc} (showing latest {display_count}):")
+    for i, em in enumerate(emails[:display_count], 1):
+        print(
+            f"{i}. From: {em['sender']} | Date: {em['date']}\n"
+            f"   Subject: {em['subject']}\n"
+            f"   Snippet: {em['snippet']}"
+        )
+
+
+search_emails = read_latest_emails
 
 
 def send_email(to: str, subject: str = "Voice Assistant Message", body: str = "") -> None:
@@ -1847,6 +2021,7 @@ DISPATCH: dict[str, object] = {
     "add_todo":             lambda args: add_todo(**args),
     "list_todos":           lambda args: list_todos(**args),
     "read_latest_emails":   lambda args: read_latest_emails(**args),
+    "search_emails":        lambda args: search_emails(**args),
     "send_email":           lambda args: send_email(**args),
     # ── Category J ────────────────────────────────────────────────────────
     "sleep_stop_listening": lambda args: sleep_stop_listening(**args),

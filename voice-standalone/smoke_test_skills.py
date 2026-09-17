@@ -347,6 +347,40 @@ expect_match("search for gravity on wikipedia", "wikipedia_search",
              "wikipedia before google")
 
 # ---------------------------------------------------------------------------
+# ─── Category G — Productivity ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+print("\n=== G — Productivity ===")
+
+# G01 add_todo
+expect_match("add a to-do: buy milk", "add_todo")
+expect_match("remind me to call mom", "add_todo")
+
+# G02 list_todos
+expect_match("list my to-dos", "list_todos")
+expect_match("what's on my to-do list", "list_todos")
+
+# ---------------------------------------------------------------------------
+# ─── Category H — Communication ───────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+print("\n=== H — Communication ===")
+
+# H01 read_latest_emails
+expect_match("check my latest emails", "read_latest_emails")
+expect_match("read my last 3 emails", "read_latest_emails")
+expect_match("any email from swatik", "read_latest_emails")
+expect_match("check emails from groww", "read_latest_emails")
+expect_match("search emails for IPO", "read_latest_emails")
+expect_match("read 2nd recent email", "read_latest_emails")
+expect_match("read email 3", "read_latest_emails")
+expect_match("read the first email from swatik", "read_latest_emails")
+
+# H02 send_email
+expect_match("send email to test@example.com with subject Hi and message hello", "send_email")
+expect_match("send an email to team@company.com saying please review", "send_email")
+
+# ---------------------------------------------------------------------------
 # ─── False-positive traps ──────────────────────────────────────────────────
 # ---------------------------------------------------------------------------
 

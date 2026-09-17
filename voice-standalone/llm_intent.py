@@ -97,10 +97,15 @@ _TOOLS = [
     ),
     types.FunctionDeclaration(
         name="read_latest_emails",
-        description="Read the latest incoming email messages or check unread inbox messages.",
+        description="Read or search email messages from inbox, filter by sender or query, or read full content of a specific email by index.",
         parameters={
             "type": "object",
-            "properties": {"count": {"type": "integer", "description": "Number of recent emails to read (default 5)"}},
+            "properties": {
+                "count": {"type": "integer", "description": "Number of recent emails to read (default 5)"},
+                "sender": {"type": "string", "description": "Filter emails by sender name or address"},
+                "query": {"type": "string", "description": "Search query or keyword within email content"},
+                "index": {"type": "integer", "description": "1-based index of a specific email to read in full (e.g. 1 for latest, 2 for 2nd recent)"},
+            },
         },
     ),
     types.FunctionDeclaration(
