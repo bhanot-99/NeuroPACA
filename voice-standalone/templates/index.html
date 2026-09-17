@@ -106,6 +106,12 @@
           <span id="tts-toggle-label">Speech: On</span>
         </button>
 
+        <!-- Native S2S Mode Toggle -->
+        <button id="s2s-toggle-btn" onclick="toggleS2SMode()" title="Toggle Native S2S Interactive Mode (Gemini Live)" class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition">
+          <span id="s2s-toggle-icon">⚡</span>
+          <span id="s2s-toggle-label">S2S: Off</span>
+        </button>
+
         <!-- Refresh Button -->
         <button onclick="fetchStatus()" title="Refresh System Status" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white transition">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -537,6 +543,23 @@
       }
     }
 
+    let s2sMode = false;
+    function toggleS2SMode() {
+      s2sMode = !s2sMode;
+      const label = document.getElementById('s2s-toggle-label');
+      const btn = document.getElementById('s2s-toggle-btn');
+      if (s2sMode) {
+        if (label) label.innerText = 'S2S: Live';
+        if (btn) btn.classList.add('border-indigo-500', 'text-indigo-300', 'bg-indigo-950/60');
+      } else {
+        if (label) label.innerText = 'S2S: Off';
+        if (btn) btn.classList.remove('border-indigo-500', 'text-indigo-300', 'bg-indigo-950/60');
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 's2s_toggle', enabled: s2sMode }));
+      }
+    }
+
     function speakInBrowser(text) {
       if (!text || !('speechSynthesis' in window)) return;
       window.speechSynthesis.cancel();
@@ -644,6 +667,21 @@
 
         case 'audio_flush':
           flushPcmAudioQueue();
+          break;
+
+        case 's2s_status':
+          s2sMode = !!msg.enabled;
+          const s2sLabel = document.getElementById('s2s-toggle-label');
+          const s2sBtn = document.getElementById('s2s-toggle-btn');
+          if (s2sLabel && s2sBtn) {
+            if (s2sMode) {
+              s2sLabel.innerText = 'S2S: Live';
+              s2sBtn.classList.add('border-indigo-500', 'text-indigo-300', 'bg-indigo-950/60');
+            } else {
+              s2sLabel.innerText = 'S2S: Off';
+              s2sBtn.classList.remove('border-indigo-500', 'text-indigo-300', 'bg-indigo-950/60');
+            }
+          }
           break;
 
         case 'trailing_prompt':

@@ -64,6 +64,9 @@ SAFETY_TIERS_ENABLED = os.environ.get("SAFETY_TIERS_ENABLED", "false").lower() =
 # the wake word. Off by default, same as SAFETY_TIERS_ENABLED above.
 CONVERSATION_MODE_ENABLED = os.environ.get("CONVERSATION_MODE_ENABLED", "false").lower() == "true"
 
+# Native Speech-to-Speech (S2S) Interactive Mode Hook (Phase 3)
+ENABLE_S2S_MODE = os.environ.get("ENABLE_S2S_MODE", "false").lower() == "true"
+
 # Live conversation provider backend: "gemini" (Gemini Live using
 # gemini-2.5-flash-native-audio-latest) or "openai" (OpenAI Realtime using
 # gpt-realtime). Defaults to "gemini" so conversation mode works immediately

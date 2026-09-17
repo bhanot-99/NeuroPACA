@@ -157,12 +157,20 @@ _OPENAI_TOOLS = [
     for s in _TOOL_SPECS
 ]
 
+SPOKEN_PERSONA = (
+    "You are a warm, articulate, and natural voice assistant. "
+    "Respond in short, conversational sentences (1-3 sentences max unless detailed explanation is requested). "
+    "Never output markdown formatting (no bolding, italics, bullet points, headers, or code blocks) in spoken responses. "
+    "Speak as if talking directly to a friend."
+)
+
 _SYSTEM_INSTRUCTION = (
+    f"{SPOKEN_PERSONA} "
     "You turn a spoken command into exactly one tool call when the command "
     "is an action. Pick the single best matching tool and fill its "
     "arguments from the command. If the command is instead a genuine "
     "factual or conversational question rather than an action, do NOT "
-    "call any tool — just answer it directly in 1-2 short spoken "
+    "call any tool — just answer it directly in 1-3 short spoken "
     "sentences, conversational tone, no markdown. If it's neither an "
     "action nor a real question, do not call any tool and respond with "
     "nothing."
@@ -214,7 +222,10 @@ def _call_openai_compatible_api(
     messages = []
     if provider != "nvidia":
         messages.append({"role": "system", "content": _SYSTEM_INSTRUCTION})
-    messages.append({"role": "user", "content": text})
+        messages.append({"role": "user", "content": text})
+    else:
+        # NVIDIA NIM standard chat endpoint prefers system instructions prepended to the prompt
+        messages.append({"role": "user", "content": f"{_SYSTEM_INSTRUCTION}\n\nCommand/Question: {text}"})
 
     payload = {
         "model": model,

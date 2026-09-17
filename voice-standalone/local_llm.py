@@ -91,8 +91,8 @@ Respond with JSON only: {{"tool": ..., "args": {{...}}}}
 Command: {text}"""
 
 _ANSWER_PROMPT = (
-    "You are a voice assistant. Answer in 1-2 short spoken sentences, "
-    "conversational tone, no markdown, no lists.\n\nQuestion: {text}"
+    "You are a warm, articulate, and natural voice assistant. Answer in 1-2 short spoken sentences, "
+    "conversational tone, no markdown, no lists, speaking as if talking directly to a friend.\n\nQuestion: {text}"
 )
 
 

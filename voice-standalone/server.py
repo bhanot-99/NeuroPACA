@@ -47,8 +47,14 @@ def _speak_bg(text: str) -> None:
             print(f"[tts warning] {e}")
 
 
-async def _stream_tts_audio(websocket: WebSocket, text: str, lang: str = "en"):
-    """Splits text into clauses and streams 22050Hz 16-bit PCM chunks to the WebSocket client."""
+async def _stream_tts_audio(
+    websocket: WebSocket,
+    text: str,
+    lang: str = "en",
+    skill_name: Optional[str] = None,
+    engine: Optional[str] = None,
+):
+    """Splits text into clauses and streams 16-bit PCM chunks (Piper: 22050Hz, Kokoro: 24000Hz) to client."""
     if tts is None or not text.strip():
         return
     clauses = tts.split_into_clauses(text)
@@ -64,7 +70,7 @@ async def _stream_tts_audio(websocket: WebSocket, text: str, lang: str = "en"):
             is_last_clause = (c_idx == len(clauses) - 1)
 
             def _gen():
-                return list(tts.synthesize_stream(clause, lang=lang))
+                return list(tts.synthesize_stream(clause, lang=lang, engine=engine, skill_name=skill_name))
 
             chunks = await asyncio.to_thread(_gen)
             for ch_idx, (pcm, sr, is_last_chunk) in enumerate(chunks):
@@ -151,6 +157,7 @@ async def get_status():
         "status": "online",
         "daemon_active": daemon_active,
         "safety_tiers_enabled": config.SAFETY_TIERS_ENABLED,
+        "enable_s2s_mode": config.ENABLE_S2S_MODE,
         "conversation_backend": config.CONVERSATION_BACKEND,
         "gemini_live_model": config.GEMINI_LIVE_MODEL,
         "intent_model": config.INTENT_MODEL,
@@ -314,10 +321,19 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                         "text": user_text,
                     })
             else:
-                if isinstance(data, dict) and data.get("type") == "barge_in":
-                    from audio_bus import audio_bus
-                    audio_bus.trigger_barge_in()
-                    continue
+                if isinstance(data, dict):
+                    if data.get("type") == "barge_in":
+                        from audio_bus import audio_bus
+                        audio_bus.trigger_barge_in()
+                        continue
+                    if data.get("type") == "s2s_toggle":
+                        s2s_active = bool(data.get("enabled", False))
+                        await websocket.send_json({
+                            "type": "s2s_status",
+                            "enabled": s2s_active,
+                            "backend": config.CONVERSATION_BACKEND,
+                        })
+                        continue
                 user_text = data.get("message", "").strip()
 
             if not user_text:
@@ -341,8 +357,8 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     "extension_timeout": 3.0,
                 })
 
-                # Stream audio of the trailing prompt via Piper TTS
-                await _stream_tts_audio(websocket, prompt_msg)
+                # Stream audio of the trailing prompt via Fast-Path Piper TTS
+                await _stream_tts_audio(websocket, prompt_msg, skill_name="trailing_prompt")
 
                 # Keep listening window open for a 3s extension
                 follow_up_text = ""
@@ -572,7 +588,7 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     "elapsed_ms": elapsed_ms,
                 })
                 # Stream PCM audio chunks to WebSocket client in real-time
-                asyncio.create_task(_stream_tts_audio(websocket, output_text))
+                asyncio.create_task(_stream_tts_audio(websocket, output_text, skill_name=skill_name))
                 continue
 
             # -------------------------------------------------------------
@@ -593,7 +609,7 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                 def _stream_gemini():
                     return client.models.generate_content_stream(
                         model=config.INTENT_MODEL,
-                        contents=user_text,
+                        contents=[llm_intent.SPOKEN_PERSONA, user_text],
                     )
 
                 stream = await asyncio.to_thread(_stream_gemini)
@@ -616,10 +632,10 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                         if len(clauses) > 1:
                             ready_clause = clauses[0]
                             clause_buffer = " ".join(clauses[1:])
-                            asyncio.create_task(_stream_tts_audio(websocket, ready_clause))
+                            asyncio.create_task(_stream_tts_audio(websocket, ready_clause, skill_name="answer_question"))
 
                 if clause_buffer.strip() and tts:
-                    asyncio.create_task(_stream_tts_audio(websocket, clause_buffer.strip()))
+                    asyncio.create_task(_stream_tts_audio(websocket, clause_buffer.strip(), skill_name="answer_question"))
 
                 await websocket.send_json({
                     "type": "chat_message",
